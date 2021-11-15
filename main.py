@@ -3,7 +3,7 @@ from discord.ext import commands
 from discord import client
 
 #---config---
-token = 'OTA5NjYzMTE0OTI3MTczNjQy.YZHjyw.KvSeoUxRx9-OasDGNMSXYpbweHY' #bot token here
+token = 'your.token.goes.here' #bot token here
 prefix = '!!' #prefix you want to use for the bot
 
 client = commands.Bot(command_prefix=prefix)
