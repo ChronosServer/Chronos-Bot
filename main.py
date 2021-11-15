@@ -11,7 +11,7 @@ client = commands.Bot(command_prefix=prefix)
 @client.event
 async def on_ready():
     await client.change_presence(status=discord.Status.online,
-                                 activity=discord.Game(name='Playing on Chronos', type=discord.ActivityType.listening))
+                                 activity=discord.Game(name='Chronos™', type=discord.ActivityType.listening))
 
 
 # put all of your cog files in here like 'worldsize'
