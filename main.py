@@ -18,7 +18,8 @@ async def on_ready():
 # if you have a folder called 'commands' for example you could do #'commands.reloadclient'
 cog_files = ['commands.worldsize',
              'commands.hardware',
-             'commands.ping'
+             'commands.ping',
+             'commands.setstatus'
             ]
 
 for cog_file in cog_files: # cycle through the files in array
