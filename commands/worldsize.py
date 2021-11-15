@@ -4,11 +4,11 @@ from discord.ext import commands
 import os
 
 # ---CONFIG---
-smp_path = 'root/servers/survival/server/world-smp0'
-cmp_path = 'root/servers/creative/server/world-cmp0'
-cmp2_path = 'root/servers/creative2/server/world-cmp0'
-cmp3_path = 'root/servers/creative3/server/world-cmp0'
-mirror_path = 'root/servers/mirror/server/world-mirror0'
+smp_path = '/root/servers/survival/server/world-smp0'
+cmp_path = '/root/servers/creative/server/world-cmp0'
+cmp2_path = '/root/servers/creative2/server/world-cmp0'
+cmp3_path = '/root/servers/creative3/server/world-cmp0'
+mirror_path = '/root/servers/mirror/server/world-mirror0'
 # ---CONFIG---
 
 def get_directory_size(directory):
