@@ -25,7 +25,7 @@ for cog_file in cog_files: # cycle through the files in array
     print("%s has loaded." % cog_file) # print a success message.
 
 @client.command()
-@client.isowner()
+@commands.has_permissions(administrator=True)
 async def reload(ctx):
     for cog in cog_files:
         client.reload_extension(cog)
