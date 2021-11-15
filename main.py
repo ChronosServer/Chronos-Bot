@@ -36,4 +36,12 @@ async def reload(ctx):
         embed.set_footer(text='Chronos™'),
         await ctx.send(embed=embed)
 
+class NewHelpName(commands.MinimalHelpCommand):
+    async def send_pages(self):
+        destination = self.get_destination()
+        for page in self.paginator.pages:
+            emby = discord.Embed(description=page)
+            await destination.send(embed=emby)
+client.help_command = NewHelpName()
+
 client.run(token) # runs the bot.
