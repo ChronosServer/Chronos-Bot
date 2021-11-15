@@ -19,7 +19,8 @@ async def on_ready():
 cog_files = ['commands.worldsize',
              'commands.hardware',
              'commands.ping',
-             'commands.setstatus'
+             'commands.setstatus',
+             'commands.purge'
             ]
 
 for cog_file in cog_files: # cycle through the files in array

@@ -1,5 +1,4 @@
 import discord
-from discord import client
 from discord.ext import commands
 
 class setstatus(commands.Cog):
