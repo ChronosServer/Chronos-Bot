@@ -17,7 +17,8 @@ async def on_ready():
 # put all of your cog files in here like 'worldsize'
 # if you have a folder called 'commands' for example you could do #'commands.reloadclient'
 cog_files = ['commands.worldsize',
-             'commands.hardware'
+             'commands.hardware',
+             'commands.ping'
             ]
 
 for cog_file in cog_files: # cycle through the files in array
