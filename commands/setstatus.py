@@ -1,10 +1,12 @@
 import discord
+from discord import client
 from discord.ext import commands
 
+# setstatus command
 class setstatus(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-    @commands.command()
+    @commands.command(help = 'Set bot status (Admin Only)')
     @commands.has_permissions(administrator=True)
     async def setstatus(self, ctx, statusname):
         await self.bot.change_presence(status=discord.Status.online,

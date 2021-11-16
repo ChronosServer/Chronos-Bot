@@ -20,14 +20,16 @@ cog_files = ['commands.worldsize',
              'commands.hardware',
              'commands.ping',
              'commands.setstatus',
-             'commands.purge'
+             'commands.purge',
+             'commands.ban'
             ]
 
 for cog_file in cog_files: # cycle through the files in array
     client.load_extension(cog_file) # load the file
     print("%s has loaded." % cog_file) # print a success message.
 
-@client.command()
+# command to reload cogs
+@client.command(help = 'Reload the bot (Admin Only)')
 @commands.has_permissions(administrator=True)
 async def reload(ctx):
     for cog in cog_files:
@@ -39,6 +41,7 @@ async def reload(ctx):
         embed.set_footer(text='Chronos™'),
         await ctx.send(embed=embed)
 
+# makes default help an embed
 class NewHelpName(commands.MinimalHelpCommand):
     async def send_pages(self):
         destination = self.get_destination()

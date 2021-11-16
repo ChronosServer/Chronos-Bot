@@ -2,16 +2,13 @@ import discord
 from discord import client
 from discord.ext import commands
 
-client = discord.Client()
+client = discord.Client() # defines 'client'
 
-@client.event
-async def on_command_error(ctx, error):
-    pass
-
+# purge command
 class purge(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-    @commands.command()
+    @commands.command(help = 'Purge messages (Admin Only)')
     @commands.has_permissions(administrator=True)
     async def purge(self, ctx, limit: int):
         if limit > 100:

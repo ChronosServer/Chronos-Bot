@@ -1,10 +1,11 @@
 import discord
 from discord.ext import commands
-    
+
+# ping command 
 class ping(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-    @commands.command()
+    @commands.command(help = 'Query bot ping')
     async def ping(self, ctx):
         embed = discord.Embed(
             description = 'Pong! ' + str(round(self.bot.latency * 1000)) + ' ms'

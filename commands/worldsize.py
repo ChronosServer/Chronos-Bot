@@ -4,6 +4,7 @@ from discord.ext import commands
 import os
 
 # ---CONFIG---
+server_name = 'Chronos'
 smp_path = '/root/servers/survival/server/world-smp0'
 cmp_path = '/root/servers/creative/server/world-cmp0'
 cmp2_path = '/root/servers/creative2/server/world-cmp0'
@@ -11,6 +12,7 @@ cmp3_path = '/root/servers/creative3/server/world-cmp0'
 mirror_path = '/root/servers/mirror/server/world-mirror0'
 # ---CONFIG---
 
+# function to get directory size
 def get_directory_size(directory):
     """Returns the `directory` size in bytes"""
     total = 0
@@ -31,6 +33,7 @@ def get_directory_size(directory):
         return 0
     return total
 
+# function to make size human readable
 def get_size_format(b, factor=1024, suffix="B"):
     """
     Scale bytes to its proper byte format
@@ -44,13 +47,14 @@ def get_size_format(b, factor=1024, suffix="B"):
         b /= factor
     return f"{b:.2f}Y{suffix}"     
 
+# worldsize command
 class worldsize(commands.Cog):
     def __init__(self, client):
         self.client = client
-    @commands.command()
+    @commands.command(help = 'Display ' + server_name + ' world size')
     async def worldsize(self, ctx):
         embed = discord.Embed(
-            title = 'Chronos World Size',
+            title = server_name + ' World Size',
         )
         embed.add_field(name='SMP', value=get_size_format(get_directory_size(smp_path)), inline=False)
         embed.add_field(name='CMP', value=get_size_format(get_directory_size(cmp_path)), inline=False)
