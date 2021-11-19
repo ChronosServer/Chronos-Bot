@@ -21,7 +21,8 @@ cog_files = ['commands.worldsize',
              'commands.ping',
              'commands.setstatus',
              'commands.purge',
-             'commands.ban'
+             'commands.ban',
+             'commands.memberping'
             ]
 
 for cog_file in cog_files: # cycle through the files in array
