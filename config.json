@@ -1,5 +1,5 @@
 {
-    "token": "your.token.goes.here",
+    "token": "OTA5NjYzMTE0OTI3MTczNjQy.YZHjyw.tezwKeyggodkyX9U6RhWPP301Eg",
     "prefix": "!!",
     "default_status": "Chronos™",
     "server_name": "Chronos",
@@ -18,7 +18,7 @@
     "cmp2_rcon_port": "25583",
     "cmp3_rcon_port": "25584",
     "mirror_rcon_port": "25582",
-    "rcon_pass": "password",
+    "rcon_pass": "hW1n7R2z1Rwb2er5",
     "colors": ["white",
                "pink",
                "green",
