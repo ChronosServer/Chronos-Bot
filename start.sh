@@ -2,7 +2,7 @@
 while true
 do
 sudo python3 main.py
-echo "If you want to completely stop the server process now, press Ctrl+C before
+echo "If you want to completely stop the process now, press Ctrl+C before
 the time is up!"
 echo "Rebooting in:"
 for i in 5 4 3 2 1
