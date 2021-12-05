@@ -5,6 +5,7 @@ import json
 # reads config
 f = open('config.json')
 data = json.load(f)
+member_role = data['member_role']
 smp_path = data['smp_path']
 cmp_path = data['cmp_path']
 cmp2_path = data['cmp2_path']
@@ -16,7 +17,7 @@ f.close()
 class region(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-    @commands.has_role(890473812917891092)
+    @commands.has_role(member_role)
     @commands.command(help = 'Get region files from SMP, Usage: `!!region <smp/cmp/cmp2/cmp3/mirror> <ow/nether/end> <region (Example: r.0.0)>`')
     async def region(self, ctx, server, dimension, region):
         if server == 'smp':

@@ -7,6 +7,7 @@ import json
 f = open('config.json')
 data = json.load(f)
 cmp_structure_path = data['cmp_structure_path']
+member_role = data['member_role']
 f.close()
 
 # function to get directory size
@@ -48,7 +49,7 @@ def get_size_format(b, factor=1024, suffix="B"):
 class structure(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-    @commands.has_role(890473812917891092)
+    @commands.has_role(member_role)
     @commands.command(help = 'Download and upload structure files to/from cmp, Usage: `!!structure <download/upload/list> <structure name (Only used for download)>` (Member Only)')
     async def structure(self, ctx, strucaction, strucname=None):
         if strucaction == 'upload':
