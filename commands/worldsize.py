@@ -4,8 +4,8 @@ from discord.ext import commands
 import json
 import sys
 sys.path.append('./Chronos-Library/')
-from fileSizeCalculator import get_size_format
-from fileSizeCalculator import get_file_size
+from filesizeLibrary import get_size_format
+from filesizeLibrary import get_file_size
 
 # reads config
 f = open('config.json')
