@@ -1,4 +1,4 @@
-# Chronos discord bot
+# Chronos Discord Bot
 
 ## Description
 
