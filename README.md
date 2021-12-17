@@ -39,6 +39,7 @@ If you run into any issues, please contact Chezloc#2039 on discord. Or join the 
 The bot's help command contains additional information on how to use commands 
 
 * Admin only
+    * Commands only available for admins
         - setstatus | allows you to change the bot's discord status
         - color | allows assignment of in game color via scoreboard teams
         - execute | allows you to execute a command via rcon
