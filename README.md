@@ -9,10 +9,11 @@ The bot is still a work in progress, some commands may not fully function or the
 ### Dependencies
 
 * Any os, Linux & Windows run scripts are included
-* Python 3.9 or newer
-* discord.py
-* rcon
-* psutil
+* Python 3.9 or newer[https://www.python.org/downloads/release/python-399/]
+* discord.py[https://pypi.org/project/discord.py/]
+* rcon[https://pypi.org/project/rcon/]
+* psutil[https://pypi.org/project/psutil/]
+* NBT[https://pypi.org/project/NBT/]
 * Install requirements with running $ pip install -r requirements.txt
 
 ### Installing
@@ -53,8 +54,12 @@ The bot's help command contains additional information on how to use commands
         - hardware | displays usage of hardware
         - help | shows help command
         - ping | displays bot ping
-        - worldsize | displays world size information   
+        - worldsize | displays world size information  
+        - tps | shows server tps
+        - status | shows server status
 
 ## Version History
+* 1.1
+    * Add status and tps command, code cleanup
 * 1.0
     * Initial Release
