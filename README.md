@@ -9,11 +9,11 @@ The bot is still a work in progress, some commands may not fully function or the
 ### Dependencies
 
 * Any os, Linux & Windows run scripts are included
-* Python 3.9 or newer[https://www.python.org/downloads/release/python-399/]
-* discord.py[https://pypi.org/project/discord.py/]
-* rcon[https://pypi.org/project/rcon/]
-* psutil[https://pypi.org/project/psutil/]
-* NBT[https://pypi.org/project/NBT/]
+* [Python 3.9 or newer](https://www.python.org/downloads/)
+* [discord.py](https://pypi.org/project/discord.py/)
+* [rcon](https://pypi.org/project/rcon/)
+* [psutil](https://pypi.org/project/psutil/)
+* [NBT](https://pypi.org/project/NBT/)
 * Install requirements with running $ pip install -r requirements.txt
 
 ### Installing
