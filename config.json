@@ -4,6 +4,7 @@
     "default_status": "Chronos™",
     "server_name": "Chronos",
     "member_role": "890473812917891092",
+    "storage_status_block_coords": "2141 60 -1270",
     "cpu_hardware": "I7 6700",
     "ram_hardware": "64GB DDR4",
     "smp_path": "/root/servers/survival/server/world-smp0",

@@ -2,6 +2,7 @@ import discord
 from discord.ext import commands
 from rcon import Client
 import json
+import socket
 
 # reads config
 f = open('config.json')
@@ -22,64 +23,33 @@ class execute(commands.Cog):
     @commands.has_permissions(administrator=True)
     async def execute(self, ctx, server, *, arg,):
         if arg != '':
-                if server == 'smp':
-                    with Client('127.0.0.1', int(smp_rcon_port), passwd=rcon_pass) as client:
-                        response = client.run(arg)
-                        if response == '':
-                            print
-                        elif response != '':
-                            embed = discord.Embed(
+            if server == 'smp':
+                rcon_port = smp_rcon_port
+            if server == 'cmp':
+                rcon_port = cmp_rcon_port
+            if server == 'cmp2':
+                rcon_port = cmp2_rcon_port
+            if server == 'cmp3':
+                rcon_port = cmp3_rcon_port
+            if server == 'mirror':
+                rcon_port = mirror_rcon_port
+            try:
+                with Client('127.0.0.1', int(rcon_port), passwd=rcon_pass, timeout=1.5) as client:
+                    response = client.run(arg)
+                    if response == '':
+                        print
+                    elif response != '':
+                        embed = discord.Embed(
                             description = response
-                            )
-                            embed.set_footer(text='Chronos™'),
-                            await ctx.send(embed=embed)
-                elif server == 'cmp':
-                    with Client('127.0.0.1', int(cmp_rcon_port), passwd=rcon_pass) as client:
-                        response = client.run(arg)
-                        if response == '':
-                            print
-                        elif response != '':
-                            embed = discord.Embed(
-                                description = response
-                            )
-                            embed.set_footer(text='Chronos™'),
-                            await ctx.send(embed=embed)
-                elif server == 'cmp2':
-                    with Client('127.0.0.1', int(cmp2_rcon_port), passwd=rcon_pass) as client:
-                        response = client.run(arg)
-                        if response == '':
-                            print
-                        elif response != '':
-                            embed = discord.Embed(
-                                description = response
-                            )
-                            embed.set_footer(text='Chronos™'),
-                            await ctx.send(embed=embed)
-                elif server == 'cmp3':
-                    with Client('127.0.0.1', int(cmp3_rcon_port), passwd=rcon_pass) as client:
-                        response = client.run(arg)
-                        if response == '':
-                            print
-                        elif response != '':
-                            embed = discord.Embed(
-                                description = response
-                            )
-                            embed.set_footer(text='Chronos™'),
-                            await ctx.send(embed=embed)
-                elif server == 'mirror':
-                    with Client('127.0.0.1', int(mirror_rcon_port), passwd=rcon_pass) as client:
-                        response = client.run(arg)
-                        if response == '':
-                            print
-                        elif response != '':
-                            embed = discord.Embed(
-                                description = response
-                            )
-                            embed.set_footer(text='Chronos™'),
-                            await ctx.send(embed=embed)
-                else:
-                    return
-
+                        )
+                        embed.set_footer(text='Chronos™'),
+                        await ctx.send(embed=embed)
+            except socket.timeout:
+                embed = discord.Embed(
+                    description = "Couldn't reach the server in time"
+                )
+                embed.set_footer(text='Chronos™'),
+                await ctx.send(embed=embed)
 
 def setup(bot): # a extension must have a setup function
 	bot.add_cog(execute(bot)) # adding a cog
