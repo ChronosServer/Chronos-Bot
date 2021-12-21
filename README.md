@@ -60,6 +60,8 @@ The bot's help command contains additional information on how to use commands
         - status | shows server status
 
 ## Version History
+* 1.2
+    * Add calc command, code cleanup 
 * 1.1
     * Add status and tps command, code cleanup
 * 1.0
