@@ -20,16 +20,7 @@ class region(commands.Cog):
     @commands.has_role(int(member_role))
     @commands.command(help = 'Get region files from SMP, Usage: `!!region <smp/cmp/cmp2/cmp3/mirror> <ow/nether/end> <region (Example: r.0.0)>`')
     async def region(self, ctx, server, dimension, region):
-        if server == 'smp':
-            server_path = smp_path
-        if server == 'cmp':
-            server_path = cmp_path
-        if server == 'cmp2':
-            server_path = cmp2_path
-        if server == 'cmp3':
-            server_path = cmp3_path
-        if server == 'mirror':
-            server_path = mirror_path
+        server_path = [server + '_path']
         if dimension == 'end':
             region_folder_path = '/DIM1/region/'
         if dimension == 'ow':
