@@ -1,4 +1,4 @@
-# Chronos discord bot
+# Chronos Discord Bot
 
 ## Description
 
@@ -9,10 +9,11 @@ The bot is still a work in progress, some commands may not fully function or the
 ### Dependencies
 
 * Any os, Linux & Windows run scripts are included
-* Python 3.9 or newer
-* discord.py
-* rcon
-* psutil
+* [Python 3.9 or newer](https://www.python.org/downloads/)
+* [discord.py](https://pypi.org/project/discord.py/)
+* [rcon](https://pypi.org/project/rcon/)
+* [psutil](https://pypi.org/project/psutil/)
+* [NBT](https://pypi.org/project/NBT/)
 * Install requirements with running $ pip install -r requirements.txt
 
 ### Installing
@@ -38,6 +39,7 @@ If you run into any issues, please contact Chezloc#2039 on discord. Or join the 
 The bot's help command contains additional information on how to use commands 
 
 * Admin only
+    * Commands only available for admins
         - setstatus | allows you to change the bot's discord status
         - color | allows assignment of in game color via scoreboard teams
         - execute | allows you to execute a command via rcon
@@ -53,8 +55,12 @@ The bot's help command contains additional information on how to use commands
         - hardware | displays usage of hardware
         - help | shows help command
         - ping | displays bot ping
-        - worldsize | displays world size information   
+        - worldsize | displays world size information  
+        - tps | shows server tps
+        - status | shows server status
 
 ## Version History
+* 1.1
+    * Add status and tps command, code cleanup
 * 1.0
     * Initial Release
