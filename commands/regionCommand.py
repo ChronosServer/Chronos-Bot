@@ -5,12 +5,7 @@ import json
 # reads config
 f = open('config.json')
 data = json.load(f)
-member_role = data['member_role']
-smp_path = data['smp_path']
-cmp_path = data['cmp_path']
-cmp2_path = data['cmp2_path']
-cmp3_path = data['cmp3_path']
-mirror_path = data['mirror_path']
+member_role = data['bot']['member_role']
 f.close()
 
 # region command 
@@ -20,7 +15,10 @@ class region(commands.Cog):
     @commands.has_role(int(member_role))
     @commands.command(help = 'Get region files from SMP, Usage: `!!region <smp/cmp/cmp2/cmp3/mirror> <ow/nether/end> <region (Example: r.0.0)>`')
     async def region(self, ctx, server, dimension, region):
-        server_path = [server + '_path']
+        f = open('config.json')
+        data = json.load(f)
+        server_path = data[server + '_path']
+        f.close()
         if dimension == 'end':
             region_folder_path = '/DIM1/region/'
         if dimension == 'ow':
@@ -32,7 +30,7 @@ class region(commands.Cog):
         )
         embed.set_footer(text='Chronos™'),
         await ctx.send(embed=embed)
-        await ctx.send(file=discord.File(server_path + region_folder_path + region + '.mca'))
+        await ctx.send(file=discord.File(str(server_path) + region_folder_path + region + '.mca'))
 
 def setup(bot): # a extension must have a setup function
     bot.add_cog(region(bot)) # adding a cog

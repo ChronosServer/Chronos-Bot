@@ -7,12 +7,14 @@ import os
 # reads config
 f = open('config.json')
 data = json.load(f)
-token = data['token']
-prefix = data['prefix']
-default_status = data['default_status']
+token = data['bot']['token']
+prefix = data['bot']['prefix']
+default_status = data['bot']['default_status']
 f.close()
 
-client = commands.Bot(command_prefix=prefix)
+image_archive_id = 922209226170986556
+
+client = commands.Bot(command_prefix=prefix, case_insensitive=True)
 
 @client.event
 async def on_ready():
@@ -26,6 +28,22 @@ for filename in os.listdir('./commands'):
   else:
     print(f'Unable to load ' + filename)
 print('All extensions have been loaded')
+
+@client.event
+async def on_command_error(ctx, error):
+    if isinstance(error, commands.errors.CommandNotFound):
+        error_msg = 'Command not found'
+    elif isinstance(error, commands.errors.CheckFailure):
+        error_msg = 'Insufficient permission'
+    elif isinstance(error, commands.errors.UserInputError):
+        error_msg = 'Invalid usage'
+    else:
+        raise error
+    embed = discord.Embed(
+      description = error_msg
+    )
+    embed.set_footer(text='Chronos™'),
+    await ctx.send(embed=embed)
 
 # command to reload cogs
 @client.command(help = 'Reload the bot, Usage: `!!reload` (Admin Only)')

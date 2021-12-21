@@ -10,8 +10,8 @@ from filesizeLibrary import get_file_size
 # reads config
 f = open('config.json')
 data = json.load(f)
-cmp_structure_path = data['cmp_structure_path']
-member_role = data['member_role']
+cmp_structure_path = data['server']['cmp_structure_path']
+member_role = data['bot']['member_role']
 f.close()
 
 # structure command 

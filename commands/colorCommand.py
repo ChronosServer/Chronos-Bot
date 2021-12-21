@@ -7,9 +7,9 @@ import socket
 # reads config
 f = open('config.json')
 data = json.load(f)
-smp_rcon_port = data['smp_rcon_port']
-rcon_pass = data['rcon_pass']
-colors = data['colors']
+smp_rcon_port = data['server']['smp_rcon_port']
+rcon_pass = data['server']['rcon_pass']
+colors = data['server']['colors']
 f.close()
 
 # color command

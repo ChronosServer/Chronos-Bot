@@ -2,3 +2,4 @@ discord.py==1.7.3
 NBT==1.5.0
 psutil==5.8.0
 rcon==1.3.6
+simpleeval==0.9.11

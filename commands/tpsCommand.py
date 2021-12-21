@@ -9,12 +9,12 @@ from tpsLibrary import tps_check
 # reads config
 f = open('config.json')
 data = json.load(f)
-smp_path = data['smp_path']
-cmp_path = data['cmp_path']
-cmp2_path = data['cmp2_path']
-cmp3_path = data['cmp3_path']
-mirror_path = data['mirror_path']
-server_name = data['server_name']
+smp_path = data['server']['smp_path']
+cmp_path = data['server']['cmp_path']
+cmp2_path = data['server']['cmp2_path']
+cmp3_path = data['server']['cmp3_path']
+mirror_path = data['server']['mirror_path']
+server_name = data['bot']['server_name']
 f.close()
 
 # ping command

@@ -7,8 +7,8 @@ import json
 # reads config
 f = open('config.json')
 data = json.load(f)
-cpu_hardware = data['cpu_hardware']
-ram_hardware = data['ram_hardware']
+cpu_hardware = data['server']['cpu_hardware']
+ram_hardware = data['server']['ram_hardware']
 f.close()
 
 # hardware command

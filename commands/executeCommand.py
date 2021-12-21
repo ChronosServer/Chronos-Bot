@@ -7,12 +7,12 @@ import socket
 # reads config
 f = open('config.json')
 data = json.load(f)
-smp_rcon_port = data['smp_rcon_port']
-cmp_rcon_port = data['cmp_rcon_port']
-cmp2_rcon_port = data['cmp2_rcon_port']
-cmp3_rcon_port = data['cmp3_rcon_port']
-mirror_rcon_port = data['mirror_rcon_port']
-rcon_pass = data['rcon_pass']
+smp_rcon_port = data['server']['smp_rcon_port']
+cmp_rcon_port = data['server']['cmp_rcon_port']
+cmp2_rcon_port = data['server']['cmp2_rcon_port']
+cmp3_rcon_port = data['server']['cmp3_rcon_port']
+mirror_rcon_port = data['server']['mirror_rcon_port']
+rcon_pass = data['server']['rcon_pass']
 f.close()
 
 # execute command
