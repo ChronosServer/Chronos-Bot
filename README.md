@@ -59,6 +59,7 @@ The bot's help command contains additional information on how to use commands
         - worldsize | displays world size information  
         - tps | shows server tps
         - status | shows server status
+        - calc | simple calculator
 
 ## Version History
 * 1.2
