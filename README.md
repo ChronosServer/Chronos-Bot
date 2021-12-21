@@ -14,6 +14,7 @@ The bot is still a work in progress, some commands may not fully function or the
 * [rcon](https://pypi.org/project/rcon/)
 * [psutil](https://pypi.org/project/psutil/)
 * [NBT](https://pypi.org/project/NBT/)
+* [simpleeval](https://pypi.org/project/simpleeval/)
 * Install requirements with running $ pip install -r requirements.txt
 
 ### Installing
