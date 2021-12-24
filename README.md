@@ -15,6 +15,7 @@ The bot is still a work in progress, some commands may not fully function or the
 * [psutil](https://pypi.org/project/psutil/)
 * [NBT](https://pypi.org/project/NBT/)
 * [simpleeval](https://pypi.org/project/simpleeval/)
+* [parse](https://pypi.org/project/parse/)
 * Install requirements with running $ pip install -r requirements.txt
 
 ### Installing
@@ -47,6 +48,7 @@ The bot's help command contains additional information on how to use commands
         - reload | reload the bot
         - ban | ban user with user id
         - purge | delete selected amount of messages
+        - restart | restart server with bot reloading
 * Member only
     * The bot member role id can be specified in config.json
         - region | sends specified region file over discord
@@ -62,6 +64,8 @@ The bot's help command contains additional information on how to use commands
         - calc | simple calculator
 
 ## Version History
+* 1.3
+    * Add restart command, code cleanup 
 * 1.2
     * Add calc command, code cleanup 
 * 1.1
