@@ -14,6 +14,7 @@ The bot is still a work in progress, some commands may not fully function or the
 * [rcon](https://pypi.org/project/rcon/)
 * [psutil](https://pypi.org/project/psutil/)
 * [NBT](https://pypi.org/project/NBT/)
+* [simpleeval](https://pypi.org/project/simpleeval/)
 * Install requirements with running $ pip install -r requirements.txt
 
 ### Installing
@@ -58,8 +59,11 @@ The bot's help command contains additional information on how to use commands
         - worldsize | displays world size information  
         - tps | shows server tps
         - status | shows server status
+        - calc | simple calculator
 
 ## Version History
+* 1.2
+    * Add calc command, code cleanup 
 * 1.1
     * Add status and tps command, code cleanup
 * 1.0
