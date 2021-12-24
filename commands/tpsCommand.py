@@ -26,11 +26,11 @@ class tps(commands.Cog):
         embed = discord.Embed(
             title = server_name + ' TPS',
         )
-        embed.add_field(name = 'SMP', value = tps_check(smp_path), inline = False),
-        embed.add_field(name = 'CMP', value = tps_check(cmp_path), inline = False),
-        embed.add_field(name = 'CMP2', value = tps_check(cmp2_path), inline = False),
-        embed.add_field(name = 'CMP3', value = tps_check(cmp3_path), inline = False),
-        embed.add_field(name = 'MIRROR', value = tps_check(mirror_path), inline = False),
+        embed.add_field(name = 'SMP', value = tps_check(smp_path + 'world-smp0'), inline = False),
+        embed.add_field(name = 'CMP', value = tps_check(cmp_path + 'world-cmp0'), inline = False),
+        embed.add_field(name = 'CMP2', value = tps_check(cmp2_path + 'world-cmp0'), inline = False),
+        embed.add_field(name = 'CMP3', value = tps_check(cmp3_path + 'world-cmp0'), inline = False),
+        embed.add_field(name = 'MIRROR', value = tps_check(mirror_path + 'world-mirror0'), inline = False),
         embed.set_footer(text='Chronos™'),
         await ctx.send(embed=embed)
 

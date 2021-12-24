@@ -29,11 +29,11 @@ class worldsize(commands.Cog):
         embed = discord.Embed(
             title = server_name + ' World Size',
         )
-        embed.add_field(name='SMP', value=get_size_format(get_file_size(smp_path)), inline=False)
-        embed.add_field(name='CMP', value=get_size_format(get_file_size(cmp_path)), inline=False)
-        embed.add_field(name='CMP2', value=get_size_format(get_file_size(cmp2_path)), inline=False)
-        embed.add_field(name='CMP3', value=get_size_format(get_file_size(cmp3_path)), inline=False)
-        embed.add_field(name='MIRROR', value=get_size_format(get_file_size(mirror_path)), inline=False)
+        embed.add_field(name='SMP', value=get_size_format(get_file_size(smp_path + '/world-smp0')), inline=False)
+        embed.add_field(name='CMP', value=get_size_format(get_file_size(cmp_path + '/world-cmp0')), inline=False)
+        embed.add_field(name='CMP2', value=get_size_format(get_file_size(cmp2_path + '/world-cmp0')), inline=False)
+        embed.add_field(name='CMP3', value=get_size_format(get_file_size(cmp3_path + '/world-cmp0')), inline=False)
+        embed.add_field(name='MIRROR', value=get_size_format(get_file_size(mirror_path + '/world-mirror0')), inline=False)
         embed.add_field(name='PCRC Recordings', value=get_size_format(get_file_size(pcrc_recordings_path)), inline=False)
         embed.add_field(name='Webserver', value=get_size_format(get_file_size(webserver_path)), inline=False)
         embed.set_footer(text='Chronos™'),
