@@ -19,6 +19,7 @@ class structure(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
     @commands.command(help = 'Download and upload structure files to/from cmp, Usage: `!!structure <download/upload/list> <structure name (Only used for download)>` (Member Only)')
+    @commands.has_role(int(member_role))
     async def structure(self, ctx, strucaction, strucname=None):
         if strucaction == 'upload':
             if str(ctx.message.attachments) == "[]": # Checks if there is an attachment on the message
@@ -50,12 +51,6 @@ class structure(commands.Cog):
                 embed.add_field(name=item, value=get_size_format(get_file_size(cmp_structure_path + item)), inline=False)
             embed.set_footer(text='Chronos:tm:'),
             await ctx.send(embed=embed)
-        else:
-                embed = discord.Embed(
-                title = 'Invalid arguments'
-                )
-                embed.set_footer(text='Chronos™'),
-                await ctx.send(embed=embed)
 
 def setup(bot): # a extension must have a setup function
     bot.add_cog(structure(bot)) # adding a cog

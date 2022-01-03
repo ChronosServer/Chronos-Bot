@@ -49,6 +49,7 @@ The bot's help command contains additional information on how to use commands
         - ban | ban user with user id
         - purge | delete selected amount of messages
         - restart | restart server with bot reloading
+        - webserver | upload/delete/list files on the webserver
 * Member only
     * The bot member role id can be specified in config.json
         - region | sends specified region file over discord
@@ -64,6 +65,8 @@ The bot's help command contains additional information on how to use commands
         - calc | simple calculator
 
 ## Version History
+* 1.4
+    * Add webserver command
 * 1.3
     * Add restart command, code cleanup 
 * 1.2
