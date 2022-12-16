@@ -29,7 +29,7 @@ f.close()
 class restart(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-    @commands.command(help = 'Restart servers, Usage: `!!restart <server>` (Admin Only)')
+    @commands.command(help = 'Restart servers, Usage: `!!restart <server>` -bot(-bot is optinal if u dont want to reload bots) (Admin Only)')
     @commands.has_permissions(administrator=True)
     async def restart(self, ctx, server, reload_status=None):
         if server == 'smp':
@@ -137,7 +137,7 @@ class restart(commands.Cog):
                 fake_player_reload_commands.append('/player ' + fake_player + ' spawn at ' + coords + ' facing ' + rot0 + ' ' + rot1 + ' in ' + dim + ' in ' + gamemode)
 #kick real players and restart server        
             for real_player in real_players:
-                rcon(rcon_port, rcon_pass, 'kick ' + real_player)
+                rcon(rcon_port, rcon_pass, 'kick ' + real_player + ' SERVER RESTARTING')
             time.sleep(2.5)
             rcon(rcon_port, rcon_pass, 'stop')
 # reload bots

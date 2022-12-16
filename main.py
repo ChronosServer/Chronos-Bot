@@ -1,4 +1,5 @@
 import discord
+import discord.utils
 from discord.ext import commands
 from discord import client
 import json
@@ -11,8 +12,6 @@ token = data['bot']['token']
 prefix = data['bot']['prefix']
 default_status = data['bot']['default_status']
 f.close()
-
-image_archive_id = 922209226170986556
 
 client = commands.Bot(command_prefix=prefix, case_insensitive=True)
 

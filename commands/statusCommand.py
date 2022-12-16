@@ -29,11 +29,11 @@ class status(commands.Cog):
         embed = discord.Embed(
             title = 'Status of ' + server_name + ' servers',
         )
-        embed.add_field(name = 'SMP', value = status_check(smp_rcon_port, rcon_pass), inline = False),
-        embed.add_field(name = 'CMP', value = status_check(cmp_rcon_port, rcon_pass), inline = False),
-        embed.add_field(name = 'CMP2', value = status_check(cmp2_rcon_port, rcon_pass), inline = False),
-        embed.add_field(name = 'CMP3', value = status_check(cmp3_rcon_port, rcon_pass), inline = False),
-        embed.add_field(name = 'MIRROR', value = status_check(mirror_rcon_port, rcon_pass), inline = False),
+        embed.add_field(name = 'SMP', value = status_check(smp_rcon_port, rcon_pass), inline = False)
+        embed.add_field(name = 'CMP', value = status_check(cmp_rcon_port, rcon_pass), inline = False)
+        embed.add_field(name = 'CMP2', value = status_check(cmp2_rcon_port, rcon_pass), inline = False)
+        embed.add_field(name = 'CMP3', value = status_check(cmp3_rcon_port, rcon_pass), inline = False)
+        embed.add_field(name = 'MIRROR', value = status_check(mirror_rcon_port, rcon_pass), inline = False)
         embed.add_field(name = 'Main Storage', value = storage_check(storage_status_block_coords, smp_rcon_port, rcon_pass), inline = False)
         embed.set_footer(text='Chronos™'),
         await ctx.send(embed=embed)

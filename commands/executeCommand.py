@@ -40,7 +40,7 @@ class execute(commands.Cog):
                         print
                     elif response != '':
                         embed = discord.Embed(
-                            description = response
+                            description = f"`{response}`"
                         )
                         embed.set_footer(text='Chronos™'),
                         await ctx.send(embed=embed)
