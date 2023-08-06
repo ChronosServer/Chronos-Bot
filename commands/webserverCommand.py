@@ -36,7 +36,7 @@ class webserver(commands.Cog):
                             title = filename + ' has successfully been uploaded to the webserver'
                         )
                         embed.add_field(name='Size of the file is', value=get_size_format(ctx.message.attachments[0].size), inline=False)
-                        embed.add_field(name='Link', value='https://www.chronosmc.ml/files/downloads/' + filename, inline=False)
+                        embed.add_field(name='Link', value='https://www.chronosmc.com/files/downloads/' + filename, inline=False)
                         embed.set_footer(text='Chronos™'),
                         await ctx.send(embed=embed)
         elif webaction == 'delete':
@@ -52,9 +52,9 @@ class webserver(commands.Cog):
                 title = 'List of WDls on the webserver'
             )
             for item in wdlfiles:
-                embed.add_field(name=item, value=str(get_size_format(get_file_size(webserver_path + 'files/downloads/' +  item)) + ' https://www.chronosmc.ml/files/downloads/' + item), inline=False)
+                embed.add_field(name=item, value=str(get_size_format(get_file_size(webserver_path + 'files/downloads/' +  item)) + ' https://www.chronosmc.com/files/downloads/' + item), inline=False)
             embed.set_footer(text='Chronos™'),
             await ctx.send(embed=embed)
 
-def setup(bot): # a extension must have a setup function
-    bot.add_cog(webserver(bot)) # adding a cog
+async def setup(bot): # a extension must have a setup function
+    await bot.add_cog(webserver(bot)) # adding a cog

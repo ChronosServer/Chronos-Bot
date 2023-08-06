@@ -43,5 +43,5 @@ class region(commands.Cog):
         await ctx.send(embed=embed)
         await ctx.send(file=discord.File(str(server_path) + region_folder_path + region + '.mca'))
 
-def setup(bot): # a extension must have a setup function
-    bot.add_cog(region(bot)) # adding a cog
+async def setup(bot): # a extension must have a setup function
+    await bot.add_cog(region(bot)) # adding a cog

@@ -29,7 +29,7 @@ f.close()
 class restart(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-    @commands.command(help = 'Restart servers, Usage: `!!restart <server>` -bot(-bot is optinal if u dont want to reload bots) (Admin Only)')
+    @commands.command(help = 'Restart servers, Usage: `!!restart <server>` -bot (optinal if you want to reload bots) (Admin Only)')
     @commands.has_permissions(administrator=True)
     async def restart(self, ctx, server, reload_status=None):
         if server == 'smp':
@@ -48,7 +48,7 @@ class restart(commands.Cog):
             rcon_port = mirror_rcon_port
             server_path = mirror_path
 
-        if reload_status != '-bot':
+        if reload_status == '-bot':
             with open(os.path.join(str(server_path), 'whitelist.json'), 'r') as f:
                 whitelist = json.load(f)
                 players = [player["name"] for player in whitelist]
@@ -145,10 +145,10 @@ class restart(commands.Cog):
             for command in fake_player_reload_commands:
                 rcon(rcon_port, rcon_pass, command)
 # restart without reloading bots
-        if reload_status == '-bot':
+        if reload_status != '-bot':
             rcon(rcon_port, rcon_pass, 'kick @a')
             time.sleep(2.5)
             rcon(rcon_port, rcon_pass, 'stop')
 
-def setup(bot): # a extension must have a setup function
-	bot.add_cog(restart(bot)) # adding a cog
+async def setup(bot): # a extension must have a setup function
+	await bot.add_cog(restart(bot)) # adding a cog

@@ -2,7 +2,8 @@ import discord
 from discord import client
 from discord.ext import commands
 
-client = discord.Client() # defines 'client'
+intents = intents = discord.Intents.all()
+client = discord.Client(intents=intents) # defines 'client'
 
 # purge command
 class purge(commands.Cog):
@@ -25,5 +26,5 @@ class purge(commands.Cog):
             embed.set_footer(text='Chronos™'),
             await ctx.send(embed=embed)
 
-def setup(bot): # a extension must have a setup function
-	bot.add_cog(purge(client)) # adding a cog
+async def setup(bot): # a extension must have a setup function
+	await bot.add_cog(purge(client)) # adding a cog

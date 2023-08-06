@@ -19,5 +19,5 @@ class ban(commands.Cog):
             await ctx.send(embed=embed)   
             await ctx.guild.ban(user, reason = reason, delete_message_days = delete_message_days) 
 
-def setup(bot): # a extension must have a setup function
-	bot.add_cog(ban(bot)) # adding a cog
+async def setup(bot): # a extension must have a setup function
+	await bot.add_cog(ban(bot)) # adding a cog

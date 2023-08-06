@@ -1,4 +1,4 @@
-# Chronos Discord Bot
+# Chronos discord bot
 
 ## Description
 
@@ -9,13 +9,10 @@ The bot is still a work in progress, some commands may not fully function or the
 ### Dependencies
 
 * Any os, Linux & Windows run scripts are included
-* [Python 3.9 or newer](https://www.python.org/downloads/)
-* [discord.py](https://pypi.org/project/discord.py/)
-* [rcon](https://pypi.org/project/rcon/)
-* [psutil](https://pypi.org/project/psutil/)
-* [NBT](https://pypi.org/project/NBT/)
-* [simpleeval](https://pypi.org/project/simpleeval/)
-* [parse](https://pypi.org/project/parse/)
+* Python 3.9 or newer
+* discord.py
+* rcon
+* psutil
 * Install requirements with running $ pip install -r requirements.txt
 
 ### Installing
@@ -30,51 +27,40 @@ The bot is still a work in progress, some commands may not fully function or the
 
 ## Help
 
-If you run into any issues, please contact Chezloc#2039 on discord. Or join the [Chronos Discord](https://discord.gg/VvPucVAjUS)
+If you run into any issues, please contact chezloc on discord. Or join the [Chronos Discord](https://discord.gg/VvPucVAjUS)
 
 ## Authors
 
-- Chezloc#2039 
+- chezloc
 
 ## Commands
 
 The bot's help command contains additional information on how to use commands 
 
 * Admin only
-    * Commands only available for admins
         - setstatus | allows you to change the bot's discord status
         - color | allows assignment of in game color via scoreboard teams
         - execute | allows you to execute a command via rcon
         - reload | reload the bot
         - ban | ban user with user id
         - purge | delete selected amount of messages
-        - restart | restart server with bot reloading
-        - webserver | upload/delete/list files on the webserver
         - statTransfer | transfer stats from one player to another
+        - webserver | upload to the webserver
 * Member only
     * The bot member role id can be specified in config.json
         - region | sends specified region file over discord
         - structure | allows you to download/upload structure files from cmp
+        - region | allows you to download region files from servers
 * Public
     * Commands available for normal user
         - hardware | displays usage of hardware
         - help | shows help command
         - ping | displays bot ping
-        - worldsize | displays world size information  
+        - worldsize | displays world size information   
+        - hardware | displays hardware information
+        - calc | a calculator
         - tps | shows server tps
-        - status | shows server status
-        - calc | simple calculator
 
 ## Version History
-* 1.5
-    * Add statTransfer command
-* 1.4
-    * Add webserver command
-* 1.3
-    * Add restart command, code cleanup 
-* 1.2
-    * Add calc command, code cleanup 
-* 1.1
-    * Add status and tps command, code cleanup
 * 1.0
     * Initial Release

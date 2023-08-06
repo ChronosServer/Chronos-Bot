@@ -13,5 +13,5 @@ class ping(commands.Cog):
         embed.set_footer(text='Chronos™'),
         await ctx.send(embed=embed)    
 
-def setup(bot): # a extension must have a setup function
-	bot.add_cog(ping(bot)) # adding a cog
+async def setup(bot): # a extension must have a setup function
+	await bot.add_cog(ping(bot)) # adding a cog

@@ -4,6 +4,9 @@ from discord.ext import commands
 from discord import client
 import json
 import os
+import asyncio
+import nest_asyncio
+nest_asyncio.apply()
 
 # reads config
 f = open('config.json')
@@ -13,20 +16,22 @@ prefix = data['bot']['prefix']
 default_status = data['bot']['default_status']
 f.close()
 
-client = commands.Bot(command_prefix=prefix, case_insensitive=True)
+intents = intents = discord.Intents.all()
+client = commands.Bot(command_prefix=prefix, case_insensitive=True, intents=intents)
 
 @client.event
 async def on_ready():
     await client.change_presence(status=discord.Status.online,
                                  activity=discord.Game(name=default_status, type=discord.ActivityType.listening))
 
-for filename in os.listdir('./commands'):
-  if filename.endswith('.py'):
-    client.load_extension(f'commands.{filename[:-3]}')
-    print(f'commands.{filename[:-3]} has loaded.')
-  else:
-    print(f'Unable to load ' + filename)
-print('All extensions have been loaded')
+async def load_extensions():
+  for filename in os.listdir('./commands'):
+    if filename.endswith('.py'):
+      await client.load_extension(f'commands.{filename[:-3]}')
+      print(f'commands.{filename[:-3]} has loaded.')
+    else:
+      print(f'Unable to load ' + filename)
+  print('All extensions have been loaded')
 
 @client.event
 async def on_command_error(ctx, error):
@@ -69,4 +74,10 @@ class NewHelpName(commands.MinimalHelpCommand):
             await destination.send(embed=emby)
 client.help_command = NewHelpName()
 
-client.run(token) # runs the bot.
+async def main():
+  async with client:
+    await load_extensions()
+    await client.run(token) # runs the bot.
+
+# run main()
+asyncio.run(main())
