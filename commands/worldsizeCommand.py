@@ -15,7 +15,10 @@ smp_path = data['server']['smp_path']
 cmp_path = data['server']['cmp_path']
 cmp2_path = data['server']['cmp2_path']
 cmp3_path = data['server']['cmp3_path']
+cmp4_path = data['server']['cmp4_path']
 mirror_path = data['server']['mirror_path']
+snapshot_path = data['server']['snapshot_path']
+building_path = data['server']['building_path']
 pcrc_recordings_path = data['server']['pcrc_recordings_path']
 webserver_path = data['server']['webserver_path']
 f.close()
@@ -33,7 +36,10 @@ class worldsize(commands.Cog):
         embed.add_field(name='CMP', value=get_size_format(get_file_size(cmp_path + '/world-cmp0')), inline=False)
         embed.add_field(name='CMP2', value=get_size_format(get_file_size(cmp2_path + '/world-cmp0')), inline=False)
         embed.add_field(name='CMP3', value=get_size_format(get_file_size(cmp3_path + '/world-cmp0')), inline=False)
+        embed.add_field(name='CMP4', value=get_size_format(get_file_size(cmp4_path + '/world-cmp4')), inline=False)
         embed.add_field(name='MIRROR', value=get_size_format(get_file_size(mirror_path + '/world-mirror0')), inline=False)
+        embed.add_field(name='SNAPSHOT', value=get_size_format(get_file_size(snapshot_path + '/world-snapshot0')), inline=False)
+        embed.add_field(name='BUILDING', value=get_size_format(get_file_size(building_path + '/world-building0')), inline=False)
         embed.add_field(name='PCRC Recordings', value=get_size_format(get_file_size(pcrc_recordings_path)), inline=False)
         embed.add_field(name='Webserver', value=get_size_format(get_file_size(webserver_path)), inline=False)
         embed.set_footer(text='Chronos™'),

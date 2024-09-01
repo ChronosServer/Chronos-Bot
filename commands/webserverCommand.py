@@ -14,7 +14,7 @@ webserver_path = data['server']['webserver_path']
 member_role = data['bot']['member_role']
 f.close()
 
-valid_file_extensions = ['.zip', '.7z', '.rar', '.litematic', '.schematic', '.nbt']
+valid_file_extensions = ['.zip', '.7z', '.rar', '.litematic', '.schematic', '.nbt', '.png', '.tar.gz']
 
 # structure command 
 class webserver(commands.Cog):
@@ -31,28 +31,28 @@ class webserver(commands.Cog):
                 filename = str(split_v1).split("' ")[0]
                 for i in valid_file_extensions:
                     if filename.endswith(i): # Checks if it is a valid file
-                        await ctx.message.attachments[0].save(fp=webserver_path + 'files/downloads/' + filename.format(filename)) # saves the file
+                        await ctx.message.attachments[0].save(fp=webserver_path + 'webserver/' + filename.format(filename)) # saves the file
                         embed = discord.Embed(
                             title = filename + ' has successfully been uploaded to the webserver'
                         )
                         embed.add_field(name='Size of the file is', value=get_size_format(ctx.message.attachments[0].size), inline=False)
-                        embed.add_field(name='Link', value='https://www.chronosmc.com/files/downloads/' + filename, inline=False)
+                        embed.add_field(name='Link', value='https://www.chronosmc.com/files/webserver/' + filename, inline=False)
                         embed.set_footer(text='Chronos™'),
                         await ctx.send(embed=embed)
         elif webaction == 'delete':
             embed = discord.Embed(
-                title = filename2 + ' has been deleted', description = 'Filesize of the WDL was ' + get_size_format(get_file_size(webserver_path + 'files/downloads/' + filename2))
+                title = filename2 + ' has been deleted', description = 'Filesize of the WDL was ' + get_size_format(get_file_size(webserver_path + 'webserver/' + filename2))
             )
             embed.set_footer(text='Chronos™'),
             await ctx.send(embed=embed)
-            os.remove(webserver_path + 'files/downloads/' + filename2)
+            os.remove(webserver_path + 'webserver/' + filenames)
         elif webaction == 'list':
-            wdlfiles = os.listdir(webserver_path + 'files/downloads/')
+            wdlfiles = os.listdir(webserver_path + 'webserver/')
             embed = discord.Embed(
                 title = 'List of WDls on the webserver'
             )
             for item in wdlfiles:
-                embed.add_field(name=item, value=str(get_size_format(get_file_size(webserver_path + 'files/downloads/' +  item)) + ' https://www.chronosmc.com/files/downloads/' + item), inline=False)
+                embed.add_field(name=item, value=str(get_size_format(get_file_size(webserver_path + 'webserver/' +  item)) + ' https://www.chronosmc.com/files/webserver/' + item), inline=False)
             embed.set_footer(text='Chronos™'),
             await ctx.send(embed=embed)
 

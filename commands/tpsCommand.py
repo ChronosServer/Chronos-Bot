@@ -13,7 +13,10 @@ smp_path = data['server']['smp_path']
 cmp_path = data['server']['cmp_path']
 cmp2_path = data['server']['cmp2_path']
 cmp3_path = data['server']['cmp3_path']
+cmp4_path = data['server']['cmp4_path']
 mirror_path = data['server']['mirror_path']
+snapshot_path = data['server']['snapshot_path']
+building_path = data['server']['building_path']
 server_name = data['bot']['server_name']
 f.close()
 
@@ -30,7 +33,10 @@ class tps(commands.Cog):
         embed.add_field(name = 'CMP', value = tps_check(cmp_path + 'world-cmp0'), inline = False),
         embed.add_field(name = 'CMP2', value = tps_check(cmp2_path + 'world-cmp0'), inline = False),
         embed.add_field(name = 'CMP3', value = tps_check(cmp3_path + 'world-cmp0'), inline = False),
+        embed.add_field(name = 'CMP4', value = tps_check(cmp4_path + 'world-cmp4'), inline = False),
         embed.add_field(name = 'MIRROR', value = tps_check(mirror_path + 'world-mirror0'), inline = False),
+        embed.add_field(name = 'SNAPSHOT', value = tps_check(snapshot_path + 'world-snapshot0'), inline = False),
+        embed.add_field(name = 'BUILDING', value = tps_check(building_path + 'world-building0'), inline = False),
         embed.set_footer(text='Chronos™'),
         await ctx.send(embed=embed)
 

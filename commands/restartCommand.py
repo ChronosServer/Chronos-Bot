@@ -16,12 +16,18 @@ smp_rcon_port = data['server']['smp_rcon_port']
 cmp_rcon_port = data['server']['cmp_rcon_port']
 cmp2_rcon_port = data['server']['cmp2_rcon_port']
 cmp3_rcon_port = data['server']['cmp3_rcon_port']
+cmp4_rcon_port = data['server']['cmp4_rcon_port']
 mirror_rcon_port = data['server']['mirror_rcon_port']
+snapshot_rcon_port = data['server']['snapshot_rcon_port']
+building_rcon_port = data['server']['building_rcon_port']
 smp_path = data['server']['smp_path']
 cmp_path = data['server']['cmp_path']
 cmp2_path = data['server']['cmp2_path']
 cmp3_path = data['server']['cmp3_path']
+cmp4_path = data['server']['cmp4_path']
 mirror_path = data['server']['mirror_path']
+snapshot_path = data['server']['snapshot_path']
+building_path = data['server']['building_path']
 rcon_pass = data['server']['rcon_pass']
 f.close()
 
@@ -47,6 +53,12 @@ class restart(commands.Cog):
         if server == 'mirror':
             rcon_port = mirror_rcon_port
             server_path = mirror_path
+        if server == 'snapshot':
+            rcon_port = snapshot_rcon_port
+            server_path = snapshot_path
+        if server == 'building':
+            rcon_port = building_rcon_port
+            server_path = building_path
 
         if reload_status == '-bot':
             with open(os.path.join(str(server_path), 'whitelist.json'), 'r') as f:

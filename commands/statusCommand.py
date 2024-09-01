@@ -14,7 +14,10 @@ smp_rcon_port = data['server']['smp_rcon_port']
 cmp_rcon_port = data['server']['cmp_rcon_port']
 cmp2_rcon_port = data['server']['cmp2_rcon_port']
 cmp3_rcon_port = data['server']['cmp3_rcon_port']
+cmp4_rcon_port = data['server']['cmp4_rcon_port']
 mirror_rcon_port = data['server']['mirror_rcon_port']
+snapshot_rcon_port = data['server']['snapshot_rcon_port']
+building_rcon_port = data['server']['building_rcon_port']
 rcon_pass = data['server']['rcon_pass']
 server_name = data['bot']['server_name']
 storage_status_block_coords = data['server']['storage_status_block_coords']
@@ -24,7 +27,7 @@ f.close()
 class status(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-    @commands.command(help = 'Show ' + server_name + ' TPS, Usage: `!!status`')
+    @commands.command(help = 'Show ' + server_name + ' status, Usage: `!!status`')
     async def status(self, ctx):
         embed = discord.Embed(
             title = 'Status of ' + server_name + ' servers',
@@ -33,7 +36,10 @@ class status(commands.Cog):
         embed.add_field(name = 'CMP', value = status_check(cmp_rcon_port, rcon_pass), inline = False)
         embed.add_field(name = 'CMP2', value = status_check(cmp2_rcon_port, rcon_pass), inline = False)
         embed.add_field(name = 'CMP3', value = status_check(cmp3_rcon_port, rcon_pass), inline = False)
+        embed.add_field(name = 'CMP4', value = status_check(cmp4_rcon_port, rcon_pass), inline = False)
         embed.add_field(name = 'MIRROR', value = status_check(mirror_rcon_port, rcon_pass), inline = False)
+        embed.add_field(name = 'SNAPSHOT', value = status_check(snapshot_rcon_port, rcon_pass), inline = False)
+        embed.add_field(name = 'BUILDING', value = status_check(building_rcon_port, rcon_pass), inline = False)
         embed.add_field(name = 'Main Storage', value = storage_check(storage_status_block_coords, smp_rcon_port, rcon_pass), inline = False)
         embed.set_footer(text='Chronos™'),
         await ctx.send(embed=embed)
