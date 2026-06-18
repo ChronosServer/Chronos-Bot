@@ -1,49 +1,45 @@
 import discord
-from discord import client
 from discord.ext import commands
 import json
+import os
 import sys
 sys.path.append('./Chronos-Library/')
-from filesizeLibrary import get_size_format
-from filesizeLibrary import get_file_size
+from filesizeLibrary import get_size_format, get_file_size
 
-# reads config
 f = open('config.json')
 data = json.load(f)
 server_name = data['bot']['server_name']
-smp_path = data['server']['smp_path']
-cmp_path = data['server']['cmp_path']
-cmp2_path = data['server']['cmp2_path']
-cmp3_path = data['server']['cmp3_path']
-cmp4_path = data['server']['cmp4_path']
-mirror_path = data['server']['mirror_path']
-snapshot_path = data['server']['snapshot_path']
-building_path = data['server']['building_path']
-pcrc_recordings_path = data['server']['pcrc_recordings_path']
-webserver_path = data['server']['webserver_path']
+server_cfg = data['server']
+
+SERVER_WORLD_PATHS = {
+    k.replace('_path', ''): os.path.join(server_cfg[k], server_cfg[k.replace('_path', '_world_name')])
+    for k in server_cfg
+    if k.endswith('_path') and k.replace('_path', '_world_name') in server_cfg
+}
+recordings_path = os.path.join(server_cfg['smp_path'], 'recordings')
+webserver_path = server_cfg['webserver_path']
 f.close()
 
-# worldsize command
+def safe_get_size(path):
+    try:
+        return get_size_format(get_file_size(path))
+    except (FileNotFoundError, PermissionError):
+        return 'N/A'
+
 class worldsize(commands.Cog):
-    def __init__(self, client):
-        self.client = client
-    @commands.command(help = 'Display ' + server_name + ' world size, Usage `!!worldsize`')
+    def __init__(self, bot):
+        self.bot = bot
+
+    @commands.command(help=f'Display {server_name} world size, Usage: `!!worldsize`')
     async def worldsize(self, ctx):
-        embed = discord.Embed(
-            title = server_name + ' World Size',
-        )
-        embed.add_field(name='SMP', value=get_size_format(get_file_size(smp_path + '/world-smp0')), inline=False)
-        embed.add_field(name='CMP', value=get_size_format(get_file_size(cmp_path + '/world-cmp0')), inline=False)
-        embed.add_field(name='CMP2', value=get_size_format(get_file_size(cmp2_path + '/world-cmp0')), inline=False)
-        embed.add_field(name='CMP3', value=get_size_format(get_file_size(cmp3_path + '/world-cmp0')), inline=False)
-        embed.add_field(name='CMP4', value=get_size_format(get_file_size(cmp4_path + '/world-cmp4')), inline=False)
-        embed.add_field(name='MIRROR', value=get_size_format(get_file_size(mirror_path + '/world-mirror0')), inline=False)
-        embed.add_field(name='SNAPSHOT', value=get_size_format(get_file_size(snapshot_path + '/world-snapshot0')), inline=False)
-        embed.add_field(name='BUILDING', value=get_size_format(get_file_size(building_path + '/world-building0')), inline=False)
-        embed.add_field(name='PCRC Recordings', value=get_size_format(get_file_size(pcrc_recordings_path)), inline=False)
-        embed.add_field(name='Webserver', value=get_size_format(get_file_size(webserver_path)), inline=False)
-        embed.set_footer(text='Chronos™'),
+        embed = discord.Embed(title=f'{server_name} World Size')
+        for server, world_path in SERVER_WORLD_PATHS.items():
+            embed.add_field(name=server.upper(), value=safe_get_size(world_path), inline=False)
+        embed.add_field(name='SMP Recordings', value=safe_get_size(recordings_path), inline=False)
+        embed.add_field(name='Webserver', value=safe_get_size(webserver_path), inline=False)
+        embed.set_footer(text='Chronos™')
         await ctx.send(embed=embed)
 
-async def setup(bot): # a extension must have a setup function
-	await bot.add_cog(worldsize(client)) # adding a cog
+
+async def setup(bot):
+    await bot.add_cog(worldsize(bot))

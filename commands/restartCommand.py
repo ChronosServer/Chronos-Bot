@@ -4,163 +4,108 @@ import os
 import time
 import sys
 sys.path.append('./Chronos-Library/')
-from restartLibrary import rcon
-from restartLibrary import handle_list
-from restartLibrary import read_log
+from restartLibrary import rcon, handle_list, read_log
 
-# reads config
 f = open('config.json')
 data = json.load(f)
-max_restart_time = data['server']['max_restart_time']
-smp_rcon_port = data['server']['smp_rcon_port']
-cmp_rcon_port = data['server']['cmp_rcon_port']
-cmp2_rcon_port = data['server']['cmp2_rcon_port']
-cmp3_rcon_port = data['server']['cmp3_rcon_port']
-cmp4_rcon_port = data['server']['cmp4_rcon_port']
-mirror_rcon_port = data['server']['mirror_rcon_port']
-snapshot_rcon_port = data['server']['snapshot_rcon_port']
-building_rcon_port = data['server']['building_rcon_port']
-smp_path = data['server']['smp_path']
-cmp_path = data['server']['cmp_path']
-cmp2_path = data['server']['cmp2_path']
-cmp3_path = data['server']['cmp3_path']
-cmp4_path = data['server']['cmp4_path']
-mirror_path = data['server']['mirror_path']
-snapshot_path = data['server']['snapshot_path']
-building_path = data['server']['building_path']
+max_restart_time = float(data['server']['max_restart_time'])
 rcon_pass = data['server']['rcon_pass']
+server_cfg = data['server']
+
+RCON_PORTS = {
+    k.replace('_rcon_port', ''): v
+    for k, v in server_cfg.items()
+    if k.endswith('_rcon_port')
+}
+SERVER_PATHS = {
+    k.replace('_path', ''): v
+    for k, v in server_cfg.items()
+    if k.endswith('_path') and not k.endswith('_world_name')
+}
 f.close()
 
-# restart command
+DIMENSIONS = ['the_end', 'overworld', 'the_nether']
+DIM_LABEL = {
+    'the_end':    'minecraft:the_end',
+    'overworld':  'minecraft:overworld',
+    'the_nether': 'minecraft:the_nether',
+}
+GAMEMODES = ['survival', 'creative', 'spectator', 'adventure']
+
+
 class restart(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-    @commands.command(help = 'Restart servers, Usage: `!!restart <server>` -bot (optinal if you want to reload bots) (Admin Only)')
+
+    @commands.command(help='Restart servers, Usage: `!!restart <server>` `-bot` (optional, reloads bots) (Admin Only)')
     @commands.has_permissions(administrator=True)
     async def restart(self, ctx, server, reload_status=None):
-        if server == 'smp':
-            rcon_port = smp_rcon_port
-            server_path = smp_path
-        if server == 'cmp':
-            rcon_port = cmp_rcon_port
-            server_path = cmp_path
-        if server == 'cmp2':
-            rcon_port = cmp2_rcon_port
-            server_path = cmp2_path
-        if server == 'cmp3':
-            rcon_port = cmp3_rcon_port
-            server_path = cmp3_path
-        if server == 'mirror':
-            rcon_port = mirror_rcon_port
-            server_path = mirror_path
-        if server == 'snapshot':
-            rcon_port = snapshot_rcon_port
-            server_path = snapshot_path
-        if server == 'building':
-            rcon_port = building_rcon_port
-            server_path = building_path
+        rcon_port = RCON_PORTS.get(server)
+        server_path = SERVER_PATHS.get(server)
+        if rcon_port is None or server_path is None:
+            await ctx.send(f"Unknown server `{server}`. Valid: {', '.join(RCON_PORTS)}")
+            return
 
-        if reload_status == '-bot':
-            with open(os.path.join(str(server_path), 'whitelist.json'), 'r') as f:
-                whitelist = json.load(f)
-                players = [player["name"] for player in whitelist]
-                f.close()
-            player_list = handle_list(rcon(rcon_port, rcon_pass, 'list'))
-            fake_players = []
-# get fake players
-            for player in player_list:
-                if player not in players:
-                    fake_players.append(player)
-                else:
-                    pass
-# get real players
-            real_players = []
-            for player in set(player_list) - set(fake_players):
-                real_players.append(player)
-# get dimension list of players
-            rcon(rcon_port, rcon_pass, 'execute in the_end run say @a[distance=0..]')
-            time.sleep(0.05)
-            end_players = read_log(server_path)
-            end_fake_players = []
-            for end_player in set(end_players) - set(real_players):
-                end_fake_players.append(end_player)
-            rcon(rcon_port, rcon_pass, 'execute in overworld run say @a[distance=0..]')
-            time.sleep(0.05)
-            ow_players = read_log(server_path)
-            ow_fake_players = []
-            for ow_player in set(ow_players) - set(real_players):
-                ow_fake_players.append(ow_player)
-            rcon(rcon_port, rcon_pass, 'execute in the_nether run say @a[distance=0..]')
-            time.sleep(0.05)
-            nether_players = read_log(server_path)
-            nether_fake_players = []
-            for nether_player in set(nether_players) - set(real_players):
-                nether_fake_players.append(nether_player)
-# get gamemode list of players
-            rcon(rcon_port, rcon_pass, 'say @a[gamemode=survival]')
-            time.sleep(0.05)
-            survival_players = read_log(server_path)
-            survival_fake_players = []
-            for survival_player in set(survival_players) - set(real_players):
-                survival_fake_players.append(survival_player)
-            rcon(rcon_port, rcon_pass, 'say @a[gamemode=creative]')
-            time.sleep(0.05)
-            creative_players = read_log(server_path)
-            creative_fake_players = []
-            for creative_player in set(creative_players) - set(real_players):
-                creative_fake_players.append(creative_player)
-            rcon(rcon_port, rcon_pass, 'say @a[gamemode=spectator]')
-            time.sleep(0.05)
-            spectator_players = read_log(server_path)
-            spectator_fake_players = []
-            for spectator_player in set(spectator_players) - set(real_players):
-                spectator_fake_players.append(spectator_player)
-            rcon(rcon_port, rcon_pass, 'say @a[gamemode=adventure]')
-            time.sleep(0.05)
-            adventure_players = read_log(server_path)
-            adventure_fake_players = []
-            for adventure_player in set(adventure_players) - set(real_players):
-                adventure_fake_players.append(adventure_player)
-
-            fake_player_reload_commands = []
-# get command for reloading fake players
-            for fake_player in fake_players:
-                coords = rcon(rcon_port, rcon_pass, 'execute at ' + fake_player + ' run tp ' + fake_player + ' ~ ~ ~')
-                coords = coords.replace(',', '')
-                coords = coords.replace('Teleported ' + fake_player + ' to ', '')
-                rot0 = rcon(rcon_port, rcon_pass, 'execute as ' + fake_player + ' run data get entity ' + fake_player + ' Rotation[0] 1')
-                rot0 = rot0.replace('Rotation[0] on ' + fake_player + ' after scale factor of 1.00 is ', '')
-                rot1 = rcon(rcon_port, rcon_pass, 'execute as ' + fake_player + ' run data get entity ' + fake_player + ' Rotation[1] 1')
-                rot1 = rot1.replace('Rotation[1] on ' + fake_player + ' after scale factor of 1.00 is ', '')
-                if fake_player in end_fake_players:
-                    dim = 'minecraft:the_end'
-                if fake_player in ow_fake_players:
-                    dim = 'minecraft:overworld'
-                if fake_player in nether_fake_players:
-                    dim = 'minecraft:the_nether'
-                if fake_player in survival_fake_players:
-                    gamemode = 'survival'
-                if fake_player in creative_fake_players:
-                    gamemode = 'creative'
-                if fake_player in spectator_fake_players:
-                    gamemode = 'spectator'
-                if fake_player in adventure_fake_players:
-                    gamemode = 'adventure'
-                fake_player_reload_commands.append('/player ' + fake_player + ' spawn at ' + coords + ' facing ' + rot0 + ' ' + rot1 + ' in ' + dim + ' in ' + gamemode)
-#kick real players and restart server        
-            for real_player in real_players:
-                rcon(rcon_port, rcon_pass, 'kick ' + real_player + ' SERVER RESTARTING')
-            time.sleep(2.5)
-            rcon(rcon_port, rcon_pass, 'stop')
-# reload bots
-            time.sleep(float(max_restart_time))
-            for command in fake_player_reload_commands:
-                rcon(rcon_port, rcon_pass, command)
-# restart without reloading bots
         if reload_status != '-bot':
             rcon(rcon_port, rcon_pass, 'kick @a')
             time.sleep(2.5)
             rcon(rcon_port, rcon_pass, 'stop')
+            return
 
-async def setup(bot): # a extension must have a setup function
-	await bot.add_cog(restart(bot)) # adding a cog
+        with open(os.path.join(server_path, 'whitelist.json'), 'r') as f:
+            whitelist = json.load(f)
+        whitelisted = {p['name'] for p in whitelist}
+
+        player_list = handle_list(rcon(rcon_port, rcon_pass, 'list')) or []
+        fake_players = [p for p in player_list if p not in whitelisted]
+        real_players = [p for p in player_list if p in whitelisted]
+
+        fake_player_dims = {}
+        for dim in DIMENSIONS:
+            rcon(rcon_port, rcon_pass, f'execute in {dim} run say @a[distance=0..]')
+            time.sleep(0.05)
+            in_dim = read_log(server_path)
+            for fp in fake_players:
+                if fp in in_dim and fp not in fake_player_dims:
+                    fake_player_dims[fp] = DIM_LABEL[dim]
+
+        fake_player_modes = {}
+        for gm in GAMEMODES:
+            rcon(rcon_port, rcon_pass, f'say @a[gamemode={gm}]')
+            time.sleep(0.05)
+            in_gm = read_log(server_path)
+            for fp in fake_players:
+                if fp in in_gm and fp not in fake_player_modes:
+                    fake_player_modes[fp] = gm
+
+        fake_player_reload_commands = []
+        for fp in fake_players:
+            coords_raw = rcon(rcon_port, rcon_pass, f'execute at {fp} run tp {fp} ~ ~ ~')
+            rot0_raw   = rcon(rcon_port, rcon_pass, f'execute as {fp} run data get entity {fp} Rotation[0] 1')
+            rot1_raw   = rcon(rcon_port, rcon_pass, f'execute as {fp} run data get entity {fp} Rotation[1] 1')
+
+            if not all([coords_raw, rot0_raw, rot1_raw]):
+                print(f"Skipping {fp}: couldn't get position/rotation data")
+                continue
+
+            coords = coords_raw.replace(',', '').replace(f'Teleported {fp} to ', '')
+            rot0   = rot0_raw.replace(f'Rotation[0] on {fp} after scale factor of 1.00 is ', '')
+            rot1   = rot1_raw.replace(f'Rotation[1] on {fp} after scale factor of 1.00 is ', '')
+            dim    = fake_player_dims.get(fp, 'minecraft:overworld')
+            gm     = fake_player_modes.get(fp, 'survival')
+            fake_player_reload_commands.append(
+                f'/player {fp} spawn at {coords} facing {rot0} {rot1} in {dim} in {gm}'
+            )
+
+        for rp in real_players:
+            rcon(rcon_port, rcon_pass, f'kick {rp} SERVER RESTARTING')
+        time.sleep(2.5)
+        rcon(rcon_port, rcon_pass, 'stop')
+
+        time.sleep(max_restart_time)
+        for command in fake_player_reload_commands:
+            rcon(rcon_port, rcon_pass, command)
+
+
+async def setup(bot):
+    await bot.add_cog(restart(bot))

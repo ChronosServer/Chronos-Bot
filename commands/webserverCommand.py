@@ -4,57 +4,53 @@ import json
 import os
 import sys
 sys.path.append('./Chronos-Library/')
-from filesizeLibrary import get_size_format
-from filesizeLibrary import get_file_size
+from filesizeLibrary import get_size_format, get_file_size
 
-# reads config
 f = open('config.json')
 data = json.load(f)
-webserver_path = data['server']['webserver_path']
-member_role = data['bot']['member_role']
+webserver_path = os.path.join(data['server']['webserver_path'], 'webserver')
 f.close()
 
-valid_file_extensions = ['.zip', '.7z', '.rar', '.litematic', '.schematic', '.nbt', '.png', '.tar.gz']
+VALID_EXTENSIONS = {'.zip', '.7z', '.rar', '.litematic', '.schematic', '.nbt', '.png', '.tar.gz'}
 
-# structure command 
+
 class webserver(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-    @commands.command(help = 'Download and delete WDLs on  the webserver, Usage: `!!webserver <upload/delete/list> <filename (Only used for delete)>` (Admin Only)')
+
+    @commands.command(help='Upload/delete/list files on the webserver, Usage: `!!webserver <upload/delete/list> <filename (delete only)>` (Admin Only)')
     @commands.has_permissions(administrator=True)
-    async def webserver(self, ctx, webaction, filename2=None):
+    async def webserver(self, ctx, webaction, filename=None):
         if webaction == 'upload':
-            if str(ctx.message.attachments) == "[]": # Checks if there is an attachment on the message
+            if not ctx.message.attachments:
                 return
-            else: # If there is it gets the filename from message.attachments
-                split_v1 = str(ctx.message.attachments).split("filename='")[1]
-                filename = str(split_v1).split("' ")[0]
-                for i in valid_file_extensions:
-                    if filename.endswith(i): # Checks if it is a valid file
-                        await ctx.message.attachments[0].save(fp=webserver_path + 'webserver/' + filename.format(filename)) # saves the file
-                        embed = discord.Embed(
-                            title = filename + ' has successfully been uploaded to the webserver'
-                        )
-                        embed.add_field(name='Size of the file is', value=get_size_format(ctx.message.attachments[0].size), inline=False)
-                        embed.add_field(name='Link', value='https://www.chronosmc.com/files/webserver/' + filename, inline=False)
-                        embed.set_footer(text='Chronos™'),
-                        await ctx.send(embed=embed)
-        elif webaction == 'delete':
-            embed = discord.Embed(
-                title = filename2 + ' has been deleted', description = 'Filesize of the WDL was ' + get_size_format(get_file_size(webserver_path + 'webserver/' + filename2))
-            )
-            embed.set_footer(text='Chronos™'),
-            await ctx.send(embed=embed)
-            os.remove(webserver_path + 'webserver/' + filenames)
-        elif webaction == 'list':
-            wdlfiles = os.listdir(webserver_path + 'webserver/')
-            embed = discord.Embed(
-                title = 'List of WDls on the webserver'
-            )
-            for item in wdlfiles:
-                embed.add_field(name=item, value=str(get_size_format(get_file_size(webserver_path + 'webserver/' +  item)) + ' https://www.chronosmc.com/files/webserver/' + item), inline=False)
-            embed.set_footer(text='Chronos™'),
+            attachment = ctx.message.attachments[0]
+            if not any(attachment.filename.endswith(ext) for ext in VALID_EXTENSIONS):
+                return
+            await attachment.save(fp=os.path.join(webserver_path, attachment.filename))
+            embed = discord.Embed(title=f'{attachment.filename} has successfully been uploaded to the webserver')
+            embed.add_field(name='Size', value=get_size_format(attachment.size), inline=False)
+            embed.add_field(name='Link', value=f'https://www.chronosmc.com/files/webserver/{attachment.filename}', inline=False)
+            embed.set_footer(text='Chronos™')
             await ctx.send(embed=embed)
 
-async def setup(bot): # a extension must have a setup function
-    await bot.add_cog(webserver(bot)) # adding a cog
+        elif webaction == 'delete':
+            filepath = os.path.join(webserver_path, filename)
+            size = get_size_format(get_file_size(filepath))
+            os.remove(filepath)
+            embed = discord.Embed(title=f'{filename} has been deleted', description=f'Filesize was {size}')
+            embed.set_footer(text='Chronos™')
+            await ctx.send(embed=embed)
+
+        elif webaction == 'list':
+            files = os.listdir(webserver_path)
+            embed = discord.Embed(title='List of files on the webserver')
+            for item in files:
+                size = get_size_format(get_file_size(os.path.join(webserver_path, item)))
+                embed.add_field(name=item, value=f'{size} — https://www.chronosmc.com/files/webserver/{item}', inline=False)
+            embed.set_footer(text='Chronos™')
+            await ctx.send(embed=embed)
+
+
+async def setup(bot):
+    await bot.add_cog(webserver(bot))

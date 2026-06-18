@@ -1,7 +1,7 @@
 #!/bin/sh
 while true
 do
-python3 main.py
+/opt/python/bin/python3 main.py
 echo "If you want to completely stop the process now, press Ctrl+C before
 the time is up!"
 echo "Rebooting in:"

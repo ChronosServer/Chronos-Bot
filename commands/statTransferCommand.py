@@ -1,39 +1,39 @@
 import discord
 from discord.ext import commands
-from rcon import Client
 import json
-import socket
-import errno
-from nbt import nbt
+import os
 import time
 import sys
 sys.path.append('./Chronos-Library/')
 from defaultRconLibrary import defaultRcon
+from nbt import nbt
 
-# reads config
 f = open('config.json')
 data = json.load(f)
 smp_rcon_port = data['server']['smp_rcon_port']
 smp_path = data['server']['smp_path']
+smp_world_name = data['server']['smp_world_name']
 rcon_pass = data['server']['rcon_pass']
 f.close()
 
-# execute command
+SCOREBOARD_PATH = os.path.join(smp_path, smp_world_name, 'data', 'minecraft', 'scoreboard.dat')
+
 class statTransfer(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-    @commands.command(help = 'Transfer statistics beetween players, Usage: `!!statTransfer <player you are transfering from> <player to transfer to>` (Admin Only)')
+
+    @commands.command(help='Transfer statistics between players, Usage: `!!statTransfer <from> <to>` (Admin Only)')
     @commands.has_permissions(administrator=True)
     async def statTransfer(self, ctx, playerf, playert):
-        scoreboards = nbt.NBTFile(smp_path + "world-smp0/data/scoreboard.dat")["data"]
+        scoreboards = nbt.NBTFile(SCOREBOARD_PATH)["data"]
         for scoreboard in scoreboards["Objectives"]:
-            await defaultRcon(smp_rcon_port, rcon_pass, "/scoreboard players operation " + playert + " " + scoreboard["Name"].value + " += " + playerf + " " + scoreboard["Name"].value)
-        time.sleep(int("5"))
-        await defaultRcon(smp_rcon_port, rcon_pass, "/scoreboard players reset " + playerf)
-        embed = discord.Embed(
-            description = 'Statistics have been transfered from ' + playerf + ' to ' + playert,
-        )
+            name = scoreboard["Name"].value
+            await defaultRcon(smp_rcon_port, rcon_pass, f"/scoreboard players operation {playert} {name} += {playerf} {name}")
+        time.sleep(5)
+        await defaultRcon(smp_rcon_port, rcon_pass, f"/scoreboard players reset {playerf}")
+        embed = discord.Embed(description=f'Statistics transferred from {playerf} to {playert}')
+        embed.set_footer(text='Chronos™')
         await ctx.send(embed=embed)
 
-async def setup(bot): # a extension must have a setup function
-	await bot.add_cog(statTransfer(bot)) # adding a cog
+async def setup(bot):
+    await bot.add_cog(statTransfer(bot))
