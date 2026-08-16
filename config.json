@@ -1,7 +1,7 @@
 {
     "bot": {
         "server_name": "Chronos",
-        "token": "XXXXXXX",
+        "token": "your.bot.token.goes.here",
         "prefix": "!!",
         "default_status": "Chronos™",
         "member_role": "890473812917891092",
@@ -37,7 +37,7 @@
         "public_path": "/opt/chronos/public_servers/public/server/",
         "public_world_name": "world",
         "webserver_path": "/var/www/html/files/",
-        "rcon_pass": "XXXXXXX",
+        "rcon_pass": "rcon.pass.for.all.servers.here",
         "smp_rcon_port": "30080",
         "cmp_rcon_port": "30081",
         "cmp2_rcon_port": "30082",
