@@ -2,9 +2,6 @@ import discord
 from discord import client
 from discord.ext import commands
 
-intents = intents = discord.Intents.all()
-client = discord.Client(intents=intents) # defines 'client'
-
 # purge command
 class purge(commands.Cog):
     def __init__(self, bot):

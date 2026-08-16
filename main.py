@@ -23,7 +23,9 @@ crash_report_paths = {
 crash_report_log_id = int(data['bot']['crash_report_log_id'])
 f.close()
 
-intents = discord.Intents.all()
+intents = discord.Intents.default()
+intents.message_content = True
+intents.members = True
 client = commands.Bot(command_prefix=prefix, case_insensitive=True, intents=intents)
 
 async def watch_folders():
