@@ -23,8 +23,13 @@ class hardware(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
 
-    @commands.command(help='Display hardware usage, Usage: `!!hardware`')
+    @commands.hybrid_command(
+        name='hardware',
+        description='Show CPU, RAM, swap, disk and network usage of the host machine',
+        help='Display hardware usage, Usage: `!!hardware`'
+    )
     async def hardware(self, ctx):
+        await ctx.defer()
         cpu_percent = psutil.cpu_percent(interval=0.5)
         cpu_cores = psutil.cpu_count(logical=False)
         cpu_threads = psutil.cpu_count(logical=True)

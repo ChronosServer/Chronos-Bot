@@ -1,14 +1,18 @@
 # commands/membersExport.py
 import discord
+from discord import app_commands
 from discord.ext import commands, tasks
 import json
 import os
 
-DATA_DIR = '/var/www/html/data'
-GUILD_ID = 861217564130279425
-ROLE_MEMBER = 890473812917891092
-ROLE_TRIAL = 864953821741580319
-ROLE_INACTIVE = 891094488385200148
+f = open('config.json')
+data = json.load(f)
+GUILD_ID = int(data['bot']['guild_id'])
+ROLE_MEMBER = int(data['bot']['member_role'])
+ROLE_TRIAL = int(data['bot']['trial_member_role'])
+ROLE_INACTIVE = int(data['bot']['inactive_member_role'])
+DATA_DIR = os.path.join(data['server']['website_path'], 'data')
+f.close()
 
 os.makedirs(DATA_DIR, exist_ok=True)
 
@@ -67,9 +71,15 @@ class membersExport(commands.Cog):
     async def before_export(self):
         await self.bot.wait_until_ready()
 
-    @commands.command(name='sync_members')
+    @commands.hybrid_command(
+        name='sync_members',
+        description='Re-export the member directory to the website now (admin only)',
+        help='Re-export the member directory to the website, Usage: `!!sync_members` (Admin Only)'
+    )
+    @app_commands.default_permissions(administrator=True)
     @commands.has_permissions(administrator=True)
     async def sync_members(self, ctx):
+        await ctx.defer()
         await ctx.send('⏳ Syncing members...')
         try:
             await self.export_members()

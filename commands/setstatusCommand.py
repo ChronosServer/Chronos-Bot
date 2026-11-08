@@ -1,4 +1,5 @@
 import discord
+from discord import app_commands
 from discord.ext import commands
 import json
 
@@ -11,9 +12,15 @@ class setstatus(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
 
-    @commands.command(help='Set bot status, Usage: `!!setstatus <status>` (Admin Only)')
+    @commands.hybrid_command(
+        name='setstatus',
+        description="Change the bot's status text (admin only)",
+        help='Set bot status, Usage: `!!setstatus <status>` (Admin Only)'
+    )
+    @app_commands.describe(statusname='Status text to show (leave empty to reset to the default)')
+    @app_commands.default_permissions(administrator=True)
     @commands.has_permissions(administrator=True)
-    async def setstatus(self, ctx, *, statusname=None):
+    async def setstatus(self, ctx, *, statusname: str = None):
         statusname = statusname or default_status
         await self.bot.change_presence(status=discord.Status.online,
                                        activity=discord.Game(name=statusname, type=discord.ActivityType.listening))

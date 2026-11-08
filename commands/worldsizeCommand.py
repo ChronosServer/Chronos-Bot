@@ -1,3 +1,4 @@
+import asyncio
 import discord
 from discord.ext import commands
 import json
@@ -30,13 +31,22 @@ class worldsize(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
 
-    @commands.command(help=f'Display {server_name} world size, Usage: `!!worldsize`')
+    @commands.hybrid_command(
+        name='worldsize',
+        description='Show the size on disk of every server world, the SMP recordings and the webserver',
+        help=f'Display {server_name} world size, Usage: `!!worldsize`'
+    )
     async def worldsize(self, ctx):
+        await ctx.defer()
+        # walking the world folders is slow, so every folder is measured in its own thread
+        paths = list(SERVER_WORLD_PATHS.values()) + [recordings_path, webserver_path]
+        sizes = await asyncio.gather(*(asyncio.to_thread(safe_get_size, path) for path in paths))
+
         embed = discord.Embed(title=f'{server_name} World Size')
-        for server, world_path in SERVER_WORLD_PATHS.items():
-            embed.add_field(name=server.upper(), value=safe_get_size(world_path), inline=False)
-        embed.add_field(name='SMP Recordings', value=safe_get_size(recordings_path), inline=False)
-        embed.add_field(name='Webserver', value=safe_get_size(webserver_path), inline=False)
+        for server, size in zip(SERVER_WORLD_PATHS, sizes):
+            embed.add_field(name=server.upper(), value=size, inline=False)
+        embed.add_field(name='SMP Recordings', value=sizes[-2], inline=False)
+        embed.add_field(name='Webserver', value=sizes[-1], inline=False)
         embed.set_footer(text='Chronos™')
         await ctx.send(embed=embed)
 

@@ -1,10 +1,14 @@
+import asyncio
+import discord
+from discord import app_commands
 from discord.ext import commands
 import json
 import os
-import time
 import sys
+from typing import Literal
 sys.path.append('./Chronos-Library/')
 from restartLibrary import rcon, handle_list, read_log
+from confirmLibrary import confirm
 
 f = open('config.json')
 data = json.load(f)
@@ -24,6 +28,8 @@ SERVER_PATHS = {
 }
 f.close()
 
+SERVERS = Literal[tuple(s for s in RCON_PORTS if s in SERVER_PATHS)]
+
 DIMENSIONS = ['the_end', 'overworld', 'the_nether']
 DIM_LABEL = {
     'the_end':    'minecraft:the_end',
@@ -37,18 +43,30 @@ class restart(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
 
-    @commands.command(help='Restart servers, Usage: `!!restart <server>` `-bot` (optional, reloads bots) (Admin Only)')
+    @commands.hybrid_command(
+        name='restart',
+        description='Restart a Minecraft server, optionally respawning its bots (admin only)',
+        help='Restart servers, Usage: `!!restart <server> [reload_bots]`, set `reload_bots` to `true` to respawn bots after the restart (Admin Only)'
+    )
+    @app_commands.describe(
+        server='Minecraft server to restart',
+        reload_bots="Respawn the server's bots (fake players) after the restart (waits for it to come back up)"
+    )
+    @app_commands.default_permissions(administrator=True)
     @commands.has_permissions(administrator=True)
-    async def restart(self, ctx, server, reload_status=None):
-        rcon_port = RCON_PORTS.get(server)
-        server_path = SERVER_PATHS.get(server)
-        if rcon_port is None or server_path is None:
-            await ctx.send(f"Unknown server `{server}`. Valid: {', '.join(RCON_PORTS)}")
+    async def restart(self, ctx, server: SERVERS, reload_bots: bool = False):
+        await ctx.defer()
+        rcon_port = RCON_PORTS[server]
+        server_path = SERVER_PATHS[server]
+
+        action = f'Restart `{server}`' + (' and respawn its bots afterwards' if reload_bots else '')
+        if not await confirm(ctx, f'{action}? Everyone on it will be kicked.'):
             return
 
-        if reload_status != '-bot':
+        if not reload_bots:
+            await ctx.send(embed=discord.Embed(description=f'Restarting `{server}`...').set_footer(text='Chronos™'))
             rcon(rcon_port, rcon_pass, 'kick @a')
-            time.sleep(2.5)
+            await asyncio.sleep(2.5)
             rcon(rcon_port, rcon_pass, 'stop')
             return
 
@@ -63,7 +81,7 @@ class restart(commands.Cog):
         fake_player_dims = {}
         for dim in DIMENSIONS:
             rcon(rcon_port, rcon_pass, f'execute in {dim} run say @a[distance=0..]')
-            time.sleep(0.05)
+            await asyncio.sleep(0.05)
             in_dim = read_log(server_path)
             for fp in fake_players:
                 if fp in in_dim and fp not in fake_player_dims:
@@ -72,7 +90,7 @@ class restart(commands.Cog):
         fake_player_modes = {}
         for gm in GAMEMODES:
             rcon(rcon_port, rcon_pass, f'say @a[gamemode={gm}]')
-            time.sleep(0.05)
+            await asyncio.sleep(0.05)
             in_gm = read_log(server_path)
             for fp in fake_players:
                 if fp in in_gm and fp not in fake_player_modes:
@@ -97,12 +115,16 @@ class restart(commands.Cog):
                 f'/player {fp} spawn at {coords} facing {rot0} {rot1} in {dim} in {gm}'
             )
 
+        await ctx.send(embed=discord.Embed(
+            description=f'Restarting `{server}` and respawning {len(fake_player_reload_commands)} bot(s) once it is back up...'
+        ).set_footer(text='Chronos™'))
+
         for rp in real_players:
             rcon(rcon_port, rcon_pass, f'kick {rp} SERVER RESTARTING')
-        time.sleep(2.5)
+        await asyncio.sleep(2.5)
         rcon(rcon_port, rcon_pass, 'stop')
 
-        time.sleep(max_restart_time)
+        await asyncio.sleep(max_restart_time)
         for command in fake_player_reload_commands:
             rcon(rcon_port, rcon_pass, command)
 

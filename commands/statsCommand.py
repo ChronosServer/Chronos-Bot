@@ -1,8 +1,11 @@
+import asyncio
 import discord
+from discord import app_commands
 from discord.ext import commands
 import json
 import os
 import sys
+from typing import Literal
 from nbt import nbt
 
 sys.path.append('./Chronos-Library/')
@@ -12,6 +15,7 @@ f = open('config.json')
 data = json.load(f)
 smp_path = data['server']['smp_path']
 smp_world_name = data['server']['smp_world_name']
+minecraft_version = data['server']['minecraft_version']
 member_role = int(data['bot']['member_role'])
 trial_member_role = int(data['bot']['trial_member_role'])
 inactive_member_role = int(data['bot']['inactive_member_role'])
@@ -19,16 +23,27 @@ smp_rcon_port = data['server']['smp_rcon_port']
 rcon_pass = data['server']['rcon_pass']
 f.close()
 
-with open('dictionary-26.2.json') as f:
+with open(f'dictionary-{minecraft_version}.json') as f:
     SCOREBOARD_DICT = json.load(f)
 
 SCOREBOARD_PATH = os.path.join(smp_path, smp_world_name, 'data', 'minecraft', 'scoreboard.dat')
 STATS_PATH = os.path.join(smp_path, smp_world_name, 'players', 'stats')
 USERCACHE_PATH = os.path.join(smp_path, 'usercache.json')
 
-STAT_CATEGORIES = {'killed', 'killed_by', 'dropped', 'picked_up', 'used', 'mined', 'broken', 'crafted', 'custom'}
+CATEGORIES = Literal['killed', 'killed_by', 'dropped', 'picked_up', 'used', 'mined', 'broken', 'crafted', 'custom', 'dig', 'scoreboard']
 
 SETDISPLAY_ROLES = {member_role, trial_member_role, inactive_member_role}
+
+# scoreboards are named <prefix>-<name>, the prefix says which stat category they track
+CATEGORY_PREFIX = {'mined': 'm', 'used': 'u', 'crafted': 'c', 'broken': 'b', 'dropped': 'd', 'picked_up': 'p', 'killed': 'k', 'killed_by': 'kb', 'custom': 'z'}
+DIG_TARGETS = ['all', 'axe', 'pickaxe', 'shears', 'shovel']
+
+# full scoreboard names for autocomplete (the dictionary keys), plus the dig-* scoreboards
+SCOREBOARD_NAMES = list(SCOREBOARD_DICT) + [f'dig-{t}' for t in DIG_TARGETS]
+TARGETS_BY_CATEGORY = {
+    category: [key.split('-', 1)[1] for key in SCOREBOARD_DICT if key.split('-', 1)[0] == prefix]
+    for category, prefix in CATEGORY_PREFIX.items()
+}
 
 
 def load_usercache():
@@ -37,8 +52,7 @@ def load_usercache():
     return {entry['uuid']: entry['name'] for entry in cache}
 
 
-def get_team_players():
-    scoreboards = nbt.NBTFile(SCOREBOARD_PATH)['data']
+def get_team_players(scoreboards):
     members = set()
     for team in scoreboards['Teams']:
         if 'Players' not in team:
@@ -46,6 +60,79 @@ def get_team_players():
         for player in team['Players']:
             members.add(player.value)
     return members
+
+
+def autocomplete_choices(options, current, limit=25):
+    current = current.lower()
+    matches = [o for o in options if o.startswith(current)]
+    if len(matches) < limit:
+        matches += [o for o in options if current in o and not o.startswith(current)]
+    return [app_commands.Choice(name=o, value=o) for o in matches[:limit]]
+
+
+# The three functions below read big files, so the commands run them in a thread.
+# They return (title, entries, error): error is a message to show instead of a ranking.
+
+def scoreboard_entries(name, include_bots):
+    scoreboards = nbt.NBTFile(SCOREBOARD_PATH)['data']
+    objectives = {s['Name'].value for s in scoreboards['Objectives']}
+    resolved = SCOREBOARD_DICT.get(name, name)
+
+    if resolved not in objectives:
+        return None, None, f'Unknown scoreboard `{name}`.'
+
+    team_players = None if include_bots else get_team_players(scoreboards)
+    entries = [
+        (entry['Name'].value, entry['Score'].value)
+        for entry in scoreboards['PlayerScores']
+        if entry['Objective'].value == resolved
+        and 'Score' in entry
+        and entry['Score'].value != 0
+        and (team_players is None or entry['Name'].value in team_players)
+    ]
+
+    if not entries:
+        return None, None, f'No scores found for `{name}`.'
+
+    entries.sort(key=lambda x: x[1], reverse=True)
+    return f'{name} — Rankings', entries, None
+
+
+def player_stat_entries(category, name, include_bots):
+    stat_key = f'minecraft:{name}' if ':' not in name else name
+    mc_category = f'minecraft:{category}'
+    team_players = None if include_bots else get_team_players(nbt.NBTFile(SCOREBOARD_PATH)['data'])
+    uuid_to_name = load_usercache()
+
+    entries = []
+    for uuid, player_name in uuid_to_name.items():
+        if team_players is not None and player_name not in team_players:
+            continue
+        stat_file = os.path.join(STATS_PATH, f'{uuid}.json')
+        if not os.path.exists(stat_file):
+            continue
+        with open(stat_file) as f:
+            try:
+                data = json.load(f)
+            except json.JSONDecodeError:
+                continue
+        value = data.get('stats', {}).get(mc_category, {}).get(stat_key, 0)
+        if value != 0:
+            entries.append((player_name, value))
+
+    if not entries:
+        return None, None, f'No data found for `{mc_category}.{stat_key}`.'
+
+    entries.sort(key=lambda x: x[1], reverse=True)
+    return f'minecraft:{category}.{stat_key} — Rankings', entries, None
+
+
+def resolve_objective(name):
+    # returns the real objective for a full or truncated name, or None if it doesn't exist
+    scoreboards = nbt.NBTFile(SCOREBOARD_PATH)['data']
+    objectives = {s['Name'].value for s in scoreboards['Objectives']}
+    resolved = SCOREBOARD_DICT.get(name, name)
+    return resolved if resolved in objectives else None
 
 
 def build_embeds(title, entries, total, threshold=1000):
@@ -97,112 +184,70 @@ class stats(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
 
-    @commands.command(
+    @commands.hybrid_command(
+        name='stats',
+        description='Leaderboards from player stats and scoreboards',
         help=(
-            '`!!stats <classification> <target> [-bot]`, Add `-bot` to include bots. `<classification>`: `killed`, `killed_by`, `dropped`, `picked_up`, `used`, `mined`, `broken`, `crafted`, `custom`, `dig`, Targets: `killed`, `killed_by` → entity type, `picked_up`, `used`, `mined`, `broken`, `crafted` → block/item id, `dig` → `all`, `axe`, `pickaxe`, `shears`, `shovel` `scoreboard` → scoreboard name, For `custom` or more info: https://minecraft.gamepedia.com/Statistics, Examples: `!!stats used diamond_pickaxe` `!!stats custom time_since_rest -bot`, `!!stats setdisplay <scoreboard>` sets the SMP sidebar display (accepts full or truncated names) (Member/Trial/Inactive Only)'
+            '`!!stats <category> <target> [include_bots]`, set `include_bots` to `true` to include bots. '
+            '`<category>`: `killed`, `killed_by`, `dropped`, `picked_up`, `used`, `mined`, `broken`, `crafted`, `custom`, `dig`, `scoreboard`, '
+            'Targets: `killed`, `killed_by` → entity type, `picked_up`, `used`, `mined`, `broken`, `crafted` → block/item id, '
+            '`dig` → `all`, `axe`, `pickaxe`, `shears`, `shovel`, `scoreboard` → scoreboard name, '
+            'For `custom` or more info: https://minecraft.gamepedia.com/Statistics, '
+            'Examples: `!!stats used diamond_pickaxe` `!!stats custom time_since_rest true`'
         )
     )
-    async def stats(self, ctx, category, *args):
-        if category == 'setdisplay':
-            author_role_ids = {r.id for r in ctx.author.roles}
-            if not author_role_ids & SETDISPLAY_ROLES:
-                await ctx.send(embed=discord.Embed(description='Insufficient permission').set_footer(text='Chronos™'))
-                return
-            if not args:
-                await ctx.send(embed=discord.Embed(description='Missing scoreboard name. Usage: `!!stats setdisplay <scoreboard>`').set_footer(text='Chronos™'))
-                return
-            await self._setdisplay(ctx, ' '.join(args))
-            return
-
-        if not args:
-            await ctx.send(embed=discord.Embed(description='Missing target. Usage: `!!stats <category> <target> [-bot]`').set_footer(text='Chronos™'))
-            return
-
-        include_bots = args[-1] == '-bot'
-        name = ' '.join(args[:-1] if include_bots else args)
-
-        if not name:
-            await ctx.send(embed=discord.Embed(description='Missing target.').set_footer(text='Chronos™'))
-            return
-
-        team_players = None if include_bots else get_team_players()
+    @app_commands.describe(
+        category='Stat category (dig = digging scoreboards, scoreboard = any scoreboard by name)',
+        target='Entity/block/item id, or scoreboard name; for dig: all, axe, pickaxe, shears, shovel',
+        include_bots='Include bots (fake players) in the ranking'
+    )
+    async def stats(self, ctx, category: CATEGORIES, target: str, include_bots: bool = False):
+        await ctx.defer()
 
         if category == 'scoreboard':
-            await self._scoreboard(ctx, name, team_players)
+            title, entries, error = await asyncio.to_thread(scoreboard_entries, target, include_bots)
         elif category == 'dig':
-            scoreboard_name = name if name.startswith('dig-') else f'dig-{name}'
-            await self._scoreboard(ctx, scoreboard_name, team_players)
-        elif category in STAT_CATEGORIES:
-            await self._player_stats(ctx, category, name, team_players)
+            scoreboard_name = target if target.startswith('dig-') else f'dig-{target}'
+            title, entries, error = await asyncio.to_thread(scoreboard_entries, scoreboard_name, include_bots)
         else:
-            await ctx.send(embed=discord.Embed(
-                description=f'Unknown category `{category}`. Use: `{", ".join(sorted(STAT_CATEGORIES))}`, `scoreboard`, `dig`, or `setdisplay`.'
-            ).set_footer(text='Chronos™'))
+            title, entries, error = await asyncio.to_thread(player_stat_entries, category, target, include_bots)
 
-    async def _scoreboard(self, ctx, name, team_players):
-        scoreboards = nbt.NBTFile(SCOREBOARD_PATH)['data']
-        objectives = [s['Name'].value for s in scoreboards['Objectives']]
-
-        if name not in objectives:
-            await ctx.send(embed=discord.Embed(description=f'Unknown scoreboard `{name}`.').set_footer(text='Chronos™'))
+        if error:
+            await ctx.send(embed=discord.Embed(description=error).set_footer(text='Chronos™'))
             return
 
-        entries = [
-            (entry['Name'].value, entry['Score'].value)
-            for entry in scoreboards['PlayerScores']
-            if entry['Objective'].value == name
-            and 'Score' in entry
-            and entry['Score'].value != 0
-            and (team_players is None or entry['Name'].value in team_players)
-        ]
-
-        if not entries:
-            await ctx.send(embed=discord.Embed(description=f'No scores found for `{name}`.').set_footer(text='Chronos™'))
-            return
-
-        entries.sort(key=lambda x: x[1], reverse=True)
         total = sum(s for _, s in entries)
-        for em in build_embeds(f'{name} — Rankings', entries, total):
+        for em in build_embeds(title, entries, total):
             await ctx.send(embed=em)
 
-    async def _player_stats(self, ctx, category, name, team_players):
-        stat_key = f'minecraft:{name}' if ':' not in name else name
-        mc_category = f'minecraft:{category}'
-        uuid_to_name = load_usercache()
+    @stats.autocomplete('target')
+    async def stats_target_autocomplete(self, interaction: discord.Interaction, current: str):
+        category = getattr(interaction.namespace, 'category', None)
+        if category == 'scoreboard':
+            options = SCOREBOARD_NAMES
+        elif category == 'dig':
+            options = DIG_TARGETS
+        else:
+            options = TARGETS_BY_CATEGORY.get(category, [])
+        return autocomplete_choices(options, current)
 
-        entries = []
-        for uuid, player_name in uuid_to_name.items():
-            if team_players is not None and player_name not in team_players:
-                continue
-            stat_file = os.path.join(STATS_PATH, f'{uuid}.json')
-            if not os.path.exists(stat_file):
-                continue
-            with open(stat_file) as f:
-                try:
-                    data = json.load(f)
-                except json.JSONDecodeError:
-                    continue
-            value = data.get('stats', {}).get(mc_category, {}).get(stat_key, 0)
-            if value != 0:
-                entries.append((player_name, value))
-
-        if not entries:
-            await ctx.send(embed=discord.Embed(description=f'No data found for `{mc_category}.{stat_key}`.').set_footer(text='Chronos™'))
+    @commands.hybrid_command(
+        name='setdisplay',
+        description='Show a scoreboard in the SMP sidebar (members only)',
+        help='Set the SMP sidebar display, Usage: `!!setdisplay <scoreboard>` (accepts full or truncated names) (Member/Trial/Inactive Only)'
+    )
+    @app_commands.describe(scoreboard='Scoreboard name, full or truncated')
+    @commands.guild_only()
+    async def setdisplay(self, ctx, scoreboard: str):
+        await ctx.defer()
+        author_role_ids = {r.id for r in ctx.author.roles}
+        if not author_role_ids & SETDISPLAY_ROLES:
+            await ctx.send(embed=discord.Embed(description='Insufficient permission').set_footer(text='Chronos™'))
             return
 
-        entries.sort(key=lambda x: x[1], reverse=True)
-        total = sum(s for _, s in entries)
-        for em in build_embeds(f'minecraft:{category}.{stat_key} — Rankings', entries, total):
-            await ctx.send(embed=em)
-
-    async def _setdisplay(self, ctx, name):
-        scoreboards = nbt.NBTFile(SCOREBOARD_PATH)['data']
-        objectives = {s['Name'].value for s in scoreboards['Objectives']}
-
-        resolved = SCOREBOARD_DICT.get(name, name)
-
-        if resolved not in objectives:
-            await ctx.send(embed=discord.Embed(description=f'Unknown scoreboard `{name}`.').set_footer(text='Chronos™'))
+        resolved = await asyncio.to_thread(resolve_objective, scoreboard)
+        if resolved is None:
+            await ctx.send(embed=discord.Embed(description=f'Unknown scoreboard `{scoreboard}`.').set_footer(text='Chronos™'))
             return
 
         response = await defaultRcon(smp_rcon_port, rcon_pass, f'scoreboard objectives setdisplay sidebar {resolved}')
@@ -211,6 +256,10 @@ class stats(commands.Cog):
             await ctx.send(embed=discord.Embed(description=f'Sidebar display set to `{resolved}`.').set_footer(text='Chronos™'))
         else:
             await ctx.send(embed=discord.Embed(description=response).set_footer(text='Chronos™'))
+
+    @setdisplay.autocomplete('scoreboard')
+    async def setdisplay_scoreboard_autocomplete(self, interaction: discord.Interaction, current: str):
+        return autocomplete_choices(SCOREBOARD_NAMES, current)
 
 
 async def setup(bot):

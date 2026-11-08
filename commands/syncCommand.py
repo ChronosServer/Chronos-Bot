@@ -1,39 +1,43 @@
 # commands/syncCommand.py
 import discord
+from discord import app_commands
 from discord.ext import commands, tasks
 import json
 import os
 import asyncio
 import aiohttp
 from datetime import datetime, timezone, timedelta
+from typing import Literal
 from rcon import Client
 import socket
 import json as _json
 import os
 import shutil
+import threading
 from nbt import nbt, region as nbt_region
 import requests
 
-DATA_DIR = '/var/www/html/data'
-STATE_FILE = '/opt/chronos/Chronos-Bot/sync_state.json'
-ARCHIVE_CHANNEL_ID = 1123695308933697647
-CACHE_TTL_HOURS = 20
-
-os.makedirs(DATA_DIR, exist_ok=True)
-
-ITEM_CACHE_DIR = '/var/www/html/cache/items'
-MC_ASSETS = 'https://raw.githubusercontent.com/InventivetalentDev/minecraft-assets/26.2/assets/minecraft/textures'
-os.makedirs(ITEM_CACHE_DIR, exist_ok=True)
-
 # load config directly
-with open('/opt/chronos/Chronos-Bot/config.json') as f:
+with open('config.json') as f:
     _cfg = _json.load(f)
 
+_bot_cfg = _cfg['bot']
 _server_cfg = _cfg['server']
+
+DATA_DIR = os.path.join(_server_cfg['website_path'], 'data')
+ITEM_CACHE_DIR = os.path.join(_server_cfg['website_path'], 'cache', 'items')
+STATE_FILE = 'sync_state.json'
+ARCHIVE_CHANNEL_ID = int(_bot_cfg.get('archive_channel_id') or 0)  # 0 = no forum archive
+CACHE_TTL_HOURS = 20
+MC_ASSETS = f"https://raw.githubusercontent.com/InventivetalentDev/minecraft-assets/{_server_cfg['minecraft_version']}/assets/minecraft/textures"
+
+os.makedirs(DATA_DIR, exist_ok=True)
+os.makedirs(ITEM_CACHE_DIR, exist_ok=True)
+
 MS_REGIONS = _server_cfg['storage_regions']
 DIG_REGIONS = _server_cfg['dig_storage_regions']
 REGION_SOURCE = os.path.join(_server_cfg['smp_path'], _server_cfg['smp_world_name'], 'dimensions', 'minecraft', 'overworld', 'region')
-REGION_CACHE = '/opt/chronos/Chronos-Bot/region-cache'
+REGION_CACHE = './region-cache'
 os.makedirs(REGION_CACHE, exist_ok=True)
 
 SHULKER_BOXES = {
@@ -126,13 +130,15 @@ def _scan_regions(region_names):
 def _format_name(item_id):
     return item_id.replace('minecraft:', '').replace('_', ' ').title()
 
-def sync_storage():
-    _cache_regions(MS_REGIONS)
-    ms = _scan_regions(MS_REGIONS)
-    ms_out = {_format_name(k): v for k, v in sorted(ms.items(), key=lambda x: x[1], reverse=True)}
+def sync_storage(region_lock):
+    # the lock is shared with /storage, both use the same region cache files
+    with region_lock:
+        _cache_regions(MS_REGIONS)
+        ms = _scan_regions(MS_REGIONS)
+        _cache_regions(DIG_REGIONS)
+        dig = _scan_regions(DIG_REGIONS)
 
-    _cache_regions(DIG_REGIONS)
-    dig = _scan_regions(DIG_REGIONS)
+    ms_out = {_format_name(k): v for k, v in sorted(ms.items(), key=lambda x: x[1], reverse=True)}
     dig_out = {_format_name(k): v for k, v in sorted(dig.items(), key=lambda x: x[1], reverse=True)}
 
     # cache textures for all unique items
@@ -145,15 +151,11 @@ def sync_storage():
         _json.dump(dig_out, f)
     print(f"Storage sync: {len(ms_out)} MS items, {len(dig_out)} DIG items")
 
-async def export_server_status(bot):
-    # reuse RCON_PORTS from storageCommand config
-    import json as _json
-    f = open('/opt/chronos/Chronos-Bot/config.json')
-    cfg = _json.load(f)
-    f.close()
-    rcon_pass = cfg['server']['rcon_pass']
-    ports = {k.replace('_rcon_port',''): v for k,v in cfg['server'].items() if k.endswith('_rcon_port')}
-    
+def export_server_status():
+    # runs in a thread, every ping can wait up to its timeout
+    rcon_pass = _server_cfg['rcon_pass']
+    ports = {k.replace('_rcon_port',''): v for k,v in _server_cfg.items() if k.endswith('_rcon_port')}
+
     result = {}
     for name, port in ports.items():
         try:
@@ -211,6 +213,8 @@ async def fetch_thread_messages(thread):
 
 
 async def sync_archive(bot, full=False):
+    if not ARCHIVE_CHANNEL_ID:
+        return
     channel = bot.get_channel(ARCHIVE_CHANNEL_ID)
     if channel is None:
         print(f"Archive channel {ARCHIVE_CHANNEL_ID} not found")
@@ -281,6 +285,8 @@ async def sync_archive(bot, full=False):
 class sync(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
+        if not hasattr(bot, 'region_lock'):
+            bot.region_lock = threading.Lock()  # shared with /storage
         self.scheduled_sync.start()
 
     def cog_unload(self):
@@ -291,9 +297,9 @@ class sync(commands.Cog):
         await self.bot.wait_until_ready()
         print("Running scheduled sync...")
         try:
-            await asyncio.get_event_loop().run_in_executor(None, sync_storage)
+            await asyncio.to_thread(sync_storage, self.bot.region_lock)
             await sync_archive(self.bot, full=False )
-            await export_server_status(self.bot)
+            await asyncio.to_thread(export_server_status)
             members_cog = self.bot.get_cog('membersExport')
             if members_cog:
                 await members_cog.export_members()
@@ -301,35 +307,50 @@ class sync(commands.Cog):
         except Exception as e:
             print(f"Scheduled sync error: {e}")
 
-    @commands.command()
+    @commands.hybrid_command(
+        name='sync',
+        description='Sync storage, server status, forum archive and member list to the website (admin only)',
+        help='Sync data to the website, Usage: `!!sync [full]` (Admin Only)'
+    )
+    @app_commands.describe(mode='incremental = only refetch changed forum threads, full = refetch every thread (slow)')
+    @app_commands.default_permissions(administrator=True)
     @commands.has_permissions(administrator=True)
-    async def sync(self, ctx, mode=None):
+    async def sync(self, ctx, mode: Literal['incremental', 'full'] = 'incremental'):
+        await ctx.defer()
         full = mode == 'full'
-        await ctx.send(f"⏳ Syncing {'(full)' if full else '(incremental)'}...")
+
+        async def reply(text):
+            # a slash command's reply window is 15 minutes, a long sync can outlive it
+            try:
+                await ctx.send(text)
+            except discord.HTTPException:
+                await ctx.channel.send(text)
+
+        await reply(f"⏳ Syncing {'(full)' if full else '(incremental)'}...")
 
         try:
-            await asyncio.get_event_loop().run_in_executor(None, sync_storage)
+            await asyncio.to_thread(sync_storage, self.bot.region_lock)
         except Exception as e:
-            await ctx.send(f"❌ Storage sync failed: {e}")
+            await reply(f"❌ Storage sync failed: {e}")
             return
 
         try:
             await sync_archive(self.bot, full=full)
         except Exception as e:
-            await ctx.send(f"❌ Archive sync failed: {e}")
+            await reply(f"❌ Archive sync failed: {e}")
             return
         
         try:
-            await export_server_status(self.bot)
+            await asyncio.to_thread(export_server_status)
         except Exception as e:
-            await ctx.send(f"❌ Status sync failed: {e}")
+            await reply(f"❌ Status sync failed: {e}")
             return
         
         members_cog = self.bot.get_cog('membersExport')
         if members_cog:
             await members_cog.export_members()
 
-        await ctx.send("✅ Synced storage, status, archive and members.")
+        await reply("✅ Synced storage, status, archive and members.")
 
 
 async def setup(bot):

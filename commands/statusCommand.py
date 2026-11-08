@@ -1,3 +1,4 @@
+import asyncio
 import discord
 from discord.ext import commands
 import json
@@ -25,12 +26,22 @@ class status(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
 
-    @commands.command(help=f'Show {server_name} status, Usage: `!!status`')
+    @commands.hybrid_command(
+        name='status',
+        description='Show whether each Minecraft server is online, and if Main Storage is running',
+        help=f'Show {server_name} status, Usage: `!!status`'
+    )
     async def status(self, ctx):
+        await ctx.defer()
+        # every check runs at the same time, in threads, so one dead server can't stall the rest
+        results = await asyncio.gather(
+            *(asyncio.to_thread(status_check, port, rcon_pass) for port in RCON_PORTS.values()),
+            asyncio.to_thread(storage_check, storage_status_block_coords, smp_rcon_port, rcon_pass)
+        )
         embed = discord.Embed(title=f'Status of {server_name} servers')
-        for server, port in RCON_PORTS.items():
-            embed.add_field(name=server.upper(), value=status_check(port, rcon_pass), inline=False)
-        embed.add_field(name='Main Storage', value=storage_check(storage_status_block_coords, smp_rcon_port, rcon_pass), inline=False)
+        for server, result in zip(RCON_PORTS, results):
+            embed.add_field(name=server.upper(), value=result, inline=False)
+        embed.add_field(name='Main Storage', value=results[-1], inline=False)
         embed.set_footer(text='Chronos™')
         await ctx.send(embed=embed)
 

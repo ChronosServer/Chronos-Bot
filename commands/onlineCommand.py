@@ -1,4 +1,5 @@
 # commands/onlineCommand.py
+import asyncio
 import discord
 from discord.ext import commands
 import json
@@ -22,14 +23,21 @@ class online(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
 
-    @commands.command(help='Show online players across all servers, Usage: `!!online`')
+    @commands.hybrid_command(
+        name='online',
+        description='Show which players are online on each Minecraft server',
+        help='Show online players across all servers, Usage: `!!online`'
+    )
     async def online(self, ctx):
+        await ctx.defer()
         embed = discord.Embed(title='Chronos online players')
         total = 0
         lines = []
 
-        for server, port in RCON_PORTS.items():
-            response = rcon(port, rcon_pass, 'list')
+        # query every server at the same time, in threads, so one dead server can't stall the rest
+        responses = await asyncio.gather(*(asyncio.to_thread(rcon, port, rcon_pass, 'list') for port in RCON_PORTS.values()))
+
+        for server, response in zip(RCON_PORTS, responses):
             if response is None:
                 lines.append(f'[{server.upper()}] Offline')
                 continue

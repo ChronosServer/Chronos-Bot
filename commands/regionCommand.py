@@ -1,7 +1,9 @@
 import discord
+from discord import app_commands
 from discord.ext import commands
 import json
 import os
+from typing import Literal
 
 f = open('config.json')
 data = json.load(f)
@@ -25,27 +27,37 @@ DIMENSION_PATHS = {
 }
 f.close()
 
+SERVERS = Literal[tuple(SERVER_PATHS)]
+
 
 class region(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
 
-    @commands.command(help='Get region files from servers, Usage: `!!region <server> <ow/nether/end> <region (e.g. r.0.0)>` (Member Only)')
-    async def region(self, ctx, server, dimension, region):
+    @commands.hybrid_command(
+        name='region',
+        description='Download a region file and its entities file from a server (members only)',
+        help='Get region files from servers, Usage: `!!region <server> <ow/nether/end> <region (e.g. r.0.0)>` (Member Only)'
+    )
+    @app_commands.describe(
+        server='Server to get the region files from',
+        dimension='Dimension: ow = overworld, nether, end',
+        region='Region name as in the world folder, e.g. r.0.0 or r.-3.2'
+    )
+    @commands.guild_only()
+    async def region(self, ctx, server: SERVERS, dimension: Literal['ow', 'nether', 'end'], region: str):
+        await ctx.defer()
         author_role_ids = {r.id for r in ctx.author.roles}
         if not author_role_ids & MEMBER_ROLES:
             await ctx.send(embed=discord.Embed(description='Insufficient permission').set_footer(text='Chronos™'))
             return
 
-        world_path = SERVER_PATHS.get(server)
-        if world_path is None:
-            await ctx.send(embed=discord.Embed(description=f"Unknown server `{server}`. Valid: {', '.join(SERVER_PATHS)}").set_footer(text='Chronos™'))
+        if os.path.basename(region) != region:
+            await ctx.send(embed=discord.Embed(description='Invalid region name.').set_footer(text='Chronos™'))
             return
 
-        dim = DIMENSION_PATHS.get(dimension)
-        if dim is None:
-            await ctx.send(embed=discord.Embed(description=f"Unknown dimension `{dimension}`. Valid: ow, nether, end").set_footer(text='Chronos™'))
-            return
+        world_path = SERVER_PATHS[server]
+        dim = DIMENSION_PATHS[dimension]
 
         region_path = os.path.join(world_path, dim[0], f'{region}.mca')
         entities_path = os.path.join(world_path, dim[1], f'{region}.mca')

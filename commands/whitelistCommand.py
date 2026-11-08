@@ -1,7 +1,10 @@
+import asyncio
 import discord
+from discord import app_commands
 from discord.ext import commands
 import json
 import socket
+from typing import Literal
 from rcon import Client
 from socket import error as socket_error
 import errno
@@ -17,6 +20,8 @@ RCON_PORTS = {
     if k.endswith('_rcon_port')
 }
 f.close()
+
+SERVERS = Literal[('all', *RCON_PORTS)]
 
 
 def rcon_whitelist(rcon_port, action, player):
@@ -148,42 +153,40 @@ class whitelist(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
 
-    @commands.command(help='Whitelist players. Usage: `!!whitelist <add/remove> <server/all> <player>`, `!!whitelist list <server>`, or attach a `.txt` file with add/remove (Admin Only)')
+    @commands.hybrid_command(
+        name='whitelist',
+        description='Add, remove or list whitelisted players on the Minecraft servers (admin only)',
+        help='Whitelist players. Usage: `!!whitelist <add/remove> <server/all> <player>`, `!!whitelist list <server>`, or attach a `.txt` file with add/remove (Admin Only)'
+    )
+    @app_commands.describe(
+        action='add or remove players, or list the whitelist of one server',
+        server='Server to apply this to (all = every server, but list needs a single server)',
+        player='Minecraft username to add/remove (leave empty if you attach a .txt file)',
+        file='.txt file with one Minecraft username per line, for adding/removing many players at once'
+    )
+    @app_commands.default_permissions(administrator=True)
     @commands.has_permissions(administrator=True)
-    async def whitelist(self, ctx, action, server, *, player=None):
+    async def whitelist(self, ctx, action: Literal['add', 'remove', 'list'], server: SERVERS, player: str = None, file: discord.Attachment = None):
+        await ctx.defer()
         if action == 'list':
-            if server not in RCON_PORTS:
+            if server == 'all':
                 await ctx.send(embed=discord.Embed(
-                    description=f'Unknown server. Valid: {", ".join(RCON_PORTS)}'
+                    description=f'`list` needs a single server, not `all`. Valid: {", ".join(RCON_PORTS)}'
                 ).set_footer(text='Chronos™'))
                 return
-            names, error = parse_whitelist_list(rcon_whitelist_list(RCON_PORTS[server]))
+            response = await asyncio.to_thread(rcon_whitelist_list, RCON_PORTS[server])
+            names, error = parse_whitelist_list(response)
             for em in build_list_embeds({server: (names, error)}):
                 await ctx.send(embed=em)
             return
 
-        if action not in ('add', 'remove'):
-            await ctx.send(embed=discord.Embed(
-                description=f'Unknown action `{action}`. Valid: `add`, `remove`, `list`'
-            ).set_footer(text='Chronos™'))
-            return
+        servers = RCON_PORTS if server == 'all' else {server: RCON_PORTS[server]}
 
-        if server == 'all':
-            servers = RCON_PORTS
-        elif server in RCON_PORTS:
-            servers = {server: RCON_PORTS[server]}
-        else:
-            await ctx.send(embed=discord.Embed(
-                description=f'Unknown server `{server}`. Valid: `all`, {", ".join(RCON_PORTS)}'
-            ).set_footer(text='Chronos™'))
-            return
-
-        if ctx.message.attachments:
-            attachment = ctx.message.attachments[0]
-            if not attachment.filename.endswith('.txt'):
+        if file is not None:
+            if not file.filename.endswith('.txt'):
                 await ctx.send(embed=discord.Embed(description='Attachment must be a `.txt` file.').set_footer(text='Chronos™'))
                 return
-            content = await attachment.read()
+            content = await file.read()
             players = [line.strip() for line in content.decode('utf-8').splitlines() if line.strip()]
         elif player:
             players = [player]
@@ -195,7 +198,7 @@ class whitelist(commands.Cog):
             await ctx.send(embed=discord.Embed(description='No players found.').set_footer(text='Chronos™'))
             return
 
-        results = whitelist_players(players, servers, action)
+        results = await asyncio.to_thread(whitelist_players, players, servers, action)
         for em in build_confirmation_embeds(results, action):
             await ctx.send(embed=em)
 

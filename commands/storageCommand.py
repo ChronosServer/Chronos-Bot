@@ -1,8 +1,12 @@
+import asyncio
+import threading
 import discord
+from discord import app_commands
 from discord.ext import commands
 import json
 import os
 import shutil
+from typing import Literal
 from nbt import nbt, region
 
 f = open('config.json')
@@ -114,39 +118,54 @@ def scan_regions(region_names, target_item=None):
     return total if target_item else all_counts
 
 
+def scan_with_lock(region_lock, region_names, target_item):
+    # one thread at a time may touch the region cache, /sync uses the same files
+    with region_lock:
+        cache_regions(region_names)
+        return scan_regions(region_names, target_item=target_item)
+
+
 class storage(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
+        if not hasattr(bot, 'region_lock'):
+            bot.region_lock = threading.Lock()  # shared with /sync
 
-    @commands.command(help='Show amount of items stored, Usage: `!!storage <ms/dig/all> <item_id/top>`')
-    async def storage(self, ctx, location, arg):
+    @commands.hybrid_command(
+        name='storage',
+        description='Count an item in Main/Dig Storage, or show the 10 most stored items',
+        help='Show amount of items stored, Usage: `!!storage <ms/dig/all> <item_id/top>`'
+    )
+    @app_commands.describe(
+        location='Which storage to scan: ms = Main Storage, dig = Dig Storage, all = both',
+        item='Item id to count (e.g. diamond_block), or "top" for the 10 most stored items'
+    )
+    async def storage(self, ctx, location: Literal['ms', 'dig', 'all'], item: str):
+        await ctx.defer()
         if location == 'ms':
             regions = ms_regions
             storage_label = 'Main Storage'
         elif location == 'dig':
             regions = dig_regions
             storage_label = 'Dig Storage'
-        elif location == 'all':
+        else:
             regions = ms_regions + dig_regions
             storage_label = 'Main Storage & Dig Storage'
-        else:
-            await ctx.send(embed=discord.Embed(description='Unknown location. Use `ms`, `dig`, or `all`.').set_footer(text='Chronos™'))
-            return
 
-        cache_regions(regions)
+        target = None if item == 'top' else (item if ':' in item else f'minecraft:{item}')
 
-        if arg == 'top':
-            counts = scan_regions(regions)
-            top10 = sorted(counts.items(), key=lambda x: x[1], reverse=True)[:10]
+        # copying and scanning the region files is heavy, so it runs in a thread
+        result = await asyncio.to_thread(scan_with_lock, self.bot.region_lock, regions, target)
+
+        if target is None:
+            top10 = sorted(result.items(), key=lambda x: x[1], reverse=True)[:10]
             embed = discord.Embed(title=f'Top 10 items in {storage_label}')
             for item_id, count in top10:
                 embed.add_field(name=format_item_name(item_id), value=format_count(count), inline=False)
             embed.set_footer(text='Chronos™')
             await ctx.send(embed=embed)
         else:
-            target = arg if ':' in arg else f'minecraft:{arg}'
-            count = scan_regions(regions, target_item=target)
-            embed = discord.Embed(description=f'**{format_count(count)}** {format_item_name(target)}')
+            embed = discord.Embed(description=f'**{format_count(result)}** {format_item_name(target)}')
             embed.set_footer(text='Chronos™')
             await ctx.send(embed=embed)
 

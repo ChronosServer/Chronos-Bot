@@ -7,9 +7,15 @@
         "member_role": "890473812917891092",
         "trial_member_role": "864953821741580319",
         "inactive_member_role": "891094488385200148",
-        "crash_report_log_id": "1515645218408501298"
+        "crash_report_log_id": "1515645218408501298",
+        "guild_id": "861217564130279425",
+        "archive_channel_id": "1123695308933697647",
+        "slash_commands": true,
+        "mention_prefix": false,
+        "text_prefix": false
     },
     "server": {
+        "minecraft_version": "26.2",
         "max_restart_time": "60",
         "storage_status_block_coords": "2141 60 -1270",
         "cpu_hardware": "Ryzen 9 7950X3D",
@@ -36,6 +42,7 @@
         "tour_world_name": "world-tour0",
         "public_path": "/opt/chronos/public_servers/public/server/",
         "public_world_name": "world",
+        "website_path": "/var/www/html/",
         "webserver_path": "/var/www/html/files/",
         "rcon_pass": "rcon.pass.for.all.servers.here",
         "smp_rcon_port": "30080",

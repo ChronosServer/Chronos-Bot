@@ -23,10 +23,47 @@ crash_report_paths = {
 crash_report_log_id = int(data['bot']['crash_report_log_id'])
 f.close()
 
+GUILD = discord.Object(id=int(data['bot']['guild_id']))
+
+def flag(name, default=True):
+    value = data['bot'].get(name, default)
+    return value if isinstance(value, bool) else str(value).strip().lower() in ('true', '1', 'yes', 'on')
+
+# which ways of running a command are enabled (config.json -> bot)
+use_slash = flag('slash_commands')            # /command
+use_mention_prefix = flag('mention_prefix')   # @Chronos command
+use_text_prefix = flag('text_prefix')         # !!command, the only one that needs the Message Content intent
+
+if not (use_slash or use_mention_prefix or use_text_prefix):
+    print('Warning: slash_commands, mention_prefix and text_prefix are all false, nothing can run a command')
+
 intents = discord.Intents.default()
-intents.message_content = True
+intents.message_content = use_text_prefix
 intents.members = True
-client = commands.Bot(command_prefix=prefix, case_insensitive=True, intents=intents)
+
+if use_text_prefix and use_mention_prefix:
+    command_prefix = commands.when_mentioned_or(prefix)
+elif use_text_prefix:
+    command_prefix = prefix
+else:
+    command_prefix = commands.when_mentioned
+client = commands.Bot(command_prefix=command_prefix, case_insensitive=True, intents=intents)
+
+if not (use_text_prefix or use_mention_prefix):
+    @client.event
+    async def on_message(message):
+        pass  # no text commands at all, so don't even look at messages
+
+async def sync_commands():
+    # slash commands are registered to the Chronos guild only (instant, no global propagation delay)
+    client.tree.clear_commands(guild=GUILD)
+    if use_slash:
+        client.tree.copy_global_to(guild=GUILD)
+    await client.tree.sync(guild=GUILD)  # with slash off this pushes an empty list, which removes the old slash commands
+
+@client.event
+async def setup_hook():
+    await sync_commands()
 
 async def watch_folders():
     seen = {}
@@ -103,15 +140,17 @@ async def on_command_error(ctx, error):
     await ctx.send(embed=embed)
 
 # command to reload cogs
-@client.command(help = 'Reload the bot, Usage: `!!reload` (Admin Only)')
+@client.hybrid_command(name='reload', description='Reload the bot (admin only)', help='Reload the bot, Usage: `!!reload` (Admin Only)')
 @commands.has_permissions(administrator=True)
 async def reload(ctx):
+    await ctx.defer()
     for filename in os.listdir('./commands'):
         if filename.endswith('.py'):
-            client.reload_extension(f'commands.{filename[:-3]}')
+            await client.reload_extension(f'commands.{filename[:-3]}')
             print(f'commands.{filename[:-3]} reloaded.')
         else:
             print(f'Unable to reload ' + filename)
+    await sync_commands()
     embed = discord.Embed(title='Sucessfully reloaded the bot')
     embed.set_footer(text='Chronos™'),
     await ctx.send(embed=embed)
