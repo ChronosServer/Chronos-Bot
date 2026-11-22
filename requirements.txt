@@ -1,6 +1,8 @@
-discord.py==1.7.3
-NBT==1.5.0
-parse==1.19.0
-psutil==5.8.0
-rcon==1.3.6
-simpleeval==0.9.11
+discord.py==2.7.1
+nbt==1.5.1
+nest_asyncio==1.6.0
+parse==1.22.4
+psutil==7.2.2
+rcon==2.4.9
+Requests==2.34.2
+simpleeval==1.0.8
