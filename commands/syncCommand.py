@@ -5,13 +5,12 @@ from discord.ext import commands, tasks
 import json
 import os
 import asyncio
-import aiohttp
-from datetime import datetime, timezone, timedelta
+import time
+import traceback
+import concurrent.futures
+from datetime import datetime, timezone
 from typing import Literal
 from rcon import Client
-import socket
-import json as _json
-import os
 import shutil
 import threading
 from nbt import nbt, region as nbt_region
@@ -19,7 +18,7 @@ import requests
 
 # load config directly
 with open('config.json') as f:
-    _cfg = _json.load(f)
+    _cfg = json.load(f)
 
 _bot_cfg = _cfg['bot']
 _server_cfg = _cfg['server']
@@ -28,8 +27,12 @@ DATA_DIR = os.path.join(_server_cfg['website_path'], 'data')
 ITEM_CACHE_DIR = os.path.join(_server_cfg['website_path'], 'cache', 'items')
 STATE_FILE = 'sync_state.json'
 ARCHIVE_CHANNEL_ID = int(_bot_cfg.get('archive_channel_id') or 0)  # 0 = no forum archive
-CACHE_TTL_HOURS = 20
 MC_ASSETS = f"https://raw.githubusercontent.com/InventivetalentDev/minecraft-assets/{_server_cfg['minecraft_version']}/assets/minecraft/textures"
+
+# how often things refresh, and the most time each step may take before it is abandoned
+STATUS_EVERY_SECONDS = 300      # server online/offline list (one RCON ping per server each time)
+HEAVY_EVERY_HOURS = 8           # storage scan + forum archive
+STEP_TIMEOUT = {'storage': 900, 'archive': 3600, 'status': 60}
 
 os.makedirs(DATA_DIR, exist_ok=True)
 os.makedirs(ITEM_CACHE_DIR, exist_ok=True)
@@ -49,6 +52,52 @@ SHULKER_BOXES = {
     'minecraft:black_shulker_box','minecraft:shulker_box'
 }
 
+
+# ---------- helpers ----------
+
+def log(msg):
+    print(f"[sync {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] {msg}", flush=True)
+
+
+def write_json_atomic(path, obj):
+    # write to a temp file and swap it in, so the website never reads a half-written file
+    tmp = path + '.tmp'
+    with open(tmp, 'w') as f:
+        json.dump(obj, f)
+    os.replace(tmp, path)
+
+
+def record(bot, name, ok, seconds, err=''):
+    health = getattr(bot, 'sync_health', None)
+    if health is None:
+        health = bot.sync_health = {}
+    prev = health.get(name, {})
+    now = time.time()
+    health[name] = {'ok': ok, 'at': now, 'seconds': round(seconds, 1), 'error': err,
+                    'last_ok': now if ok else prev.get('last_ok')}
+
+
+async def run_step(bot, name, factory, timeout):
+    """Run one sync step. Returns None on success or a short error string. Never raises."""
+    t0 = time.monotonic()
+    try:
+        await asyncio.wait_for(factory(), timeout)
+        took = time.monotonic() - t0
+        record(bot, name, True, took)
+        log(f"{name}: ok in {took:.1f}s")
+        return None
+    except asyncio.TimeoutError:
+        err = f"timed out after {timeout}s"
+    except Exception as e:
+        err = f"{type(e).__name__}: {e}"
+        traceback.print_exc()
+    record(bot, name, False, time.monotonic() - t0, err)
+    log(f"{name}: FAILED, {err}")
+    return err
+
+
+# ---------- storage ----------
+
 def _fetch_texture(url, dest):
     try:
         r = requests.get(url, timeout=5)
@@ -59,6 +108,7 @@ def _fetch_texture(url, dest):
     except Exception:
         pass
     return False
+
 
 def cache_item_textures(item_ids):
     for raw_id in item_ids:
@@ -76,6 +126,7 @@ def cache_item_textures(item_ids):
             if _fetch_texture(url, dest):
                 break
 
+
 def _cache_regions(region_names):
     for name in region_names:
         src = os.path.join(REGION_SOURCE, f'{name}.mca')
@@ -83,6 +134,7 @@ def _cache_regions(region_names):
         tmp = dst + '.tmp'
         shutil.copy2(src, tmp)
         os.replace(tmp, dst)
+
 
 def _count_items(items):
     counts = {}
@@ -103,6 +155,7 @@ def _count_items(items):
             continue
     return counts
 
+
 def _scan_regions(region_names):
     all_counts = {}
     for region_name in region_names:
@@ -110,7 +163,7 @@ def _scan_regions(region_names):
         try:
             rf = nbt_region.RegionFile(region_file)
         except Exception as e:
-            print(f"Failed to open {region_name}: {e}")
+            log(f"storage: failed to open {region_name}: {e}")
             continue
         for chunk in rf.iter_chunks():
             try:
@@ -127,46 +180,60 @@ def _scan_regions(region_names):
                     continue
     return all_counts
 
+
 def _format_name(item_id):
     return item_id.replace('minecraft:', '').replace('_', ' ').title()
 
+
 def sync_storage(region_lock):
-    # the lock is shared with /storage, both use the same region cache files
-    with region_lock:
+    # the lock is shared with /storage; never wait on it forever
+    if not region_lock.acquire(timeout=120):
+        raise RuntimeError('region lock still held after 120s (another command is using the region cache)')
+    try:
         _cache_regions(MS_REGIONS)
         ms = _scan_regions(MS_REGIONS)
         _cache_regions(DIG_REGIONS)
         dig = _scan_regions(DIG_REGIONS)
+    finally:
+        region_lock.release()
 
-    ms_out = {_format_name(k): v for k, v in sorted(ms.items(), key=lambda x: x[1], reverse=True)}
-    dig_out = {_format_name(k): v for k, v in sorted(dig.items(), key=lambda x: x[1], reverse=True)}
+    if not ms and not dig:
+        raise RuntimeError('storage scan found no items at all, keeping the old files')
 
     # cache textures for all unique items
-    all_ids = set(ms.keys()) | set(dig.keys())
-    cache_item_textures(all_ids)
+    cache_item_textures(set(ms.keys()) | set(dig.keys()))
 
-    with open(os.path.join(DATA_DIR, 'ms_storage.json'), 'w') as f:
-        _json.dump(ms_out, f)
-    with open(os.path.join(DATA_DIR, 'dig_storage.json'), 'w') as f:
-        _json.dump(dig_out, f)
-    print(f"Storage sync: {len(ms_out)} MS items, {len(dig_out)} DIG items")
+    for fname, counts in (('ms_storage.json', ms), ('dig_storage.json', dig)):
+        if not counts:
+            log(f"storage: {fname} scan was empty, keeping the old file")
+            continue
+        out = {_format_name(k): v for k, v in sorted(counts.items(), key=lambda x: x[1], reverse=True)}
+        write_json_atomic(os.path.join(DATA_DIR, fname), out)
+    log(f"storage: {len(ms)} MS item types, {len(dig)} DIG item types")
+
+
+# ---------- server status ----------
+
+def _ping(item):
+    name, port = item
+    try:
+        with Client('127.0.0.1', int(port), passwd=_server_cfg['rcon_pass'], timeout=1.5) as c:
+            c.run('ping')
+        return name, 'Online'
+    except Exception:
+        return name, 'Offline'
+
 
 def export_server_status():
-    # runs in a thread, every ping can wait up to its timeout
-    rcon_pass = _server_cfg['rcon_pass']
-    ports = {k.replace('_rcon_port',''): v for k,v in _server_cfg.items() if k.endswith('_rcon_port')}
+    ports = {k.replace('_rcon_port', ''): v for k, v in _server_cfg.items() if k.endswith('_rcon_port')}
+    if not ports:
+        raise RuntimeError('no *_rcon_port keys in config.json server section')
+    with concurrent.futures.ThreadPoolExecutor(max_workers=len(ports)) as ex:
+        result = dict(ex.map(_ping, ports.items()))
+    write_json_atomic(os.path.join(DATA_DIR, 'server_status.json'), dict(sorted(result.items())))
 
-    result = {}
-    for name, port in ports.items():
-        try:
-            with Client('127.0.0.1', int(port), passwd=rcon_pass, timeout=1.5) as c:
-                c.run('ping')
-            result[name] = 'Online'
-        except:
-            result[name] = 'Offline'
-    
-    with open(os.path.join(DATA_DIR, 'server_status.json'), 'w') as f:
-        json.dump(result, f)
+
+# ---------- forum archive ----------
 
 def load_state():
     if os.path.exists(STATE_FILE):
@@ -176,14 +243,16 @@ def load_state():
 
 
 def save_state(state):
-    with open(STATE_FILE, 'w') as f:
+    tmp = STATE_FILE + '.tmp'
+    with open(tmp, 'w') as f:
         json.dump(state, f)
+    os.replace(tmp, STATE_FILE)
 
 
 async def fetch_thread_messages(thread):
     messages = []
+    # discord.py already waits out rate limits, so no extra sleep per message
     async for msg in thread.history(limit=None, oldest_first=True):
-        await asyncio.sleep(0.5)
         attachments = [a.url for a in msg.attachments]
         embeds = []
         for e in msg.embeds:
@@ -214,98 +283,126 @@ async def fetch_thread_messages(thread):
 
 async def sync_archive(bot, full=False):
     if not ARCHIVE_CHANNEL_ID:
-        return
+        raise RuntimeError('archive_channel_id is not set in config.json')
     channel = bot.get_channel(ARCHIVE_CHANNEL_ID)
     if channel is None:
-        print(f"Archive channel {ARCHIVE_CHANNEL_ID} not found")
-        return
+        raise RuntimeError(f'archive channel {ARCHIVE_CHANNEL_ID} not found (wrong id, or the bot cannot see it)')
 
     state = load_state()
     existing = {p['id']: p for p in state.get('archive', [])}
-    posts = []
     now = datetime.now(timezone.utc)
 
-    active_threads = channel.threads
-    archived_threads = []
+    threads = list(channel.threads)
     async for thread in channel.archived_threads(limit=None):
-        await asyncio.sleep(1)
-        archived_threads.append(thread)
+        threads.append(thread)
+    log(f"archive: {len(threads)} threads, {'full' if full else 'incremental'}")
 
-    all_threads = list(active_threads) + archived_threads
-    print(f"Archive sync: {len(all_threads)} threads found")
+    posts, fetched, failed = [], 0, 0
+    for thread in threads:
+        tid = str(thread.id)
+        tags = [t.name for t in getattr(thread, 'applied_tags', [])]
+        last_id = str(thread.last_message_id or '')
+        cached = existing.get(tid)
 
-    for thread in all_threads:
-        thread_id = str(thread.id)
-        last_modified = thread.archive_timestamp.isoformat() if thread.archive_timestamp else thread.created_at.isoformat()
+        # unchanged thread (no new messages): reuse the saved copy instead of refetching it
+        if cached and not full and cached.get('last_message_id') == last_id:
+            cached['title'] = thread.name
+            cached['tags'] = tags
+            posts.append(cached)
+            continue
 
-        # check if cached version is still fresh enough
-        if not full and thread_id in existing:
-            cached = existing[thread_id]
-            cached_at_str = cached.get('cached_at')
-            if cached_at_str:
-                cached_at = datetime.fromisoformat(cached_at_str)
-                age = now - cached_at
-                if age < timedelta(hours=CACHE_TTL_HOURS) and cached.get('last_modified') == last_modified:
-                    posts.append(cached)
-                    continue
+        try:
+            messages = await fetch_thread_messages(thread)
+        except Exception as e:
+            failed += 1
+            log(f"archive: thread '{thread.name}' failed: {e!r}")
+            if cached:
+                posts.append(cached)
+            continue
 
-        print(f"Fetching thread: {thread.name}")
-        await asyncio.sleep(1)
-
-        messages = await fetch_thread_messages(thread)
-        tags = [tag.name for tag in thread.applied_tags] if hasattr(thread, 'applied_tags') else []
-        first_msg = messages[0] if messages else {}
-
-        post = {
-            'id': thread_id,
+        fetched += 1
+        first = messages[0] if messages else {}
+        posts.append({
+            'id': tid,
             'title': thread.name,
             'tags': tags,
-            'author': first_msg.get('author', ''),
-            'author_avatar': first_msg.get('author_avatar', ''),
+            'author': first.get('author', ''),
+            'author_avatar': first.get('author_avatar', ''),
             'timestamp': thread.created_at.isoformat(),
-            'last_modified': last_modified,
+            'last_message_id': last_id,
             'cached_at': now.isoformat(),
-            'content': first_msg.get('content', ''),
-            'attachments': first_msg.get('attachments', []),
-            'embeds': first_msg.get('embeds', []),
+            'content': first.get('content', ''),
+            'attachments': first.get('attachments', []),
+            'embeds': first.get('embeds', []),
             'messages': messages[1:],
-        }
-        posts.append(post)
+        })
+        await asyncio.sleep(0.25)
 
     posts.sort(key=lambda x: x['timestamp'], reverse=True)
     state['archive'] = posts
     save_state(state)
+    write_json_atomic(os.path.join(DATA_DIR, 'archive.json'), posts)
+    log(f"archive: {len(posts)} posts written ({fetched} fetched, {failed} failed and kept old copy)")
 
-    with open(os.path.join(DATA_DIR, 'archive.json'), 'w') as f:
-        json.dump(posts, f)
 
-    print(f"Archive sync complete: {len(posts)} posts")
-
+# ---------- cog ----------
 
 class sync(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
         if not hasattr(bot, 'region_lock'):
             bot.region_lock = threading.Lock()  # shared with /storage
-        self.scheduled_sync.start()
+        self.locks = {n: asyncio.Lock() for n in STEP_TIMEOUT}
+        self.heavy_loop.start()
+        self.status_loop.start()
 
     def cog_unload(self):
-        self.scheduled_sync.cancel()
+        self.heavy_loop.cancel()
+        self.status_loop.cancel()
 
-    @tasks.loop(hours=8)
-    async def scheduled_sync(self):
+    async def run(self, name, full=False):
+        """Run one step unless it is already running. Returns None if ok, else an error string."""
+        lock = self.locks[name]
+        if lock.locked():
+            return 'already running'
+        async with lock:
+            if name == 'storage':
+                factory = lambda: asyncio.to_thread(sync_storage, self.bot.region_lock)
+            elif name == 'archive':
+                factory = lambda: sync_archive(self.bot, full=full)
+            else:
+                factory = lambda: asyncio.to_thread(export_server_status)
+            return await run_step(self.bot, name, factory, STEP_TIMEOUT[name])
+
+    @tasks.loop(hours=HEAVY_EVERY_HOURS)
+    async def heavy_loop(self):
+        log("scheduled storage + archive sync starting")
+        await self.run('storage')
+        await self.run('archive')
+
+    @heavy_loop.before_loop
+    async def _before_heavy(self):
         await self.bot.wait_until_ready()
-        print("Running scheduled sync...")
-        try:
-            await asyncio.to_thread(sync_storage, self.bot.region_lock)
-            await sync_archive(self.bot, full=False )
-            await asyncio.to_thread(export_server_status)
-            members_cog = self.bot.get_cog('membersExport')
-            if members_cog:
-                await members_cog.export_members()
-            print("Scheduled sync complete")
-        except Exception as e:
-            print(f"Scheduled sync error: {e}")
+
+    @heavy_loop.error
+    async def _heavy_error(self, exc):
+        log(f"heavy_loop crashed: {exc!r}, restarting in 30s")
+        traceback.print_exception(type(exc), exc, exc.__traceback__)
+        asyncio.get_running_loop().call_later(30, lambda: self.heavy_loop.is_running() or self.heavy_loop.start())
+
+    @tasks.loop(seconds=STATUS_EVERY_SECONDS)
+    async def status_loop(self):
+        await self.run('status')
+
+    @status_loop.before_loop
+    async def _before_status(self):
+        await self.bot.wait_until_ready()
+
+    @status_loop.error
+    async def _status_error(self, exc):
+        log(f"status_loop crashed: {exc!r}, restarting in 30s")
+        traceback.print_exception(type(exc), exc, exc.__traceback__)
+        asyncio.get_running_loop().call_later(30, lambda: self.status_loop.is_running() or self.status_loop.start())
 
     @commands.hybrid_command(
         name='sync',
@@ -328,29 +425,55 @@ class sync(commands.Cog):
 
         await reply(f"⏳ Syncing {'(full)' if full else '(incremental)'}...")
 
-        try:
-            await asyncio.to_thread(sync_storage, self.bot.region_lock)
-        except Exception as e:
-            await reply(f"❌ Storage sync failed: {e}")
-            return
-
-        try:
-            await sync_archive(self.bot, full=full)
-        except Exception as e:
-            await reply(f"❌ Archive sync failed: {e}")
-            return
-        
-        try:
-            await asyncio.to_thread(export_server_status)
-        except Exception as e:
-            await reply(f"❌ Status sync failed: {e}")
-            return
-        
+        results = {
+            'storage': await self.run('storage'),
+            'archive': await self.run('archive', full=full),
+            'status': await self.run('status'),
+        }
         members_cog = self.bot.get_cog('membersExport')
-        if members_cog:
-            await members_cog.export_members()
+        results['members'] = await members_cog.run_export() if members_cog else 'members cog is not loaded'
 
-        await reply("✅ Synced storage, status, archive and members.")
+        lines = []
+        for name, err in results.items():
+            if err is None:
+                lines.append(f"✅ {name}")
+            elif err == 'already running':
+                lines.append(f"⏭ {name}: already running, skipped")
+            else:
+                lines.append(f"❌ {name}: {err}")
+        await reply('\n'.join(lines))
+
+    @commands.hybrid_command(
+        name='sync_status',
+        description='Show when each website data sync last ran (admin only)',
+        help='Show website sync health, Usage: `!!sync_status` (Admin Only)'
+    )
+    @app_commands.default_permissions(administrator=True)
+    @commands.has_permissions(administrator=True)
+    async def sync_status(self, ctx):
+        health = getattr(self.bot, 'sync_health', {})
+        lines = []
+        for name in ('storage', 'archive', 'status', 'members'):
+            s = health.get(name)
+            if not s:
+                lines.append(f"• {name}: has not run since the bot started")
+                continue
+            last_ok = f"<t:{int(s['last_ok'])}:R>" if s.get('last_ok') else 'never'
+            line = f"{'✅' if s['ok'] else '❌'} {name}: last success {last_ok}, last run took {s['seconds']}s"
+            if not s['ok']:
+                line += f"\n    error: {s['error']}"
+            lines.append(line)
+
+        members_cog = self.bot.get_cog('membersExport')
+        loops = [('storage+archive loop', self.heavy_loop), ('status loop', self.status_loop)]
+        if members_cog:
+            loops.append(('members loop', members_cog.export_loop))
+        lines.append('')
+        for label, loop in loops:
+            nxt = loop.next_iteration
+            when = f"<t:{int(nxt.timestamp())}:R>" if nxt else 'unknown'
+            lines.append(f"{'🟢' if loop.is_running() else '🔴 NOT RUNNING'} {label}, next run {when}")
+        await ctx.send('\n'.join(lines))
 
 
 async def setup(bot):
