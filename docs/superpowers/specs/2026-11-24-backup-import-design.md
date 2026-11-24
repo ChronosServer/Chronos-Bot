@@ -61,8 +61,9 @@ python3 tools/import_backups.py --server smp [--dry-run] [--no-backup]
   - a folder without a readable date is refused.
 - **Version:** `Data.Version.Name` / `DataVersion`, for the report and the rename choice.
 - **Stats:** `<world>/stats/*.json` (≤1.21) or `<world>/players/stats/*.json` (26.x).
-  Only the modern nested format (1.13+) is supported; a pre-1.13 flat format is refused
-  with a clear message.
+  Only the modern nested format (1.13+) is imported. Pre-1.13 flat files (players who
+  never logged in after 1.13) are skipped one by one and counted in the report; a backup
+  whose stat files are all pre-1.13 is refused with a clear message.
 - **Scoreboard:** `<world>/data/scoreboard.dat` or `<world>/data/minecraft/scoreboard.dat`.
   Same NBT reader as the live snapshot.
 - **Names:** `usercache.json` next to the world folder, if present. It only fills
@@ -136,7 +137,7 @@ Cases:
 - change-only across backups;
 - reruns skip;
 - a backup dated after live tracking is refused;
-- pre-1.13 format refused;
+- pre-1.13 files skipped and counted; an all-pre-1.13 backup refused;
 - tracking start moves back;
 - totals rebuilt with no cliff;
 - milestones crossed between backups are dated at the later backup with

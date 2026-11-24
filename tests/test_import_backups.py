@@ -84,12 +84,61 @@ def test_missing_date_refused(tmp_path):
     assert ib.read_backup(w, T1).at == T1
 
 
-def test_pre113_format_refused(tmp_path):
-    w = make_backup(tmp_path, last_played_ms=T1 * 1000, stats={})
-    (w / "stats" / f"{U1}.json").write_text(
+def _flat(world, u):
+    (world / "stats" / f"{u}.json").write_text(
         json.dumps({"stat.mineBlock.minecraft.stone": 5}), encoding="utf-8")
+
+
+def test_pre113_format_refused(tmp_path):
+    """Only flat (pre-1.13) files: nothing importable, refused."""
+    w = make_backup(tmp_path, last_played_ms=T1 * 1000, stats={})
+    _flat(w, U1)
     with pytest.raises(ValueError, match="pre-1.13 stats format is not supported"):
         ib.read_backup(w, None)
+
+
+def test_mixed_flat_and_modern_imports_modern(tmp_path, db, capsys):
+    """SMP began on 1.12: players who never came back after 1.13 keep flat
+    files in every backup. Those are skipped one by one and counted."""
+    w = make_backup(tmp_path, last_played_ms=T1 * 1000, stats={U1: mined(5)})
+    _flat(w, U2)
+    _flat(w, U3)
+    b = ib.read_backup(w, None)
+    assert b.flat_files == 2
+    [r] = run(db, [b])
+    assert r.players == 1
+    assert rows(db) == [(T1, U1, "minecraft:mined", "minecraft:stone", 5)]
+    assert db.execute("SELECT uuid FROM players").fetchall() == [(U1,)]
+    ib._print_result(r, dry_run=True)
+    assert "pre-1.13 stat files skipped: 2" in capsys.readouterr().out
+
+
+def test_main_reports_flat_files_skipped(tmp_path, world, db, capsys):
+    w = make_backup(tmp_path, name="b1", last_played_ms=T1 * 1000, stats={U1: mined(5)})
+    _flat(w, U2)
+    cfg = str(write_config(tmp_path, world))
+    assert ib.main(["--server", "smp", "--dry-run", "--config", cfg, str(w)],
+                   dictionary={}) == 0
+    assert "pre-1.13 stat files skipped: 1" in capsys.readouterr().out
+    assert ib.main(["--server", "smp", "--no-backup", "--config", cfg, str(w)],
+                   dictionary={}) == 0
+    assert "pre-1.13 stat files skipped: 1" in capsys.readouterr().out
+    assert db.execute("SELECT COUNT(*) FROM stat_snapshots").fetchone()[0] == 1
+
+
+def test_existing_player_first_seen_moves_back(tmp_path, world, run_snapshot):
+    """A live player found in an older backup was there earlier: first_seen
+    moves back to the backup date (never forward)."""
+    world.add_stats("smp", U1, mined(9))
+    run_snapshot(LIVE)
+    conn = snapshot.connect_db(world.db_path)
+    run(conn, [backup(tmp_path, "b2", T2, {U1: mined(5)})])
+    assert conn.execute("SELECT first_seen, last_observed FROM players WHERE uuid=?",
+                        (U1,)).fetchone() == (T2, LIVE)
+    run(conn, [backup(tmp_path, "b1", T1, {U1: mined(1)})])
+    assert conn.execute("SELECT first_seen FROM players WHERE uuid=?",
+                        (U1,)).fetchone()[0] == T1
+    conn.close()
 
 
 def test_parse_date_arg():

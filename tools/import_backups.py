@@ -74,6 +74,7 @@ class Backup:
     scoreboard_path: Optional[Path]
     usercache: dict
     layout: str = "old"
+    flat_files: int = 0  # pre-1.13 stat files, skipped one by one
 
 
 @dataclass
@@ -134,9 +135,19 @@ def read_backup(world_dir, date_override=None):
         stats_dir, layout = world / "stats", "old"
     else:
         raise ValueError("no stats/ or players/stats/ directory")
+    # SMP began on 1.12: a player who never logged in after 1.13 keeps a flat
+    # pre-1.13 file in every backup. Those are skipped one by one; only a
+    # backup with pre-1.13 files and no 1.13+ file at all is refused (an empty
+    # stats folder is not: its scoreboard can still be imported).
+    modern = flat = 0
     for _, content in snapshot.iter_stat_files(stats_dir):
-        if not isinstance(content.get("stats"), dict):
-            raise ValueError("pre-1.13 stats format is not supported")
+        if is_modern(content):
+            modern += 1
+        else:
+            flat += 1
+    if flat and not modern:
+        raise ValueError(f"pre-1.13 stats format is not supported (all {flat} stat files "
+                         "are pre-1.13, none is 1.13+)")
 
     scoreboard_path = None
     for candidate in (world / "data" / "minecraft" / "scoreboard.dat",
@@ -154,7 +165,13 @@ def read_backup(world_dir, date_override=None):
         version_name=snapshot.nbt_val(version, "Name"),
         data_version=snapshot.nbt_val(data, "DataVersion"),
         at=at, stats_dir=stats_dir, scoreboard_path=scoreboard_path,
-        usercache=usercache, layout=layout)
+        usercache=usercache, layout=layout, flat_files=flat)
+
+
+def is_modern(content):
+    """1.13+ stat file ({"stats": {category: {key: value}}}); pre-1.13 files
+    are flat ({"stat.mineBlock.minecraft.stone": 5, ...})."""
+    return isinstance(content.get("stats"), dict)
 
 
 def load_renames(path):
@@ -289,14 +306,18 @@ def _resolve_names(conn, backups):
 
 def _player_rows(conn, uuids, at, names):
     """Missing players are inserted (first_seen = last_observed = backup date);
-    existing ones only get a NULL name filled, nothing else."""
+    existing ones get first_seen moved back to the backup date when earlier,
+    and a NULL name filled. last_observed is never touched."""
     for u in uuids:
         name = names.get(u)
         conn.execute(
             "INSERT INTO players (uuid, name, name_resolved, first_seen, last_observed) "
             "VALUES (?, ?, ?, ?, ?) ON CONFLICT(uuid) DO UPDATE SET "
-            "name = excluded.name, name_resolved = 1 "
-            "WHERE players.name IS NULL AND excluded.name IS NOT NULL",
+            "first_seen = MIN(players.first_seen, excluded.first_seen), "
+            "name = CASE WHEN players.name IS NULL AND excluded.name IS NOT NULL "
+            " THEN excluded.name ELSE players.name END, "
+            "name_resolved = CASE WHEN players.name IS NULL AND excluded.name IS NOT NULL "
+            " THEN 1 ELSE players.name_resolved END",
             (u, name, 1 if name else 0, at, at))
 
 
@@ -406,6 +427,8 @@ def _stat_rows(conn, server_key, b, renames, known_keys, targets, skip_unknown, 
         prev.update(carried)
     rows, uuids = [], []
     for u, content in snapshot.iter_stat_files(b.stats_dir):
+        if not is_modern(content):
+            continue  # pre-1.13 flat file (counted in b.flat_files)
         uuids.append(u)
         for (cat, key), value in _map_stats(content, renames, known_keys, targets,
                                             skip_unknown, r).items():
@@ -471,6 +494,7 @@ def _print_result(r, dry_run):
     verb = "would write" if dry_run else "wrote"
     print(f"  players {r.players}; {verb} {r.rows_stats} stat rows, "
           f"{r.rows_scoreboard} scoreboard rows")
+    print(f"  pre-1.13 stat files skipped: {b.flat_files}")
     print(f"  scoreboard objectives {r.objectives}; mirrors skipped by dictionary: "
           f"{r.mirrors_by_dictionary}")
     if r.mirrors_by_prefix:

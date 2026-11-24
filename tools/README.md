@@ -56,7 +56,12 @@ server (`rebuild_from_points` in `bot/derive_achievements.py`):
 - It never writes `stat_current` or `scoreboard_current`. Live values belong to the live
   snapshot.
 - It refuses a backup dated **on or after** the first live snapshot, because that would
-  rewrite the live timeline. It also refuses folders in the pre-1.13 stats format.
+  rewrite the live timeline.
+- **Pre-1.13 stat files are skipped.** SMP started on 1.12, so players who never logged
+  in after 1.13 keep an old flat-format `stats/<uuid>.json` in every backup. Those files
+  are skipped one by one and counted (`pre-1.13 stat files skipped: N` in the report);
+  the rest of the backup is imported. A backup whose stat files are *all* pre-1.13 is
+  refused.
 - Rivalries and the spotlight refresh on the next live run, as usual.
 - The rebuild deletes and re-inserts firsts and milestones, so their row ids change. If a
   client is paging through `/firsts` or `/milestones` while the rebuild runs, its cursor
@@ -97,6 +102,7 @@ DRY RUN, nothing written - server smp
 /backups/smp-1.16/world
   level 'world', version 1.16.5 (data 2586), date 2021-06-01 18:04 UTC, layout old (stats)
   players 812; would write 401233 stat rows, 2210 scoreboard rows
+  pre-1.13 stat files skipped: 37
   scoreboard objectives 9105; mirrors skipped by dictionary: 8990
   probable mirrors skipped: 3 (first 20: kb-old_mob, m-grass_path, u-scute)
   renamed keys: minecraft:custom/minecraft:play_one_minute x812, minecraft:mined/minecraft:grass_path x95
@@ -111,6 +117,8 @@ What to check:
 - **layout:** `old` (`stats/`) or `new` (`players/stats/`).
 - **players / rows:** Row counts should get much smaller for each backup after the first
   (change-only). Counts that stay huge for every backup usually mean renames are missing.
+- **pre-1.13 stat files skipped:** Old flat-format files of players who never logged in
+  after 1.13. Normal for SMP (it started on 1.12); they hold nothing importable.
 - **mirrors skipped by dictionary:** These are every-scoreboard's copies of vanilla stats,
   which are already stored from the stat files. Nearly all objectives should be here.
 - **probable mirrors skipped:** These are objectives with a mirror-style prefix (`m-`,
