@@ -84,3 +84,40 @@ def test_bad_input_400(env):
     assert env.get("/api/stats/leaderboard?kind=nope&key=x").status_code == 400
     assert env.get(ST + "&range=2d").status_code == 400
     assert env.get(ST + "&scope=nope").status_code == 400
+
+
+def test_smp_bot_cmp_rows_count_in_all_scope(env, world, run_snapshot):
+    world.add_stats("cmp", U3, stone(1))
+    world.add_stats("smp", U3, stone(100))
+    run_snapshot(1_001_200)
+    rows = env.get(ST + "&scope=all").json()["rows"]
+    assert {r["uuid"]: r["value"] for r in rows}.get(U3) == 1  # smp bot hidden, cmp kept
+
+
+def test_scoreboard_hides_unresolved_and_mirrors(env, world, run_snapshot):
+    world.set_scoreboard(
+        "smp", ["kills", "minecraft.mined:minecraft.stone"],
+        [("Alice", "kills", 3), ("Ghost", "kills", 99),
+         ("Alice", "minecraft.mined:minecraft.stone", 8)],
+        {"t": ["Alice", "Bob", "Dan"]})
+    run_snapshot(1_001_200, dictionary={"x": "minecraft.mined:minecraft.stone"})
+    u = "/api/stats/leaderboard?kind=scoreboard&scope=smp&key="
+    assert [(r["uuid"], r["value"]) for r in env.get(u + "kills").json()["rows"]] == [(U1, 3)]
+    assert env.get(u + "minecraft.mined:minecraft.stone").json()["rows"] == []
+    d = env.get(u + "kills&from=1001000&to=1002000").json()
+    assert [(r["uuid"], r["value"]) for r in d["rows"]] == [(U1, 3)]
+
+
+def test_from_after_to_400(env):
+    assert env.get(ST + "&from=2000&to=1000").status_code == 400
+
+
+def test_limit_capped_at_200(env):
+    r = env.get(ST + "&scope=smp&limit=100000")
+    assert r.status_code == 200 and r.json()["total_count"] == 3
+
+
+def test_to_before_tracking_start_is_empty(env):
+    j = env.get(ST + "&scope=smp&from=0&to=500").json()
+    assert j["rows"] == [] and j["total_count"] == 0
+    assert j["effective_from"] == 1_000_000 and j["to"] == 500 and j["mode"] == "delta"

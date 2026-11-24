@@ -73,3 +73,33 @@ def test_downsample_keeps_step_and_cap():
     assert [t for t, _ in out] == sorted(t for t, _ in out)
     small = timeq.downsample([(5, 3), (20, 4)], 10, 30)
     assert small == [(10, 3), (20, 4)]
+
+
+def test_range_empty_when_to_before_tracking_start(conn):
+    sc = resolve_scope(conn, "smp")
+    r = timeq.parse_range(conn, sc, None, 0, 500, 5000)
+    assert r.effective_from == 1000 and r.empty
+    assert not timeq.parse_range(conn, sc, None, 0, 1000, 5000).empty
+
+
+def _plan(conn, sql, params):
+    return " | ".join(r[3] for r in conn.execute("EXPLAIN QUERY PLAN " + sql, params))
+
+
+def test_history_queries_seek_point_indexes(conn):
+    from api.scope import scoreboard_filter_sql, stat_filter_sql
+    sc = resolve_scope(conn, "all")
+    f, p = stat_filter_sql(sc, True, "s")
+    plan = _plan(conn, timeq.stat_history_sql(f), ["c", "k", 1, *p])
+    assert "idx_stat_point" in plan and "category=?" in plan and "stat_key=?" in plan
+    f, p = scoreboard_filter_sql(sc, True, "s")
+    plan = _plan(conn, timeq.scoreboard_history_sql(f), ["o", 1, *p])
+    assert "idx_scoreboard_point" in plan and "objective=?" in plan
+
+
+def test_downsample_repeated_ts_and_point_at_from():
+    out = timeq.downsample([(10, 1), (10, 2), (20, 3), (20, 4)], 10, 30)
+    assert out == [(10, 2), (20, 3), (20, 4)]
+    big = [(10, 7)] + [(11 + i, i) for i in range(2000)] + [(500, -1)] * 3
+    out = timeq.downsample(big, 10, 3000, 100)
+    assert out[0] == (10, 7) and len(out) <= 100

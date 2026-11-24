@@ -32,7 +32,9 @@ def leaderboard(request: Request, conn=Depends(db.get_db), kind: str = "stat",
             return timeq.stat_values_at(conn, sc, include_bots, category, key, ts)
         return timeq.scoreboard_values_at(conn, sc, include_bots, key, ts)
 
-    if delta:
+    if delta and r.empty:
+        vals = {}
+    elif delta:
         end = values_at(None if r.is_now else r.to_ts)
         start = values_at(r.effective_from)
         vals = {u: end.get(u, 0) - start.get(u, 0) for u in set(end) | set(start)}

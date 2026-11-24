@@ -20,6 +20,11 @@ class Range:
     effective_from: int
     is_now: bool
 
+    @property
+    def empty(self) -> bool:
+        """True when the window ends before tracking began: no data exists."""
+        return self.effective_from > self.to_ts
+
 
 def tracking_start(conn, scope: Scope) -> Optional[int]:
     vals = []
@@ -59,6 +64,20 @@ def _sum(rows) -> dict:
     return out
 
 
+# INDEXED BY: without ANALYZE the planner prefers (server_key, at) indexes and
+# scans a server's whole history instead of seeking one key.
+def stat_history_sql(frag: str) -> str:
+    return (f"SELECT s.uuid, s.value, MAX(s.at) FROM stat_snapshots s "
+            f"INDEXED BY idx_stat_point WHERE s.category=? AND s.stat_key=? "
+            f"AND s.at<=? AND {frag} GROUP BY s.server_key, s.uuid")
+
+
+def scoreboard_history_sql(frag: str) -> str:
+    return (f"SELECT s.uuid, s.value, MAX(s.at) FROM scoreboard_snapshots s "
+            f"INDEXED BY idx_scoreboard_point WHERE s.objective=? AND s.at<=? "
+            f"AND s.uuid IS NOT NULL AND {frag} GROUP BY s.server_key, s.uuid")
+
+
 def stat_values_at(conn, scope: Scope, include_bots: bool, category: str,
                    key: str, ts: Optional[int]) -> dict:
     frag, params = stat_filter_sql(scope, include_bots, "s")
@@ -67,10 +86,8 @@ def stat_values_at(conn, scope: Scope, include_bots: bool, category: str,
             f"SELECT s.uuid, s.value FROM stat_current s WHERE s.category=? "
             f"AND s.stat_key=? AND {frag}", [category, key, *params]).fetchall()
         return _sum(rows)
-    rows = conn.execute(
-        f"SELECT s.uuid, s.value, MAX(s.at) FROM stat_snapshots s "
-        f"WHERE s.category=? AND s.stat_key=? AND s.at<=? AND {frag} "
-        f"GROUP BY s.server_key, s.uuid", [category, key, ts, *params]).fetchall()
+    rows = conn.execute(stat_history_sql(frag),
+                        [category, key, ts, *params]).fetchall()
     return _sum((r[0], r[1]) for r in rows)
 
 
@@ -83,10 +100,8 @@ def scoreboard_values_at(conn, scope: Scope, include_bots: bool, objective: str,
             f"WHERE s.objective=? AND {frag}", [objective, *params]).fetchall()
         return _sum(rows)
     frag, params = scoreboard_filter_sql(scope, include_bots, "s")
-    rows = conn.execute(
-        f"SELECT s.uuid, s.value, MAX(s.at) FROM scoreboard_snapshots s "
-        f"WHERE s.objective=? AND s.at<=? AND s.uuid IS NOT NULL AND {frag} "
-        f"GROUP BY s.server_key, s.uuid", [objective, ts, *params]).fetchall()
+    rows = conn.execute(scoreboard_history_sql(frag),
+                        [objective, ts, *params]).fetchall()
     return _sum((r[0], r[1]) for r in rows)
 
 
