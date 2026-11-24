@@ -428,3 +428,20 @@ def test_main_calls_rebuild(tmp_path, world, db, monkeypatch):
     assert ib.main(["--server", "smp", "--no-backup", "--config", cfg, str(w)],
                    dictionary={}) == 0
     assert calls == ["smp"]
+
+
+def test_boat_entity_renamed_only_in_entity_categories(tmp_path, db):
+    shipped = ib.load_renames(ib.RENAMES_PATH)
+    b = backup(tmp_path, "b", T1, {U1: {
+        "minecraft:killed": {"minecraft:boat": 3, "minecraft:chest_boat": 1},
+        "minecraft:killed_by": {"minecraft:boat": 2},
+        "minecraft:used": {"minecraft:oak_boat": 5},
+        "minecraft:mined": {"minecraft:chain": 4}}}, version_name="1.21.1")
+    ib.import_backups(db, "smp", [b], shipped, {}, False)
+    assert rows(db) == [
+        (T1, U1, "minecraft:killed", "minecraft:oak_boat", 3),
+        (T1, U1, "minecraft:killed", "minecraft:oak_chest_boat", 1),
+        (T1, U1, "minecraft:killed_by", "minecraft:oak_boat", 2),
+        (T1, U1, "minecraft:mined", "minecraft:iron_chain", 4),
+        (T1, U1, "minecraft:used", "minecraft:oak_boat", 5)]
+    assert "minecraft:boat" not in shipped["*"] and "minecraft:potion" not in shipped["*"]
