@@ -44,7 +44,7 @@ exception — this bit us before, cost ~9 days of stale members data with zero l
 output). `/sync_status` shows last-success time and next-run time per loop — check
 this first whenever data looks stale, before assuming the sync is broken.
 
-## Stats subsystem (in progress — see bot/snapshot.py, sql/schema.sql)
+## Stats subsystem (backend built on branch `stats-api`; frontend next)
 Change-only SQLite storage: a history row is written ONLY when a value differs from
 the last known value (tracked in `stat_current`/`scoreboard_current`). This is load-
 bearing, not a style choice — SMP alone has 9,346 scoreboard objectives and 175k
@@ -95,45 +95,86 @@ Three real bugs were found and fixed here by actually running against production
 scoreboards are mostly noise (MotX/health/gt/boatnumber), set `track_scoreboards:
 false` there rather than filtering client-side.
 
-**Status: `bot/snapshot.py` has been run against the real server twice and verified.**
-Run 1 (first-ever run, everything "new"): smp stats read=2097 written=144592,
-smp scoreboards read=133793 written=7697 (the ~126k skip gap is the vanilla-mirror
-dedup working correctly — confirmed via `scoreboard_meta`: smp shows 9346 total
-objectives / 9223 flagged as mirrors, matching the original probe output exactly).
-Run 2 (immediately after, nothing changed in-game): every server showed
-`rows_written=0` with the same `entries_read` as run 1 — proof the change-only
-diffing works against real data, not just synthetic fixtures. `ok=1` on every row
-in `snapshot_runs` across both runs, no errors.
+Real `config.json` today: `excluded_servers: ["mirror","tour","snapshot","building2"]`;
+tracked servers `smp` (group smp), `cmp`, `cmp2`, `cmp3`, `cmp4`, `building` (all group
+cmp), all with stats + scoreboards on.
 
-Run 3 (after real in-game activity on smp + cmp): smp stats written=61, smp
-scoreboards written=13, cmp stats written=30, every other server written=0 —
-small, correct deltas on exactly the servers that changed. Change-only diffing is
-fully verified; safe to put on a cron/systemd timer alongside the bot's other
-sync jobs. (`sqlite3` CLI isn't installed on the server — query the DB via
-`python3 -c "import sqlite3; ..."` instead.)
+### Verification history (live server, 2026-11-24)
+Snapshot runner verified in 3 hand runs: run 1 wrote everything (smp stats 144,592 /
+scoreboards 7,697 — the ~126k skipped are vanilla mirrors, 9,223 of 9,346 objectives),
+run 2 with no in-game change wrote 0 everywhere, run 3 after real play wrote smp 61 /
+13, cmp 30, others 0. Then put on a 15-min systemd timer
+(`deploy/systemd/chronos-stats-snapshot.{service,timer}`, installed + enabled on the
+server). Live DB then: ~3.3k players, ~263k stat_current rows, ~10k scoreboard rows.
+The live DB also has early `ok=1` stats runs with `entries_read=0` (from before the
+path fixes) — tracking start must ignore them (see below).
 
-**Stats API + derive step: built (tests green, real-server verification pending).**
-- `bot/derive.py` runs at the end of every `snapshot.run_once()`; a derive failure
-  is recorded as `snapshot_runs.kind='derive'`, `ok=0` and never fails the snapshot.
-  New tables: `activity`, `stat_totals`/`scoreboard_totals` (+ `_current`), `meta`,
-  `milestones`/`milestone_rules`, `firsts`, `badges`, `rivalries`,
-  `spotlight_candidates`, `name_lookups`, `dictionary_cache`. Column additions go
-  through `sql/migrations.py` (`PRAGMA user_version`), not schema.sql (schema.sql runs
-  first, so anything touching an added column — e.g. `idx_milestones_feed` — lives there).
-- SMP team check is strict: no team = bot, **missing `player_flags` row on smp = bot**.
-  Team member names not yet known to a uuid are resolved via Mojang (≤60 HTTP calls
-  per derive run; failed lookups cached 7 days in `name_lookups`).
-- `api/` (FastAPI, read-only `mode=ro` + `query_only`) serves `/api/stats/*` on
-  127.0.0.1:8765 behind nginx. Startup runs `check_required_indexes()`
-  (`REQUIRED_INDEXES` in `api/db.py`): the API **refuses to start until
-  `bot/snapshot.py` has applied the schema once**.
-- Deploy order: pull → pip install only the three API pins (fastapi, uvicorn[standard], orjson — versions in requirements.txt; never `pip install -r requirements.txt` on the server) → stop snapshot timer →
-  run `bot/snapshot.py` by hand once (migrations + one-time seeding) → start timer →
-  install `deploy/systemd/chronos-stats-api.service` → add
-  `deploy/nginx/chronos-stats-api.conf` to the nginx site → `nginx -t && reload`.
-- Tests live in `tests/` (synthetic fixture DB built via the real snapshot write
-  path; no network). Run: `python -m pytest tests -q`.
-- Frontend (website Stats pages) is the next step, see `STATS_PLAN.md`.
+### What the backend is (branch `stats-api`, not merged/pushed yet)
+Pipeline: timer → `bot/snapshot.py` (history, change-only) → `bot/derive.py` (derived
+tables) → SQLite → `api/` (FastAPI, read-only) → nginx `/api/stats/*` → website.
+
+| Path | Role |
+|---|---|
+| `bot/snapshot.py` | reads stat files + scoreboard.dat, writes change-only history; `run_once(config, now_fn, dictionary, mojang_fetch)` — injectable for tests; one run-wide `now` shared by every server |
+| `bot/mojang.py` | `MojangClient`: bulk name→uuid + uuid→name, ≤60 calls, 3 s/call, 60 s wall cap per run, results (incl. failures) cached 7 days in `name_lookups`; only valid MC usernames are sent |
+| `bot/derive.py` (+ `derive_common.py`, `derive_achievements.py`, `derive_social.py`) | stages in order: activity → totals (incl. one-time history backfill) → firsts → milestones → rivalries → badges → spotlight → resolve_names → write_meta (always). Failure = `snapshot_runs.kind='derive' ok=0`, never fails the snapshot |
+| `api/scope.py` | **the only place participant rules live** (scopes, SMP bot rule, fake/unresolved, mirrors) as SQL fragments; derive imports it too |
+| `api/timeq.py` | ranges (`1d/1w/1m/6m/1y/all`, from/to), clamp to tracking start, value-at-T reads, downsampling |
+| `api/cache.py` | `@cached`: key = path + declared params + data_version; ETag/304; LRU ≤128 MiB, bodies >8 MiB not cached |
+| `api/db.py` | read-only connections; `data_version` = live `MAX(snapshot_runs.id)`; `REQUIRED_INDEXES` startup check |
+| `api/routes/*` | meta, leaderboard, series/totals, player/compare, search/keys, feeds (milestones, firsts, rivalries, activity, spotlight) |
+| `sql/schema.sql`, `sql/migrations.py` | schema (CREATE IF NOT EXISTS) then migrations by `PRAGMA user_version` (now 2) |
+| `deploy/` | systemd units (snapshot, timer, api) + nginx snippet |
+| `tests/` | pytest, 201 tests, synthetic worlds built through the real snapshot write path, no network |
+| `STATS_API.md` | the HTTP contract for the website (copy into the website repo) |
+| `STATS_FRONTEND_PROMPT.md` | the kickoff prompt for Claude Code in the website repo |
+| `docs/superpowers/specs/2026-11-24-stats-api-design.md` | approved backend design incl. Addendum A (badges/rivalries/spotlight rules) |
+
+### Rules and decisions that bind future work (don't relitigate)
+- **SMP bots, strict:** not in a team = bot; **missing `player_flags` row on smp = bot**
+  (fail closed). Owner-confirmed on live data: ~196 team members; 968 of 1,087 SMP
+  stat-file holders are bots (`BedBot`, `Endswitch`, `digsort`, `001`…) — these are named
+  automation accounts WITH stat files, a different thing from the fake-player NPCs.
+  Flags are written only for uuids with an SMP stat file. Bot filtering keys on
+  `servers.filters_bots=1` (only smp). CMPs never filter.
+- **Scopes:** `all`, `smp`, `cmps` (group_key `cmp`), or one server key; only
+  `provisioned=1` servers (the `all` pseudo row in `servers` is provisioned=0 and exists
+  only as an FK target for `snapshot_runs.kind='derive'`). Multi-server scopes sum per
+  player. A bot on SMP still counts on CMPs.
+- **Tracking start** per server = `MIN(at)` of stats runs with `ok=1 AND entries_read>0`.
+  Ranges reaching earlier are clamped and responses carry `effective_from`.
+- **Firsts/milestones that predate tracking are `earliest_known=1`** ("earliest known
+  holder" / "already had"), never given a fake date. Seeding happens once (meta
+  `seeded_achievements`) and on each new server's first real run. Seeded firsts don't
+  count toward Firsts badges.
+- Badges (36), rivalries (gap ≤2%, leader ≥1000, both active 7d, gap moving, ≤5/player,
+  ≤3/key) and spotlight (outlier/rare/recent_milestone/recent_first/mover) are specified
+  exactly in the spec's Addendum A — implement changes there first.
+- **Totals** are fully recomputed every run (set-based) and history was backfilled once
+  (meta `totals_backfilled`); `total_no_bots` uses today's bot flags for all history.
+- **Performance gotcha:** without `ANALYZE` SQLite picks the `(server_key, at)` indexes
+  and scans whole history. Hot queries are pinned with `INDEXED BY`; every pinned index
+  must be listed in `api/db.py REQUIRED_INDEXES` (the API refuses to start if one is
+  missing) and get an `EXPLAIN QUERY PLAN` test. New indexes on columns added by a
+  migration go in `sql/migrations.py`, not schema.sql (schema.sql runs first).
+- Routes are sync `def h(request: Request, conn=Depends(db.get_db), ...)` under
+  `@cached` (decoration fails without `request`+`conn`); `/search` and `/spotlight` are
+  deliberately not cached.
+
+### Deploy (not done yet — commands are in `TEMP_INFO.md`)
+Push `stats-api` → on server: checkout → `pip install` **only** fastapi, uvicorn[standard],
+orjson (pins in requirements.txt; **never `pip install -r requirements.txt` on the
+server** — it re-pins the bot and re-adds nest_asyncio) → stop timer + in-flight
+snapshot service → run `bot/snapshot.py` once by hand (migrations, totals backfill,
+seeding ≈20–60 s) → start timer → install + start `chronos-stats-api.service` → add the
+nginx block inside the existing `server {}` next to `/api/status` → `nginx -t && reload`.
+
+### Working with the owner
+The owner can't copy/paste reliably from the server terminal: put server commands in
+`TEMP_INFO.md` (untracked scratch, never commit) and have them paste output at the
+bottom. No `sqlite3` CLI on the server — use `python3 -c "import sqlite3..."`.
+Local tests: `python -m pip install pytest httpx nbt fastapi "uvicorn[standard]" orjson`
+then `python -m pytest tests -q` (Windows, Python 3.13 locally; server is 3.14).
 
 ## Website nav plan (for when Stats ships)
 Top-level nav gets one new "Stats ▾" dropdown (Overview / Explorer / Scoreboards /
