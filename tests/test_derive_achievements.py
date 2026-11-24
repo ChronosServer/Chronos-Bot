@@ -549,6 +549,31 @@ def test_spotlight_recent_milestone_and_first(run_snapshot, db):
     assert [(r[3], r[4]) for r in spot(db, "recent_first")] == [("minecraft:stone", 1500)]
 
 
+def test_spotlight_recent_items_exclude_approximate(run_snapshot, db):
+    """Imported (approximate=1) crossings and firsts are dated at a backup
+    point, not when they happened: never "recent"."""
+    fresh(run_snapshot, db)
+    add_run(db, "cmp", T0)
+    put(db, "cmp", P, *STONE, 1500, T0)
+    put(db, "cmp", P, "minecraft:mined", "dirt", 7, T0)
+    ins = ("INSERT INTO milestones (at, server_key, uuid, rule_key, category, stat_key, threshold, "
+           "value_at, earliest_known, approximate) VALUES (?, 'cmp', ?, 'r', 'c', ?, 1000, 1500, 0, ?)")
+    db.execute(ins, (RUN - DAY, P, "real", 0))
+    db.execute(ins, (RUN - DAY, P, "approx", 1))
+    insf = ("INSERT INTO firsts (at, server_key, uuid, category, stat_key, earliest_known, "
+            "approximate) VALUES (?, 'cmp', ?, ?, ?, 0, ?)")
+    db.execute(insf, (RUN - DAY, P, *STONE, 0))
+    db.execute(insf, (RUN - DAY, P, "minecraft:mined", "minecraft:dirt", 1))
+    db.commit()
+    derive.derive_spotlight(db, RUN)
+    rm = spot(db, "recent_milestone")
+    rf = spot(db, "recent_first")
+    assert [r[3] for r in rm] == ["real"]
+    assert [r[3] for r in rf] == ["minecraft:stone"]
+    assert json.loads(rm[0][5])["approximate"] == 0
+    assert json.loads(rf[0][5])["approximate"] == 0
+
+
 def test_spotlight_excludes_smp_bot(run_snapshot, db):
     fresh(run_snapshot, db)
     add_run(db, "smp", T0)

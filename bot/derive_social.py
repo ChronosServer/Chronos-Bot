@@ -150,21 +150,26 @@ def derive_spotlight(conn, run_at, settings=None):
               [*ps, sp.rare.max_holders])
 
         # recent_milestone: earliest_known = 0 within recent_milestone_days.
+        # approximate = 1 rows (imported backups) are dated at a backup point,
+        # not when they happened: never "recent".
         _spot(conn, "recent_milestone", key, run_at,
               "SELECT m.uuid, m.category, m.stat_key, m.value_at AS value,"
-              " json_object('threshold', m.threshold, 'rule_key', m.rule_key, 'at', m.at) AS detail"
-              f" FROM milestones m WHERE {fm} AND m.earliest_known = 0 AND m.at >= ?",
+              " json_object('threshold', m.threshold, 'rule_key', m.rule_key, 'at', m.at,"
+              " 'approximate', m.approximate) AS detail"
+              f" FROM milestones m WHERE {fm} AND m.earliest_known = 0 AND m.approximate = 0"
+              " AND m.at >= ?",
               [*pm, run_at - days_s(sp.recent_milestone_days)])
 
-        # recent_first: earliest_known = 0 within recent_first_days.
+        # recent_first: earliest_known = 0 within recent_first_days (approximate = 0).
         _spot(conn, "recent_first", key, run_at,
               "SELECT f.uuid, f.category, f.stat_key, CASE WHEN f.category = 'scoreboard'"
               " THEN (SELECT value FROM scoreboard_current WHERE server_key = f.server_key"
               "  AND participant_key = f.uuid AND objective = f.stat_key)"
               " ELSE (SELECT value FROM stat_current WHERE server_key = f.server_key"
               "  AND uuid = f.uuid AND category = f.category AND stat_key = f.stat_key) END AS value,"
-              " json_object('at', f.at) AS detail"
-              f" FROM firsts f WHERE {ff} AND f.earliest_known = 0 AND f.at >= ?",
+              " json_object('at', f.at, 'approximate', f.approximate) AS detail"
+              f" FROM firsts f WHERE {ff} AND f.earliest_known = 0 AND f.approximate = 0"
+              " AND f.at >= ?",
               [*pf, run_at - days_s(sp.recent_first_days)])
 
         # mover: top mover.top deltas over mover.window_days with

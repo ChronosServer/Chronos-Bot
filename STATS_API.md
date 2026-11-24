@@ -272,14 +272,16 @@ in `sessionStorage` and send them as `seen` to avoid repeats.
  "category":"minecraft:mined","key":"minecraft:obsidian","value":48000,
  "detail":{"median":1200,"ratio":40.0,"holders":312}}
 ```
-`{"trigger": null}` → hide the widget. Sentence templates per trigger:
+`{"trigger": null}` → hide the widget. `recent_milestone` / `recent_first` never pick an
+imported (`approximate`) row: those are dated at a backup, not when they happened.
+Sentence templates per trigger:
 
 | trigger | detail | sentence |
 |---|---|---|
 | `outlier` | `median`, `ratio`, `holders` | "{name} has {verb} {ratio}× more {thing} than the average player" |
 | `rare` | `holders` | "Only {holders} players have ever {verb} {thing}. {name} has {value}." |
-| `recent_milestone` | `threshold`, `rule_key`, `at` | "{name} passed {threshold} {thing} {verb} {relative time}" |
-| `recent_first` | `at` | "{name} was the first on {server} to {verb} {thing}" |
+| `recent_milestone` | `threshold`, `rule_key`, `at`, `approximate` (always 0) | "{name} passed {threshold} {thing} {verb} {relative time}" |
+| `recent_first` | `at`, `approximate` (always 0) | "{name} was the first on {server} to {verb} {thing}" |
 | `mover` | `from`, `delta` | "{name} went from {from} to {value} {thing} {verb} this week" |
 
 Verb per category:
