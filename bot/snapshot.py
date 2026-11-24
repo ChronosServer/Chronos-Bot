@@ -227,6 +227,41 @@ def fetch_dictionary(conn, version, settings=None):
         raise
 
 
+def bundled_mirror_names(directory=None):
+    """Union of the values (mirror objective names) of every bundled
+    dictionaries/dictionary-*.json. A live board keeps mirrors of keys an old
+    version had (m-grass_path): every version's names are mirrors."""
+    names = set()
+    for f in sorted(Path(directory or DICTIONARY_DIR).glob("dictionary-*.json")):
+        try:
+            with open(f, "r", encoding="utf-8") as fh:
+                names |= set(json.load(fh).values())
+        except (OSError, ValueError, AttributeError) as e:
+            print(f"  [warn] can't read {f.name} ({e}); skipped")
+    return names
+
+
+def mirror_names(conn, version, settings=None, dictionary=None):
+    """(mirror objective names, None) or (None, error). The current
+    dictionary (`dictionary`, else fetch_dictionary) plus every bundled one.
+    No current dictionary: the bundled union alone (warn). Neither: no set
+    at all -- the caller must skip the scoreboard step rather than store
+    mirror scores as if they were real objectives."""
+    bundled = bundled_mirror_names()
+    if dictionary is None:
+        try:
+            dictionary = fetch_dictionary(conn, version, settings)
+        except Exception as e:
+            if not bundled:
+                return None, (f"no dictionary: dictionary-{version}.json unavailable ({e}) "
+                              "and no bundled dictionaries/dictionary-*.json; vanilla-mirror "
+                              "objectives can't be told apart, scoreboard step skipped")
+            print(f"[warn] dictionary-{version}.json unavailable ({e}); using the union "
+                  "of the bundled dictionaries for vanilla-mirror detection")
+            return bundled, None
+    return bundled | set(dictionary.values()), None
+
+
 def stat_files_dir(world_path):
     # Confirmed real layout: world_dir/players/stats (not world_dir/stats --
     # there's a 'players' segment in between, per WinSCP screenshot).
@@ -389,7 +424,12 @@ def run_scoreboard_snapshot(conn, server_key, world_path, usercache, dictionary,
     scores_tag = nbt_list(data, "PlayerScores")
 
     objective_names = {nbt_val(o, "Name") for o in objectives_tag if nbt_val(o, "Name")}
-    mirror_full_names = set(dictionary.values()) if dictionary else set()
+    # dictionary: mirror objective names (mirror_names), or a single
+    # {full_name: truncated_name} dictionary
+    if isinstance(dictionary, dict):
+        mirror_full_names = set(dictionary.values())
+    else:
+        mirror_full_names = set(dictionary or ())
 
     for obj_name in objective_names:
         is_mirror = 1 if obj_name in mirror_full_names else 0
@@ -568,12 +608,9 @@ def run_once(config=None, now_fn=time.time, dictionary=None, mojang_fetch=None):
             return default_fetch(method, url, body, timeout=timeout)
     mojang = MojangClient(mojang_fetch, conn, run_at, settings=settings.mojang)
 
-    if dictionary is None:
-        try:
-            dictionary = fetch_dictionary(conn, version, settings)
-        except Exception as e:
-            print(f"[warn] dictionary unavailable this run ({e}); vanilla-mirror dedup skipped")
-            dictionary = {}
+    # Every bundled version's mirror names plus the current dictionary's
+    # (the same set the backup import uses). None: no dictionary at all.
+    mirrors, mirror_error = mirror_names(conn, version, settings, dictionary)
 
     for key, s in settings.servers.items():
         if key in excluded:
@@ -606,10 +643,13 @@ def run_once(config=None, now_fn=time.time, dictionary=None, mojang_fetch=None):
                            int((time.time() - t0) * 1000), now=now)
                 print(f"[{key}] stats: ERROR {e}")
 
-        if s.track_scoreboards:
+        if s.track_scoreboards and mirrors is None:
+            record_run(conn, key, "scoreboards", False, mirror_error, None, None, 0, now=now)
+            print(f"[{key}] scoreboards: ERROR {mirror_error}")
+        elif s.track_scoreboards:
             t0 = time.time()
             try:
-                result = run_scoreboard_snapshot(conn, key, world_path, usercache, dictionary, now)
+                result = run_scoreboard_snapshot(conn, key, world_path, usercache, mirrors, now)
                 record_run(conn, key, "scoreboards", True, None,
                            result["entries_read"], result["rows_written"],
                            int((time.time() - t0) * 1000), now=now)

@@ -56,8 +56,9 @@ section:
   firsts and milestones that fall between two points are marked `approximate`.
 * `dictionaries/` holds every-scoreboard's `dictionary-<version>.json` files (1.16 to
   26.2, except 1.19.1, 1.19.3 and 1.19.4). They list the scoreboard objectives that just
-  copy vanilla stats, which the snapshot and the import skip. The snapshot reads
-  `dictionaries/` first and only fetches from GitHub when a version is missing.
+  copy vanilla stats, which the snapshot and the import skip (the names of every bundled
+  version count, not only the current one). The snapshot reads `dictionaries/` first and
+  only fetches from GitHub when a version is missing.
 * Docs: [docs/STATS_DATABASE.md](docs/STATS_DATABASE.md) (operator guide),
   [tools/README.md](tools/README.md) (backup import), [STATS_API.md](STATS_API.md) (the
   HTTP contract the website builds against), `STATS_PLAN.md` (feature scope) and

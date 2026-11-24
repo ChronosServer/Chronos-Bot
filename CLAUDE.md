@@ -104,6 +104,11 @@ Vanilla-mirrored scoreboard objectives (per `dictionary-<version>.json`) are tra
 via `scoreboard_meta.is_vanilla_mirror` but their **scores are never inserted into
 scoreboard_snapshots** — that data already lives in `stat_snapshots` from the player
 stat files; storing both would duplicate ~9,200 of SMP's 9,346 objectives for nothing.
+The mirror set (live snapshot and import alike) is the **union of every bundled
+`dictionaries/dictionary-*.json`** plus the current version's: old-version mirrors still on
+the live board (`m-grass_path`) are mirrors too. Current dictionary missing → the bundled
+union alone (warn); no dictionary at all → the scoreboard step is skipped with `ok=0`,
+never run with an empty mirror set (that would store mirror scores and reset the flags).
 
 NBT quirk: Paper omits `Objectives`/`PlayerScores`/`Teams` tags entirely when they'd
 be empty (confirmed on the `building` world — has Teams, no Objectives at all).
@@ -248,8 +253,10 @@ tables) → SQLite → `api/` (FastAPI, read-only) → nginx `/api/stats/*` → 
   never writes `stat_current`/`scoreboard_current`. Old keys are mapped through
   `tools/stat_renames.json` (editable data).
 - `dictionaries/` bundles every-scoreboard's `dictionary-<version>.json` for 1.16–26.2
-  (not 1.19.1/.3/.4). The import skips the mirror names of all of them (dry run should
-  show ~0 "probable mirrors"), and `fetch_dictionary` prefers the local file over GitHub.
+  (not 1.19.1/.3/.4). The import and the live snapshot skip the mirror names of all of
+  them (dry run should show ~0 "probable mirrors"), and `fetch_dictionary` prefers the
+  local file over GitHub. `commands/statsCommand.py` falls back to the newest bundled
+  dictionary when `minecraft_version` has none (console warning).
 - Run it on the server by hand with the timer + service stopped (it gives up after 5 s on
   a busy DB), after at least one live snapshot exists; `--dry-run` first. It makes
   `pre-import-<UTC stamp>.db` next to the DB before writing (undo = restore it). Refuses
