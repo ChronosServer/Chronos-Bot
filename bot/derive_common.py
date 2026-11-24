@@ -8,7 +8,9 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from api.scope import Scope, scoreboard_filter_sql, stat_filter_sql  # noqa: E402
+from api.scope import (  # noqa: E402,F401
+    Scope, counted_uuids, scoreboard_filter_sql, stat_filter_sql,
+)
 
 ACTIVITY_CATEGORY = "minecraft:custom"
 ACTIVITY_STAT = "minecraft:play_time"

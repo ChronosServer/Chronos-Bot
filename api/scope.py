@@ -79,3 +79,14 @@ def is_counted(conn, server_key: str, uuid: str, include_bots: bool = False) -> 
     return conn.execute(
         "SELECT 1 FROM player_flags WHERE server_key=? AND uuid=? AND is_bot=0",
         (server_key, uuid)).fetchone() is not None
+
+
+def counted_uuids(conn, server_key: str):
+    """Batch form of is_counted(include_bots=False) for one server: None when
+    the server never filters bots (everyone counts), else the set of uuids
+    with a player_flags(is_bot=0) row."""
+    row = conn.execute("SELECT filters_bots FROM servers WHERE key=?", (server_key,)).fetchone()
+    if not row or not row[0]:
+        return None
+    return {u for (u,) in conn.execute(
+        "SELECT uuid FROM player_flags WHERE server_key=? AND is_bot=0", (server_key,))}

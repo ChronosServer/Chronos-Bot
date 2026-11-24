@@ -13,8 +13,8 @@ if str(BOT_DIR) not in sys.path:
     sys.path.insert(0, str(BOT_DIR))
 
 from derive_common import (  # noqa: E402,F401  (re-exported for callers/tests)
-    ACTIVITY_CATEGORY, ACTIVITY_STAT, Scope, _servers, scoreboard_filter_sql,
-    stat_filter_sql, tracking_start,
+    ACTIVITY_CATEGORY, ACTIVITY_STAT, Scope, _servers, counted_uuids,
+    scoreboard_filter_sql, stat_filter_sql, tracking_start,
 )
 from derive_achievements import derive_badges, derive_firsts, derive_milestones  # noqa: E402
 from derive_social import derive_rivalries, derive_spotlight  # noqa: E402
@@ -96,7 +96,127 @@ def _derive_scoreboard_totals(conn, key, run_at):
             (key, obj, *new))
 
 
+BACKFILL_MARKER = "totals_backfilled"
+_FLUSH = 10_000
+
+
+def _backfill_server(conn, key, run_at, emit_stat, emit_board):
+    counted = counted_uuids(conn, key)  # current rule, once per server
+
+    def is_counted(u):
+        return counted is None or u in counted
+
+    def replay(cursor, emit):
+        last_val: dict = {}
+        tot: dict = {}
+        emitted: dict = {}
+        touched: set = set()
+        cur_at = None
+
+        def flush(at):
+            for k in touched:
+                pair = tuple(tot[k])
+                if emitted.get(k) != pair:
+                    emitted[k] = pair
+                    emit(k, at, *pair)
+            touched.clear()
+
+        for at, u, k, v in cursor:
+            if at != cur_at:
+                if cur_at is not None:
+                    flush(cur_at)
+                cur_at = at
+            prev = last_val.get((u, k), 0)
+            last_val[(u, k)] = v
+            t = tot.get(k)
+            if t is None:
+                t = tot[k] = [0, 0]
+            t[0] += v - prev
+            if is_counted(u):
+                t[1] += v - prev
+            touched.add(k)
+        if cur_at is not None:
+            flush(cur_at)
+        return emitted
+
+    stats = replay(
+        ((at, u, (c, s), v) for at, u, c, s, v in conn.execute(
+            "SELECT at, uuid, category, stat_key, value FROM stat_snapshots "
+            "INDEXED BY idx_stat_at WHERE server_key=? AND at<? ORDER BY at",
+            (key, run_at))),
+        emit_stat)
+    mirrors = {o for (o,) in conn.execute(
+        "SELECT objective FROM scoreboard_meta WHERE server_key=? AND is_vanilla_mirror=1",
+        (key,))}
+    boards = replay(
+        ((at, u, o, v) for at, u, o, v in conn.execute(
+            "SELECT at, uuid, objective, value FROM scoreboard_snapshots "
+            "INDEXED BY idx_scoreboard_at WHERE server_key=? AND at<? "
+            "AND participant_kind != 'unresolved' AND uuid IS NOT NULL ORDER BY at",
+            (key, run_at)) if o not in mirrors),
+        emit_board)
+    return stats, boards
+
+
+def backfill_totals(conn, run_at):
+    """One-time rebuild of stat_totals / scoreboard_totals history from the
+    raw snapshot history (which predates the first derive on the live DB),
+    so totals series have no 0 -> total cliff on deploy day. Bot status is
+    the CURRENT rule for every historical row (history of flags isn't
+    stored). Emits only rows with at < run_at; the normal recompute then
+    writes this run's changes. Guarded by meta[BACKFILL_MARKER], committed
+    together with the rebuilt rows."""
+    if conn.execute("SELECT 1 FROM meta WHERE key=? AND value='1'",
+                    (BACKFILL_MARKER,)).fetchone():
+        return
+    for tbl in ("stat_totals", "stat_totals_current",
+                "scoreboard_totals", "scoreboard_totals_current"):
+        conn.execute(f"DELETE FROM {tbl}")
+    for key in _servers(conn):
+        srows, brows = [], []
+
+        def emit_stat(k, at, t, n):
+            srows.append((key, k[0], k[1], at, t, n))
+            if len(srows) >= _FLUSH:
+                _flush_stat(conn, srows)
+
+        def emit_board(o, at, t, n):
+            brows.append((key, o, at, t, n))
+            if len(brows) >= _FLUSH:
+                _flush_board(conn, brows)
+
+        stats, boards = _backfill_server(conn, key, run_at, emit_stat, emit_board)
+        _flush_stat(conn, srows)
+        _flush_board(conn, brows)
+        conn.executemany(
+            "INSERT INTO stat_totals_current (server_key, category, stat_key, total, "
+            "total_no_bots) VALUES (?, ?, ?, ?, ?)",
+            [(key, k[0], k[1], t, n) for k, (t, n) in stats.items()])
+        conn.executemany(
+            "INSERT INTO scoreboard_totals_current (server_key, objective, total, "
+            "total_no_bots) VALUES (?, ?, ?, ?)",
+            [(key, o, t, n) for o, (t, n) in boards.items()])
+    conn.execute("INSERT INTO meta (key, value) VALUES (?, '1') "
+                 "ON CONFLICT(key) DO UPDATE SET value=excluded.value", (BACKFILL_MARKER,))
+    conn.commit()
+
+
+def _flush_stat(conn, rows):
+    conn.executemany(
+        "INSERT INTO stat_totals (server_key, category, stat_key, at, total, total_no_bots) "
+        "VALUES (?, ?, ?, ?, ?, ?)", rows)
+    rows.clear()
+
+
+def _flush_board(conn, rows):
+    conn.executemany(
+        "INSERT INTO scoreboard_totals (server_key, objective, at, total, total_no_bots) "
+        "VALUES (?, ?, ?, ?, ?)", rows)
+    rows.clear()
+
+
 def derive_totals(conn, run_at):
+    backfill_totals(conn, run_at)
     for key in _servers(conn):
         _derive_stat_totals(conn, key, run_at)
         _derive_scoreboard_totals(conn, key, run_at)

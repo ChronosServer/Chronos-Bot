@@ -207,3 +207,102 @@ def test_meta_last_run_at_written_when_stage_fails(world, run_snapshot, db, monk
     meta = dict(q(db, "SELECT key, value FROM meta"))
     assert meta["last_run_at"] == "1000"
     assert q(db, "SELECT ok FROM snapshot_runs WHERE kind='derive'") == [(0,)]
+
+
+# --- one-time totals history backfill (first derive on a DB with history) ---
+
+def _runs_without_derive(monkeypatch, run_snapshot, ats):
+    import snapshot  # noqa: F401  (run_once imports derive lazily)
+    real = derive.run_derive
+    monkeypatch.setattr(derive, "run_derive", lambda conn, run_at, mojang=None: None)
+    for at in ats:
+        run_snapshot(at)
+    monkeypatch.setattr(derive, "run_derive", real)
+
+
+def _late_derive_world(world, run_snapshot, monkeypatch):
+    world.set_usercache("smp", {P: "Alice", BOT: "BotGuy"})
+    world.add_stats("smp", P, pt(10))
+    world.add_stats("smp", BOT, pt(5))
+    world.set_scoreboard("smp", ["deaths"],
+                         [("Alice", "deaths", 1), ("BotGuy", "deaths", 4)], {"t": ["Alice"]})
+    _runs_without_derive(monkeypatch, run_snapshot, [1000])
+    world.add_stats("smp", P, pt(20))
+    world.add_stats("smp", BOT, pt(8))
+    world.set_scoreboard("smp", ["deaths"],
+                         [("Alice", "deaths", 2), ("BotGuy", "deaths", 4)], {"t": ["Alice"]})
+    _runs_without_derive(monkeypatch, run_snapshot, [1900])
+    world.add_stats("smp", P, pt(25))
+    world.set_scoreboard("smp", ["deaths"],
+                         [("Alice", "deaths", 2), ("BotGuy", "deaths", 9)], {"t": ["Alice"]})
+    run_snapshot(2800)  # first-ever derive
+
+
+def test_totals_backfilled_from_history_on_first_derive(world, run_snapshot, db, monkeypatch):
+    _late_derive_world(world, run_snapshot, monkeypatch)
+    assert q(db, "SELECT at, total, total_no_bots FROM stat_totals WHERE server_key='smp' "
+                 "AND stat_key='minecraft:play_time' ORDER BY at") == [
+        (1000, 15, 10), (1900, 28, 20), (2800, 33, 25)]
+    assert totals(db) == [("minecraft:custom", "minecraft:play_time", 33, 25)]
+    assert q(db, "SELECT at, total, total_no_bots FROM scoreboard_totals "
+                 "WHERE server_key='smp' AND objective='deaths' ORDER BY at") == [
+        (1000, 5, 1), (1900, 6, 2), (2800, 11, 2)]
+    assert q(db, "SELECT total, total_no_bots FROM scoreboard_totals_current "
+                 "WHERE server_key='smp' AND objective='deaths'") == [(11, 2)]
+    assert q(db, "SELECT value FROM meta WHERE key='totals_backfilled'") == [("1",)]
+
+
+def test_totals_api_has_no_zero_cliff_after_late_first_derive(world, run_snapshot, monkeypatch):
+    from fastapi.testclient import TestClient
+    from api import cache
+    from api.main import create_app
+    _late_derive_world(world, run_snapshot, monkeypatch)
+    monkeypatch.setenv("CHRONOS_STATS_DB", world.db_path)
+    cache.clear()
+    with TestClient(create_app()) as c:
+        j = c.get("/api/stats/totals?kind=stat&category=minecraft:custom"
+                  "&key=minecraft:play_time&scopes=smp&range=all").json()
+        jb = c.get("/api/stats/totals?kind=stat&category=minecraft:custom"
+                   "&key=minecraft:play_time&scopes=smp&range=all&include_bots=true").json()
+    cache.clear()
+    assert j["effective_from"] == 1000
+    assert j["series"]["smp"] == [[1000, 10], [1900, 20], [2800, 25]]
+    assert jb["series"]["smp"] == [[1000, 15], [1900, 28], [2800, 33]]
+
+
+def test_totals_backfill_runs_once(world, run_snapshot, db, monkeypatch):
+    _late_derive_world(world, run_snapshot, monkeypatch)
+    db.execute("DELETE FROM stat_totals WHERE at=1000")
+    db.commit()
+    run_snapshot(3700)  # marker present: history is not rebuilt
+    assert q(db, "SELECT at FROM stat_totals WHERE server_key='smp' "
+                 "AND stat_key='minecraft:play_time' ORDER BY at") == [(1900,), (2800,)]
+
+
+def test_totals_backfill_rebuilds_existing_history_without_duplicates(world, run_snapshot, db):
+    world.add_stats("smp", P, pt(10))
+    run_snapshot(1000)
+    world.add_stats("smp", P, pt(20))
+    run_snapshot(1900)
+    before = q(db, "SELECT server_key, category, stat_key, at, total, total_no_bots "
+                   "FROM stat_totals ORDER BY server_key, stat_key, at")
+    db.execute("DELETE FROM meta WHERE key='totals_backfilled'")
+    db.commit()
+    world.add_stats("smp", P, pt(30))
+    run_snapshot(2800)
+    after = q(db, "SELECT server_key, category, stat_key, at, total, total_no_bots "
+                  "FROM stat_totals ORDER BY server_key, stat_key, at")
+    # P is in no team: an SMP bot, so total_no_bots stays 0
+    assert after == before + [("smp", "minecraft:custom", "minecraft:play_time", 2800, 30, 0)]
+
+
+def test_scoreboard_backfill_skips_mirrors_and_unresolved(world, run_snapshot, db, monkeypatch):
+    world.set_usercache("smp", {P: "Alice"})
+    world.add_stats("smp", P, pt(1))
+    world.set_scoreboard("smp", ["deaths", "laterMirror"],
+                         [("Alice", "deaths", 3), ("Alice", "laterMirror", 7),
+                          ("npcGuy", "deaths", 100)], {"t": ["Alice"]})
+    _runs_without_derive(monkeypatch, run_snapshot, [1000])
+    run_snapshot(1900, dictionary={"x": "laterMirror"})  # flagged a mirror later
+    assert q(db, "SELECT objective, at, total, total_no_bots FROM scoreboard_totals "
+                 "WHERE server_key='smp' ORDER BY objective, at") == [("deaths", 1000, 3, 3)]
