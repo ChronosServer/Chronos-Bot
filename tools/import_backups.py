@@ -4,6 +4,7 @@
     python3 tools/import_backups.py --server smp [--dry-run] [--no-backup]
         [--skip-unknown] [--keep-prefixed] [--dictionary FILE ...]
         [--date <world_dir>=YYYY-MM-DD ...] [--config config.json] <world_dir> ...
+    python3 tools/import_backups.py --server smp --rebuild-only
 
 Each backup world folder is read the way the live snapshot reads a world
 (same stat-file and scoreboard.dat readers, same participant rules), its
@@ -11,10 +12,13 @@ stat keys are mapped through tools/stat_renames.json, and change-only history
 rows are written at the backup's date (level.dat Data.LastPlayed, or --date).
 stat_current / scoreboard_current are never written: they belong to the live
 snapshot. Stop chronos-stats-snapshot.timer and .service before running.
-See docs/superpowers/specs/2026-11-24-backup-import-design.md.
+After a real import, derive_achievements.rebuild_from_points re-derives
+firsts, milestones, totals and badges over the imported points.
+Operator guide: tools/README.md.
 """
 import argparse
 import json
+import os
 import re
 import sqlite3
 import sys
@@ -33,14 +37,12 @@ import nbt.nbt as nbt  # noqa: E402
 
 import snapshot  # noqa: E402
 from api.settings import load_settings  # noqa: E402
+from derive_common import (  # noqa: E402,F401  (re-exported for callers/tests)
+    BUSY_MESSAGE, BUSY_TIMEOUT_S, DatabaseBusy, begin_immediate,
+)
 
 RENAMES_PATH = Path(__file__).resolve().parent / "stat_renames.json"
 DEFAULT_CONFIG = REPO_ROOT / "config.json"
-# Spec value (Global Constraints), not tuning: how long to wait for the
-# write lock before deciding a live snapshot is running.
-BUSY_TIMEOUT_S = 5
-BUSY_MESSAGE = ("a snapshot is running — stop chronos-stats-snapshot.timer "
-                "and .service first")
 # Objective-name shape of every-scoreboard's vanilla mirrors (m-stone, kb-zombie,
 # z-play_time, ...). Applied to OBJECTIVE names only, never to participants,
 # and only here: old backups hold mirrors of keys missing from today's dictionary.
@@ -59,10 +61,6 @@ PREV_SCOREBOARD_SQL = (
     "FROM scoreboard_snapshots INDEXED BY idx_scoreboard_point "
     "WHERE server_key=? AND at<? "
     "GROUP BY objective, uuid, CASE WHEN uuid IS NULL THEN raw_name END")
-
-
-class DatabaseBusy(RuntimeError):
-    pass
 
 
 @dataclass
@@ -88,6 +86,7 @@ class ImportResult:
     renamed_hits: dict = field(default_factory=dict)
     unknown_keys: set = field(default_factory=set)
     skipped_reason: Optional[str] = None
+    refused: bool = False  # skipped because importing it would be wrong, not a no-op
     objectives: int = 0
     mirrors_by_dictionary: int = 0
     mirrors_by_prefix: list = field(default_factory=list)
@@ -185,16 +184,52 @@ def live_start(conn, server_key):
 
 
 def acquire_write_lock(conn, timeout_s=BUSY_TIMEOUT_S):
-    """BEGIN IMMEDIATE on conn; DatabaseBusy when another writer holds the DB."""
+    """BEGIN IMMEDIATE on conn (unless the caller already holds a
+    transaction); DatabaseBusy when another writer holds the DB."""
     if conn.in_transaction:
         return
-    conn.execute(f"PRAGMA busy_timeout = {int(timeout_s * 1000)}")
+    begin_immediate(conn, timeout_s)
+
+
+def _same_path(a, b):
     try:
-        conn.execute("BEGIN IMMEDIATE")
-    except sqlite3.OperationalError as e:
-        if "locked" in str(e) or "busy" in str(e):
-            raise DatabaseBusy(BUSY_MESSAGE) from e
-        raise
+        return os.path.normcase(str(Path(a).resolve())) == os.path.normcase(str(Path(b).resolve()))
+    except OSError:
+        return str(a) == str(b)
+
+
+def plan(conn, server_key, backups):
+    """Processing order (oldest first; equal dates: later argument wins) and
+    why each backup is skipped: [(index, backup, reason|None, refused, warn)].
+    Rerun detection keys on (server_key, world_path, last_played): the same
+    date, or the same world folder already imported at another date."""
+    indexed = sorted(enumerate(backups), key=lambda ib: (ib[1].at, ib[0]))
+    winners = {}
+    for i, b in indexed:
+        winners[b.at] = i
+    start = live_start(conn, server_key)
+    done = conn.execute("SELECT world_path, last_played FROM imports WHERE server_key=?",
+                        (server_key,)).fetchall()
+    done_at = {at for _, at in done}
+    out = []
+    for i, b in indexed:
+        reason, refused, warn = None, False, False
+        same_path = [at for path, at in done if path and _same_path(path, b.path)]
+        if winners[b.at] != i:
+            reason = f"same date as {backups[winners[b.at]].path} (later argument wins)"
+            warn = True
+        elif start is not None and b.at >= start:
+            reason = ("dated on or after the first live snapshot "
+                      f"({_fmt(start)}); it would rewrite the live timeline")
+            refused = True
+        elif b.at in done_at:
+            reason = "already imported"
+        elif same_path:
+            reason = (f"already imported (this folder, dated {_fmt(same_path[0])}); "
+                      "not importing it twice")
+            warn = True
+        out.append((i, b, reason, refused, warn))
+    return out
 
 
 def backup_db(conn, db_path, now=None):
@@ -292,14 +327,7 @@ def import_backups(conn, server_key, backups, renames, dictionary, dry_run, *,
 
 def _import(conn, server_key, backups, renames, dictionary, dry_run, skip_unknown,
             keep_prefixed, track_stats, track_scoreboards):
-    # Oldest first; for equal dates the later argument wins.
-    indexed = sorted(enumerate(backups), key=lambda ib: (ib[1].at, ib[0]))
-    winners = {}
-    for i, b in indexed:
-        winners[b.at] = i
-    start = live_start(conn, server_key)
-    done = {r[0] for r in conn.execute(
-        "SELECT last_played FROM imports WHERE server_key=?", (server_key,))}
+    steps = plan(conn, server_key, backups)
     # Known = seen live on any server, or a rename target (a backup newer than
     # the rename holds the target key itself, even if no live player has it).
     known_keys = set(conn.execute("SELECT DISTINCT category, stat_key FROM stat_current"))
@@ -309,7 +337,8 @@ def _import(conn, server_key, backups, renames, dictionary, dry_run, skip_unknow
         "SELECT objective FROM scoreboard_meta WHERE server_key=? AND is_vanilla_mirror=1",
         (server_key,))}
 
-    live_backups = [b for i, b in indexed if winners[b.at] == i]
+    winner = {b.at: i for i, b, *_ in steps}  # steps are (date, argument) ordered
+    live_backups = [b for i, b, *_ in steps if winner[b.at] == i]
     name_to_uuid = _resolve_names(conn, live_backups)
     names = {}
     for b in live_backups:  # oldest -> newest: the newest name wins
@@ -318,20 +347,13 @@ def _import(conn, server_key, backups, renames, dictionary, dry_run, skip_unknow
     # In a dry run nothing reaches the DB, so this run's points are carried here.
     carried_stats, carried_sb = {}, {}
     results = []
-    for i, b in indexed:
-        r = ImportResult(path=b.path, at=b.at, backup=b)
+    for _, b, reason, refused, warn in steps:
+        r = ImportResult(path=b.path, at=b.at, backup=b, skipped_reason=reason,
+                         refused=refused)
         results.append(r)
-        if winners[b.at] != i:
-            winner = backups[winners[b.at]]
-            r.skipped_reason = f"same date as {winner.path} (later argument wins)"
-            print(f"[warn] {b.path}: {r.skipped_reason}")
-            continue
-        if start is not None and b.at >= start:
-            r.skipped_reason = ("dated on or after the first live snapshot "
-                                f"({_fmt(start)}); it would rewrite the live timeline")
-            continue
-        if b.at in done:
-            r.skipped_reason = "already imported"
+        if reason:
+            if warn:
+                print(f"[warn] {b.path}: {reason}")
             continue
 
         t0 = time.time()
@@ -364,7 +386,7 @@ def _import(conn, server_key, backups, renames, dictionary, dry_run, skip_unknow
         conn.execute(
             "INSERT INTO imports (world_path, level_name, server_key, last_played, "
             "data_version, imported_at, rows_written) VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (str(b.path), b.level_name, server_key, b.at, b.data_version,
+            (str(Path(b.path).resolve()), b.level_name, server_key, b.at, b.data_version,
              int(time.time()), written))
     return results
 
@@ -474,29 +496,90 @@ def _parse_args(argv):
     p.add_argument("--date", action="append", default=[], metavar="DIR=YYYY-MM-DD",
                    help="override a backup's date (00:00 UTC); repeatable")
     p.add_argument("--config", default=str(DEFAULT_CONFIG), help="config.json path")
-    p.add_argument("worlds", nargs="+", metavar="world_dir")
+    p.add_argument("--rebuild-only", action="store_true",
+                   help="import nothing; only rerun the derived-data rebuild for --server")
+    p.add_argument("worlds", nargs="*", metavar="world_dir")
     return p.parse_args(argv)
 
 
-def main(argv=None, *, dictionary=None):
-    """`dictionary` (tests) replaces the fetched current dictionary."""
-    args = _parse_args(sys.argv[1:] if argv is None else argv)
-    cfg = snapshot.load_config(args.config)
-    settings = load_settings(cfg["stats_tracking"])
+def _load(args):
+    """(config, settings) or an error message (exit 2)."""
+    try:
+        with open(args.config, "r", encoding="utf-8") as f:
+            cfg = json.load(f)
+    except FileNotFoundError:
+        return None, f"config file not found: {args.config} (pass --config)"
+    except (OSError, ValueError) as e:
+        return None, f"can't read config {args.config}: {e}"
+    if not isinstance(cfg, dict) or not isinstance(cfg.get("stats_tracking"), dict):
+        return None, f"{args.config} has no stats_tracking block (see CLAUDE.md)"
+    try:
+        settings = load_settings(cfg["stats_tracking"])
+    except ValueError as e:
+        return None, f"bad stats_tracking in {args.config}: {e}"
     if args.server not in settings.servers:
-        print(f"error: {args.server!r} is not in stats_tracking.servers")
-        return 2
+        return None, f"{args.server!r} is not in stats_tracking.servers"
     if not settings.db_path:
-        print("error: stats_tracking.db_path is required")
-        return 2
+        return None, "stats_tracking.db_path is required"
+    return (cfg, settings), None
 
+
+def _date_overrides(args):
+    """{resolved world path: unix s} or an error message (exit 2)."""
+    worlds = {str(Path(w).resolve()) for w in args.worlds}
     overrides = {}
     for item in args.date:
         d, sep, day = item.rpartition("=")
-        if not sep:
-            print(f"error: --date expects DIR=YYYY-MM-DD, got {item!r}")
+        if not sep or not d:
+            return None, f"--date expects DIR=YYYY-MM-DD, got {item!r}"
+        try:
+            at = parse_date(day)
+        except ValueError:
+            return None, f"--date {item!r}: {day!r} is not a valid YYYY-MM-DD date"
+        key = str(Path(d).resolve())
+        if key not in worlds:
+            return None, (f"--date {item!r}: {d} is not among the world folders given "
+                          "(spell it the same way as the folder argument)")
+        overrides[key] = at
+    return overrides, None
+
+
+def _rebuild_only(args, settings):
+    conn = snapshot.connect_db(settings.db_path)
+    try:
+        if conn.execute("SELECT 1 FROM servers WHERE key=?", (args.server,)).fetchone() is None:
+            print(f"error: server {args.server!r} is not in the DB")
             return 2
-        overrides[str(Path(d).resolve())] = parse_date(day)
+        import derive_achievements
+        t0 = time.time()
+        try:
+            counts = derive_achievements.rebuild_from_points(conn, args.server, settings)
+        except DatabaseBusy as e:
+            print(f"error: {e}")
+            return 1
+        print(f"rebuild: {counts} in {time.time() - t0:.1f}s")
+        return 0
+    finally:
+        conn.close()
+
+
+def main(argv=None, *, dictionary=None):
+    """`dictionary` (tests) replaces the fetched current dictionary.
+    Exit codes: 0 ok, 1 a backup refused / DB busy / dictionary missing,
+    2 bad arguments or config."""
+    args = _parse_args(sys.argv[1:] if argv is None else argv)
+    loaded, err = _load(args)
+    if err is None:
+        overrides, err = _date_overrides(args)
+    if err:
+        print(f"error: {err}")
+        return 2
+    cfg, settings = loaded
+    if args.rebuild_only:
+        return _rebuild_only(args, settings)
+    if not args.worlds:
+        print("error: give at least one world folder (or --rebuild-only)")
+        return 2
 
     backups, refused = [], 0
     for w in args.worlds:
@@ -509,6 +592,13 @@ def main(argv=None, *, dictionary=None):
 
     conn = snapshot.connect_db(settings.db_path)
     try:
+        if conn.execute("SELECT 1 FROM servers WHERE key=?", (args.server,)).fetchone() is None:
+            print(f"error: server {args.server!r} is not in the DB; run bot/snapshot.py once "
+                  "first")
+            return 2
+        if live_start(conn, args.server) is None:
+            print(f"[warn] {args.server} has no live snapshot yet: import after the first "
+                  "live run, or its crossings will not be marked approximate")
         if dictionary is None:
             version = cfg.get("server", {}).get("minecraft_version", "unknown")
             try:
@@ -522,7 +612,8 @@ def main(argv=None, *, dictionary=None):
         bundled = sorted(str(f) for f in snapshot.DICTIONARY_DIR.glob("dictionary-*.json"))
         mirrors = merge_dictionaries(dictionary, bundled + list(args.dictionary))
 
-        if not args.dry_run:
+        pending = any(step[2] is None for step in plan(conn, args.server, backups))
+        if not args.dry_run and pending:
             try:
                 # Probe first so a running snapshot aborts us before a long DB
                 # backup. The lock is released for the backup (an online backup
@@ -548,15 +639,25 @@ def main(argv=None, *, dictionary=None):
         for r in results:
             _print_result(r, args.dry_run)
         imported = [r for r in results if r.skipped_reason is None]
-        print(f"total: {len(imported)} {'to import' if args.dry_run else 'imported'}, {len(results) - len(imported)} skipped, "
-              f"{refused} refused; rows {sum(r.rows_stats for r in imported)} stats, "
+        refused += sum(1 for r in results if r.refused)
+        print(f"total: {len(imported)} {'to import' if args.dry_run else 'imported'}, "
+              f"{len(results) - len(imported)} skipped, {refused} refused; "
+              f"rows {sum(r.rows_stats for r in imported)} stats, "
               f"{sum(r.rows_scoreboard for r in imported)} scoreboard")
 
-        if not args.dry_run:
+        if not args.dry_run and imported:
             import derive_achievements
-            counts = derive_achievements.rebuild_from_points(conn, args.server, settings)
-            conn.commit()
-            print(f"rebuild: {counts}")
+            t0 = time.time()
+            try:
+                counts = derive_achievements.rebuild_from_points(conn, args.server, settings)
+            except DatabaseBusy as e:
+                print(f"error: rebuild not run: {e}. The import is committed; once the "
+                      f"snapshot is stopped run: import_backups.py --server {args.server} "
+                      "--rebuild-only")
+                return 1
+            print(f"rebuild: {counts} in {time.time() - t0:.1f}s")
+        elif not args.dry_run:
+            print("nothing imported: no DB backup, no rebuild")
     finally:
         conn.close()
     return 1 if refused else 0

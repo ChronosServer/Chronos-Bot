@@ -483,3 +483,90 @@ def test_fetch_dictionary_prefers_local_file(tmp_path, monkeypatch):
         assert snapshot.fetch_dictionary(conn, "9.9") == {"m-x": "m-x"}
     finally:
         conn.close()
+
+
+# ------------------------------------------------------------------ Task 3 carried fixes
+
+def test_main_backup_after_live_start_counts_as_refused(tmp_path, world, run_snapshot, capsys):
+    world.add_stats("smp", U1, mined(5))
+    run_snapshot(LIVE)
+    late = make_backup(tmp_path, name="late", last_played_ms=(LIVE + 10) * 1000,
+                       stats={U1: mined(1)})
+    ok = make_backup(tmp_path, name="ok", last_played_ms=T1 * 1000, stats={U1: mined(1)})
+    rc = ib.main(["--server", "smp", "--no-backup", "--config",
+                  str(write_config(tmp_path, world)), str(late), str(ok)], dictionary={})
+    out = capsys.readouterr().out
+    assert rc == 1
+    assert "on or after" in out
+    assert "1 imported" in out and "1 refused" in out
+
+
+def _exit2(capsys, argv, needle):
+    rc = ib.main(argv, dictionary={})
+    out = capsys.readouterr()
+    assert rc == 2
+    assert needle in out.out
+    assert "Traceback" not in out.out + out.err
+
+
+def test_main_bad_date_exits_2(tmp_path, world, db, capsys):
+    w = make_backup(tmp_path, name="b1", last_played_ms=T1 * 1000, stats={U1: mined(1)})
+    _exit2(capsys, ["--server", "smp", "--config", str(write_config(tmp_path, world)),
+                    "--date", f"{w}=2021-13-45", str(w)], "--date")
+
+
+def test_main_date_for_unlisted_dir_exits_2(tmp_path, world, db, capsys):
+    w = make_backup(tmp_path, name="b1", last_played_ms=T1 * 1000, stats={U1: mined(1)})
+    other = tmp_path / "elsewhere"
+    _exit2(capsys, ["--server", "smp", "--config", str(write_config(tmp_path, world)),
+                    "--date", f"{other}=2021-01-01", str(w)], "not among")
+
+
+def test_main_missing_config_exits_2(tmp_path, capsys):
+    w = make_backup(tmp_path, name="b1", last_played_ms=T1 * 1000, stats={U1: mined(1)})
+    _exit2(capsys, ["--server", "smp", "--config", str(tmp_path / "nope.json"), str(w)],
+           "config")
+
+
+def test_main_config_without_stats_tracking_exits_2(tmp_path, capsys):
+    w = make_backup(tmp_path, name="b1", last_played_ms=T1 * 1000, stats={U1: mined(1)})
+    p = tmp_path / "cfg.json"
+    p.write_text(json.dumps({"server": {}}), encoding="utf-8")
+    _exit2(capsys, ["--server", "smp", "--config", str(p), str(w)], "stats_tracking")
+
+
+def test_main_server_not_in_db_exits_2(tmp_path, world, capsys):
+    # the config knows smp, but the DB was never synced (no snapshot ran yet)
+    w = make_backup(tmp_path, name="b1", last_played_ms=T1 * 1000, stats={U1: mined(1)})
+    _exit2(capsys, ["--server", "smp", "--config", str(write_config(tmp_path, world)),
+                    str(w)], "not in the DB")
+
+
+def test_same_world_path_other_date_skipped(tmp_path, db, capsys):
+    w = make_backup(tmp_path, name="b1", last_played_ms=T1 * 1000, stats={U1: mined(5)})
+    run(db, [ib.read_backup(w, None)])
+    before = (rows(db), counts(db))
+    [r] = run(db, [ib.read_backup(w, T2)])  # same folder, --date moved it
+    assert "already imported" in r.skipped_reason
+    assert "[warn]" in capsys.readouterr().out
+    assert (rows(db), counts(db)) == before
+
+
+def test_nothing_to_import_skips_db_backup_and_rebuild(tmp_path, world, db, monkeypatch):
+    import derive_achievements
+    calls = []
+    monkeypatch.setattr(derive_achievements, "rebuild_from_points",
+                        lambda conn, key, settings, **kw: calls.append(key) or {})
+    w = make_backup(tmp_path, name="b1", last_played_ms=T1 * 1000, stats={U1: mined(5)})
+    cfg = str(write_config(tmp_path, world))
+    assert ib.main(["--server", "smp", "--no-backup", "--config", cfg, str(w)],
+                   dictionary={}) == 0
+    assert calls == ["smp"]
+    assert ib.main(["--server", "smp", "--config", cfg, str(w)], dictionary={}) == 0
+    assert calls == ["smp"]  # no rebuild the second time
+    assert list(Path(world.db_path).parent.glob("pre-import-*.db")) == []
+
+
+def test_rename_versions_scute():
+    raw = json.loads(ib.RENAMES_PATH.read_text(encoding="utf-8"))
+    assert raw["_versions"]["minecraft:scute"] == "1.21.5"
