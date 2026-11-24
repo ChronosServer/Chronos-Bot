@@ -20,7 +20,14 @@ def _v1(conn):
     _add_column(conn, "milestones", "earliest_known", "INTEGER NOT NULL DEFAULT 0")
 
 
-MIGRATIONS = [_v1]
+def _v2(conn):
+    # Serves /milestones' ORDER BY. Lives here, not in schema.sql: schema.sql
+    # runs before migrations, and earliest_known is added by _v1.
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_milestones_feed "
+                 "ON milestones(earliest_known, at DESC, id DESC)")
+
+
+MIGRATIONS = [_v1, _v2]
 
 
 def migrate(conn: sqlite3.Connection) -> None:

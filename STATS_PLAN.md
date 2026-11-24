@@ -109,11 +109,11 @@ aren't part of the same subsystem the way the six stats views are.
 3. ~~Wire `snapshot.py` into a scheduler~~ — systemd oneshot service + 15-min
    timer in `deploy/systemd/` (separate process, not a bot `tasks.loop`, to
    keep the heavy NBT/SQLite work out of the bot).
-4. Backend API layer (FastAPI or similar) reading the stats SQLite DB:
+4. ~~Backend API layer (FastAPI or similar) reading the stats SQLite DB:
    leaderboards, deltas over arbitrary timeframes, graph data, rankings,
    heatmap data, rivalry/catching-up detection, milestone/firsts derivation
-   jobs.
-5. Website Stats frontend: the six pages listed above, in the established
+   jobs.~~ — done (`api/`, `bot/derive.py`; see Chronos-Bot/CLAUDE.md).
+5. Website (NEXT): Stats frontend: the six pages listed above, in the established
    Chronos design system (dark panels, teal accent, Syncopate/IBM Plex,
    scroll-reveal — see website's CLAUDE.md), built from the Design/
    Engineering/Impeccable/taste/Emil-Kowalski skill set now installed in

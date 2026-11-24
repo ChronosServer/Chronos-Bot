@@ -44,7 +44,7 @@ exception — this bit us before, cost ~9 days of stale members data with zero l
 output). `/sync_status` shows last-success time and next-run time per loop — check
 this first whenever data looks stale, before assuming the sync is broken.
 
-## Stats subsystem (new, in progress — see bot/snapshot.py, sql/schema.sql)
+## Stats subsystem (in progress — see bot/snapshot.py, sql/schema.sql)
 Change-only SQLite storage: a history row is written ONLY when a value differs from
 the last known value (tracked in `stat_current`/`scoreboard_current`). This is load-
 bearing, not a style choice — SMP alone has 9,346 scoreboard objectives and 175k
@@ -110,10 +110,30 @@ scoreboards written=13, cmp stats written=30, every other server written=0 —
 small, correct deltas on exactly the servers that changed. Change-only diffing is
 fully verified; safe to put on a cron/systemd timer alongside the bot's other
 sync jobs. (`sqlite3` CLI isn't installed on the server — query the DB via
-`python3 -c "import sqlite3; ..."` instead.) Backend API (FastAPI, reading this DB) and the website's Stats pages
-are not built yet — see `STATS_PLAN.md` in this repo for the full scope/feature
-list agreed before implementation; next build order is backend API → frontend
-pages, in that order.
+`python3 -c "import sqlite3; ..."` instead.)
+
+**Stats API + derive step: built (tests green, real-server verification pending).**
+- `bot/derive.py` runs at the end of every `snapshot.run_once()`; a derive failure
+  is recorded as `snapshot_runs.kind='derive'`, `ok=0` and never fails the snapshot.
+  New tables: `activity`, `stat_totals`/`scoreboard_totals` (+ `_current`), `meta`,
+  `milestones`/`milestone_rules`, `firsts`, `badges`, `rivalries`,
+  `spotlight_candidates`, `name_lookups`, `dictionary_cache`. Column additions go
+  through `sql/migrations.py` (`PRAGMA user_version`), not schema.sql (schema.sql runs
+  first, so anything touching an added column — e.g. `idx_milestones_feed` — lives there).
+- SMP team check is strict: no team = bot, **missing `player_flags` row on smp = bot**.
+  Team member names not yet known to a uuid are resolved via Mojang (≤60 HTTP calls
+  per derive run; failed lookups cached 7 days in `name_lookups`).
+- `api/` (FastAPI, read-only `mode=ro` + `query_only`) serves `/api/stats/*` on
+  127.0.0.1:8765 behind nginx. Startup runs `check_required_indexes()`
+  (`REQUIRED_INDEXES` in `api/db.py`): the API **refuses to start until
+  `bot/snapshot.py` has applied the schema once**.
+- Deploy order: pull → `pip install -r requirements.txt` → stop snapshot timer →
+  run `bot/snapshot.py` by hand once (migrations + one-time seeding) → start timer →
+  install `deploy/systemd/chronos-stats-api.service` → add
+  `deploy/nginx/chronos-stats-api.conf` to the nginx site → `nginx -t && reload`.
+- Tests live in `tests/` (synthetic fixture DB built via the real snapshot write
+  path; no network). Run: `python -m pytest tests -q`.
+- Frontend (website Stats pages) is the next step, see `STATS_PLAN.md`.
 
 ## Website nav plan (for when Stats ships)
 Top-level nav gets one new "Stats ▾" dropdown (Overview / Explorer / Scoreboards /
