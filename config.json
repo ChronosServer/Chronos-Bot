@@ -76,5 +76,17 @@
         ],
         "storage_regions": ["r.3.-3", "r.4.-3", "r.4.-4"],
         "dig_storage_regions": ["r.9.3"]
+    },
+    "stats_tracking": {
+        "db_path": "/opt/chronos/stats/chronos-stats.db",
+        "excluded_servers": ["mirror", "tour", "snapshot", "building2"],
+        "servers": {
+            "smp":       {"label": "SMP",       "group": "smp", "track_stats": true, "track_scoreboards": true},
+            "cmp":       {"label": "CMP",       "group": "cmp", "track_stats": true, "track_scoreboards": true},
+            "cmp2":      {"label": "CMP2",      "group": "cmp", "track_stats": true, "track_scoreboards": true},
+            "cmp3":      {"label": "CMP3",      "group": "cmp", "track_stats": true, "track_scoreboards": true},
+            "cmp4":      {"label": "CMP4",      "group": "cmp", "track_stats": true, "track_scoreboards": true},
+            "building":  {"label": "BUILDING",  "group": "cmp", "track_stats": true, "track_scoreboards": true}
+        }
     }
 }
