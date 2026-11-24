@@ -2,17 +2,21 @@
 import json
 import os
 import sqlite3
+from functools import lru_cache
 from pathlib import Path
 
 CONFIG_PATH = Path(__file__).resolve().parent.parent / "config.json"
 
 
-def db_path() -> str:
-    env = os.environ.get("CHRONOS_STATS_DB")
-    if env:
-        return env
+@lru_cache(maxsize=1)
+def _config_db_path() -> str:
     with open(CONFIG_PATH, "r", encoding="utf-8") as f:
         return json.load(f)["stats_tracking"]["db_path"]
+
+
+def db_path() -> str:
+    # Env var is checked live each call; config.json is read once.
+    return os.environ.get("CHRONOS_STATS_DB") or _config_db_path()
 
 
 def get_conn() -> sqlite3.Connection:

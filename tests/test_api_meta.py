@@ -1,10 +1,12 @@
 import sqlite3
 
 import pytest
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
+from fastapi.responses import JSONResponse
 from fastapi.testclient import TestClient
 
 from api import cache, db
+from api.cache import cached
 from api.main import create_app
 from api.scope import resolve_scope
 
@@ -61,13 +63,77 @@ def test_cache_invalidated_by_new_run(client):
     assert r.status_code == 200 and r.headers["ETag"] != e1
 
 
-def test_db_is_read_only(client):
+def test_db_connection_pragmas(client):
     conn = db.get_conn()
     try:
+        assert conn.execute("PRAGMA query_only").fetchone()[0] == 1
+    finally:
+        conn.close()
+
+
+def test_db_uri_is_read_only_independent_of_pragma(client):
+    conn = db.get_conn()
+    try:
+        conn.execute("PRAGMA query_only=0")
         with pytest.raises(sqlite3.OperationalError):
             conn.execute("INSERT INTO meta VALUES('x','y')")
     finally:
         conn.close()
+
+
+def _app_with(handler, path="/_t"):
+    router = APIRouter()
+    router.get(path)(handler)
+    app = create_app()
+    app.include_router(router, prefix="/api/stats")
+    return TestClient(app)
+
+
+def test_cached_requires_request_and_conn():
+    with pytest.raises(TypeError, match="request"):
+        @cached
+        def h(conn=Depends(db.get_db)): return {}
+    with pytest.raises(TypeError, match="conn"):
+        @cached
+        def h2(request: Request): return {}
+
+
+def test_cached_sync_handler_hits_cache_once(client):
+    calls = []
+
+    @cached
+    def h(request: Request, conn=Depends(db.get_db)):
+        calls.append(1)
+        return {"n": 1, 1: "x"}
+
+    c = _app_with(h)
+    assert c.get("/api/stats/_t?a=1&b=2").json() == {"n": 1, "1": "x"}
+    c.get("/api/stats/_t?b=2&a=1")
+    assert len(calls) == 1
+    c.get("/api/stats/_t?a=2&b=2")
+    assert len(calls) == 2
+
+
+def test_cached_async_handler_works(client):
+    @cached
+    async def h(request: Request, conn=Depends(db.get_db)):
+        return {"ok": True}
+
+    assert _app_with(h).get("/api/stats/_t").json() == {"ok": True}
+
+
+def test_cached_non_200_response_not_cached(client):
+    calls = []
+
+    @cached
+    def h(request: Request, conn=Depends(db.get_db)):
+        calls.append(1)
+        return JSONResponse({"error": "x"}, status_code=404)
+
+    c = _app_with(h)
+    assert c.get("/api/stats/_t").status_code == 404
+    assert c.get("/api/stats/_t").status_code == 404
+    assert len(calls) == 2
 
 
 def test_bad_scope_400(client):

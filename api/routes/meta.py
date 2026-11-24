@@ -8,7 +8,7 @@ router = APIRouter()
 
 @router.get("/meta")
 @cached
-async def get_meta(request: Request, conn=Depends(db.get_db)):
+def get_meta(request: Request, conn=Depends(db.get_db)):
     servers = [dict(r) for r in conn.execute(
         'SELECT key, label, group_key AS "group", filters_bots, track_stats, '
         "track_scoreboards FROM servers WHERE provisioned=1 ORDER BY key")]

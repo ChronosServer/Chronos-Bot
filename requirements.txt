@@ -6,7 +6,6 @@ psutil==7.2.2
 rcon==2.4.9
 Requests==2.34.2
 simpleeval==1.0.8
-fastapi
-uvicorn[standard]
-orjson
-httpx2
+fastapi==0.165.0
+uvicorn[standard]==0.54.0
+orjson==3.13.0
