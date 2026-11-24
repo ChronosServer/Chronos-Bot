@@ -135,18 +135,68 @@ def test_totals_backfill_for_untouched_key(world, run_snapshot, db):
     assert q(db, "SELECT COUNT(*) FROM stat_totals")[0][0] == 1
 
 
-def test_total_no_bots_updates_when_flag_flips(world, run_snapshot, db):
+def test_total_no_bots_history_rebuilt_when_flag_flips(world, run_snapshot, db):
+    """Reclassification (bot -> counted, no stat change) changes the counted
+    set's fingerprint: total_no_bots history is rebuilt with today's flags,
+    so there is no step at the flip run."""
+    world.add_stats("smp", P, pt(10))
+    world.add_stats("smp", BOT, pt(5))
+    world.set_usercache("smp", {P: "Alice", BOT: "BotGuy"})
+    world.set_scoreboard("smp", ["deaths"], [("Alice", "deaths", 1), ("BotGuy", "deaths", 4)],
+                         {"t": ["Alice"]})
+    run_snapshot(1000)
+    world.add_stats("smp", P, pt(12))
+    world.set_scoreboard("smp", ["deaths"], [("Alice", "deaths", 2), ("BotGuy", "deaths", 4)],
+                         {"t": ["Alice"]})
+    run_snapshot(1900)
+    assert totals(db)[0][2:] == (17, 12)
+    fp = q(db, "SELECT value FROM meta WHERE key='counted_fp:smp'")
+    assert len(fp) == 1
+    # BotGuy joins a team; no stat or score change
+    world.set_scoreboard("smp", ["deaths"], [("Alice", "deaths", 2), ("BotGuy", "deaths", 4)],
+                         {"t": ["Alice", "BotGuy"]})
+    run_snapshot(2800)
+    assert totals(db)[0][2:] == (17, 17)
+    assert q(db, "SELECT at, total, total_no_bots FROM stat_totals WHERE server_key='smp' "
+                 "ORDER BY at") == [(1000, 15, 15), (1900, 17, 17)]
+    assert q(db, "SELECT at, total, total_no_bots FROM scoreboard_totals WHERE server_key='smp' "
+                 "AND objective='deaths' ORDER BY at") == [(1000, 5, 5), (1900, 6, 6)]
+    assert q(db, "SELECT value FROM meta WHERE key='counted_fp:smp'") != fp
+    assert q(db, "SELECT value FROM meta WHERE key='totals_backfilled'") == [("1",)]
+
+
+def test_unchanged_counted_set_does_not_rebuild_totals(world, run_snapshot, db):
     world.add_stats("smp", P, pt(10))
     world.add_stats("smp", BOT, pt(5))
     world.set_usercache("smp", {P: "Alice", BOT: "BotGuy"})
     world.set_scoreboard("smp", [], [], {"t": ["Alice"]})
     run_snapshot(1000)
-    assert totals(db)[0][2:] == (15, 10)
-    world.set_scoreboard("smp", [], [], {"t": ["Alice", "BotGuy"]})  # joins a team; no stat change
+    fp = q(db, "SELECT value FROM meta WHERE key='counted_fp:smp'")
+    assert fp  # first run: stored
+    db.execute("DELETE FROM stat_totals WHERE at=1000")  # a rebuild would restore it
+    db.commit()
+    world.add_stats("smp", P, pt(20))
     run_snapshot(1900)
-    assert totals(db)[0][2:] == (15, 15)
-    assert q(db, "SELECT at, total_no_bots FROM stat_totals WHERE server_key='smp' "
-                 "ORDER BY at") == [(1000, 10), (1900, 15)]
+    assert q(db, "SELECT at, total, total_no_bots FROM stat_totals WHERE server_key='smp' "
+                 "ORDER BY at") == [(1900, 25, 20)]
+    assert q(db, "SELECT value FROM meta WHERE key='counted_fp:smp'") == fp
+    # servers that never filter bots get no fingerprint
+    assert q(db, "SELECT key FROM meta WHERE key LIKE 'counted_fp:%'") == [("counted_fp:smp",)]
+
+
+def test_counted_fingerprint_stored_without_rebuild_on_existing_db(world, run_snapshot, db):
+    """A DB backfilled before fingerprints existed: the first run stores the
+    fingerprint and does not rebuild."""
+    world.add_stats("smp", P, pt(10))
+    world.set_usercache("smp", {P: "Alice"})
+    world.set_scoreboard("smp", [], [], {"t": ["Alice"]})
+    run_snapshot(1000)
+    db.execute("DELETE FROM meta WHERE key LIKE 'counted_fp:%'")
+    db.execute("DELETE FROM stat_totals")
+    db.commit()
+    run_snapshot(1900)
+    assert q(db, "SELECT COUNT(*) FROM stat_totals")[0][0] == 0
+    assert q(db, "SELECT COUNT(*) FROM meta WHERE key='counted_fp:smp'")[0][0] == 1
 
 
 def test_recovery_after_failed_derive_totals(world, run_snapshot, db, monkeypatch):

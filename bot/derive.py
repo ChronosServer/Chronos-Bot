@@ -5,6 +5,7 @@ scoreboard_current; nothing reads world files. Participant rules (bots,
 mirrors, unresolved) come from api.scope -- never reimplemented here.
 Only provisioned=1 servers are iterated (the 'all' pseudo row is 0).
 """
+import hashlib
 import sys
 from pathlib import Path
 
@@ -98,7 +99,44 @@ def _derive_scoreboard_totals(conn, key, run_at):
 
 
 BACKFILL_MARKER = "totals_backfilled"
+COUNTED_FP = "counted_fp:"  # meta key prefix + server key
 _FLUSH = 10_000
+
+
+def counted_fingerprints(conn):
+    """{server: sha1 of its sorted counted uuids} for bot-filtering servers
+    (one query each; servers that never filter bots have none)."""
+    out = {}
+    for key in _servers(conn):
+        counted = counted_uuids(conn, key)
+        if counted is not None:
+            out[key] = hashlib.sha1(",".join(sorted(counted)).encode()).hexdigest()
+    return out
+
+
+def _store_fingerprints(conn, fps):
+    conn.executemany(
+        "INSERT INTO meta (key, value) VALUES (?, ?) "
+        "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+        [(COUNTED_FP + k, v) for k, v in fps.items()])
+
+
+def check_counted(conn):
+    """total_no_bots history uses TODAY's bot flags for all history, so a
+    reclassification (a player's flag flips with no stat change) must
+    rebuild it, or the series steps at the flip run. When a bot-filtering
+    server's counted set differs from the stored fingerprint, the backfill
+    marker is cleared so this run's totals stage rebuilds the history.
+    No stored fingerprint (first run, or a DB from before fingerprints):
+    just store it. True when a rebuild was requested."""
+    fps = counted_fingerprints(conn)
+    stored = dict(conn.execute("SELECT key, value FROM meta WHERE key LIKE ?",
+                               (COUNTED_FP + "%",)).fetchall())
+    changed = any(stored.get(COUNTED_FP + k) not in (None, fp) for k, fp in fps.items())
+    if changed:
+        conn.execute("DELETE FROM meta WHERE key=?", (BACKFILL_MARKER,))
+    _store_fingerprints(conn, fps)
+    return changed
 
 
 def _backfill_server(conn, key, run_at, emit_stat, emit_board):
@@ -199,7 +237,7 @@ def backfill_totals(conn, run_at):
     raw snapshot history (which predates the first derive on the live DB),
     so totals series have no 0 -> total cliff on deploy day. Bot status is
     the CURRENT rule for every historical row (history of flags isn't
-    stored). Emits only rows with at < run_at; the normal recompute then
+    stored); check_counted reruns it when that rule's counted set changes. Emits only rows with at < run_at; the normal recompute then
     writes this run's changes. Guarded by meta[BACKFILL_MARKER], committed
     together with the rebuilt rows."""
     if _backfill(conn, run_at):
@@ -241,6 +279,7 @@ def _backfill(conn, run_at):
             [(key, o, t, n) for o, (t, n) in boards.items()])
     conn.execute("INSERT INTO meta (key, value) VALUES (?, '1') "
                  "ON CONFLICT(key) DO UPDATE SET value=excluded.value", (BACKFILL_MARKER,))
+    _store_fingerprints(conn, counted_fingerprints(conn))  # the classification used
     return True
 
 
@@ -259,6 +298,7 @@ def _flush_board(conn, rows):
 
 
 def derive_totals(conn, run_at):
+    check_counted(conn)  # stored together with the totals (one commit)
     backfill_totals(conn, run_at)
     for key in _servers(conn):
         _derive_stat_totals(conn, key, run_at)

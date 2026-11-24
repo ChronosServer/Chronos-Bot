@@ -238,6 +238,11 @@ tables) → SQLite → `api/` (FastAPI, read-only) → nginx `/api/stats/*` → 
   awarded badges stay.
 - **Totals** are fully recomputed every run (set-based) and history was backfilled once
   (meta `totals_backfilled`); `total_no_bots` uses today's bot flags for all history.
+  So a reclassification must rebuild it: each run stores a sha1 of every bot-filtering
+  server's sorted counted-uuid set (meta `counted_fp:<server>`, one query per server);
+  when it differs from the stored one, `totals_backfilled` is cleared and that run's
+  totals stage rebuilds the whole totals history (no step at the flip run). First run /
+  missing fingerprint: just stored, no rebuild.
 - **Performance gotcha:** without `ANALYZE` SQLite picks the `(server_key, at)` indexes
   and scans whole history. Hot queries are pinned with `INDEXED BY`; every pinned index
   must be listed in `api/db.py REQUIRED_INDEXES` (the API refuses to start if one is
