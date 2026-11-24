@@ -10,6 +10,7 @@ from api.routes.series import build_series
 from api.scope import resolve_scope, scoreboard_filter_sql, stat_filter_sql
 
 router = APIRouter()
+MAX_COMPARE_KEYS = 20
 
 
 def resolve_player(conn, ident: str):
@@ -91,13 +92,19 @@ def _rivals(conn, sc, uuid):
     return out
 
 
-def _is_bot_on_smp(conn, uuid, servers):
-    for k in servers:
-        row = conn.execute(
-            "SELECT NOT EXISTS (SELECT 1 FROM player_flags f WHERE f.server_key=s.key "
-            "AND f.uuid=? AND f.is_bot=0) FROM servers s "
-            "WHERE s.key=? AND s.filters_bots=1", (uuid, k)).fetchone()
-        if row and row[0]:
+def _is_bot_on_smp(conn, uuid):
+    """Over all provisioned bot-filtering servers, regardless of scope."""
+    for (k,) in conn.execute(
+            "SELECT key FROM servers WHERE provisioned=1 AND filters_bots=1").fetchall():
+        has = conn.execute(
+            "SELECT 1 FROM stat_current WHERE server_key=? AND uuid=? LIMIT 1 ",
+            (k, uuid)).fetchone() or conn.execute(
+            "SELECT 1 FROM scoreboard_current WHERE server_key=? AND participant_key=? "
+            "LIMIT 1", (k, uuid)).fetchone()
+        flagged = conn.execute(
+            "SELECT 1 FROM player_flags WHERE server_key=? AND uuid=? AND is_bot=0",
+            (k, uuid)).fetchone()
+        if has and not flagged:
             return True
     return False
 
@@ -135,7 +142,7 @@ def player(ident: str, request: Request, conn=Depends(db.get_db),
         f"SELECT {', '.join(fcols)} FROM firsts WHERE uuid=? AND server_key IN ({marks}) "
         f"ORDER BY at, id", sp)]
     return {"uuid": uuid, "name": name, "name_resolved": resolved,
-            "last_activity": last, "is_bot_on_smp": _is_bot_on_smp(conn, uuid, servers),
+            "last_activity": last, "is_bot_on_smp": _is_bot_on_smp(conn, uuid),
             "servers": servers, "stats": stats, "scoreboards": boards,
             "badges": badges, "milestones": milestones, "firsts": firsts,
             "rivals": _rivals(conn, sc, uuid)}
@@ -167,6 +174,8 @@ def compare(request: Request, conn=Depends(db.get_db), uuids: str = "",
     if not 2 <= len(idents) <= 6:
         raise ValueError("uuids must contain 2 to 6 distinct players")
     klist = _parse_keys(keys)
+    if len(klist) > MAX_COMPARE_KEYS:
+        raise ValueError(f"at most {MAX_COMPARE_KEYS} keys")
     sc = resolve_scope(conn, scope)
     resolved = [resolve_player(conn, i) for i in idents]
     if None in resolved:
@@ -183,8 +192,8 @@ def compare(request: Request, conn=Depends(db.get_db), uuids: str = "",
     for label, kind, cat, key in klist:
         def at(ts, kind=kind, cat=cat, key=key):
             if kind == "stat":
-                return timeq.stat_values_at(conn, sc, include_bots, cat, key, ts)
-            return timeq.scoreboard_values_at(conn, sc, include_bots, key, ts)
+                return timeq.stat_values_at(conn, sc, include_bots, cat, key, ts, ulist)
+            return timeq.scoreboard_values_at(conn, sc, include_bots, key, ts, ulist)
         if delta and r.empty:
             values[label] = {u: 0 for u in ulist}
         elif delta:

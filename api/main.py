@@ -1,9 +1,12 @@
 """Read-only stats API."""
+from contextlib import asynccontextmanager
+
 import orjson
 from fastapi import FastAPI, Request
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import JSONResponse
 
+from api import db
 from api.routes import leaderboard, meta, player, series
 
 
@@ -13,8 +16,15 @@ class ORJSONResponse(JSONResponse):
         return orjson.dumps(content)
 
 
+@asynccontextmanager
+async def _lifespan(app: FastAPI):
+    db.check_required_indexes()
+    yield
+
+
 def create_app() -> FastAPI:
-    app = FastAPI(title="Chronos Stats", default_response_class=ORJSONResponse)
+    app = FastAPI(title="Chronos Stats", default_response_class=ORJSONResponse,
+                  lifespan=_lifespan)
     app.add_middleware(GZipMiddleware, minimum_size=1000)
 
     @app.exception_handler(ValueError)

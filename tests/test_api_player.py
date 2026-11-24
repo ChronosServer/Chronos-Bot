@@ -195,3 +195,52 @@ def test_stat_current_key_indexes_used(env):
     assert "idx_scoreboard_current_obj" in plans[1], plans[1]
     assert "category=?" in plans[0] and "stat_key=?" in plans[0]
     assert "objective=?" in plans[1]
+
+
+def test_player_rank_sums_across_servers(env):
+    sql(env.world, "UPDATE stat_current SET value=50 WHERE uuid=? AND server_key='cmp'", (U1,))
+    cache.clear()
+    assert (stat(env.get(P + U1 + "?scope=smp").json())["rank"]) == 2
+    j = env.get(P + U1).json()
+    assert (stat(j)["value"], stat(j)["rank"], stat(j)["of"]) == (59, 1, 2)
+
+
+def test_is_bot_on_smp_ignores_scope(env):
+    assert env.get(P + U3 + "?scope=cmp").json()["is_bot_on_smp"] is True
+    assert env.get(P + U1 + "?scope=cmp").json()["is_bot_on_smp"] is False
+
+
+def test_compare_keys_cap_and_bad_inputs(env):
+    ok = ",".join(f"minecraft:mined|k{i}" for i in range(20))
+    assert env.get(C + f"uuids={U1},{U2}&keys={ok}").status_code == 200
+    many = ok + ",minecraft:mined|k20"
+    assert env.get(C + f"uuids={U1},{U2}&keys={many}").status_code == 400
+    assert env.get(C + f"uuids={U1},{U2}&keys={STONE}&scope=nope").status_code == 400
+    assert env.get(C + f"uuids={U1},{U2}&keys={STONE}&range=2d").status_code == 400
+
+
+def test_values_at_uuid_filter(env):
+    c = sqlite3.connect(env.world.db_path)
+    try:
+        sc = resolve_scope(c, "smp")
+        for ts in (None, 1_000_700):
+            assert stat_values_at(c, sc, True, "minecraft:mined", "minecraft:stone",
+                                  ts, [U1]) == {U1: 9}
+            assert stat_values_at(c, sc, True, "minecraft:mined", "minecraft:stone", ts,
+                                  []) == {}
+            assert scoreboard_values_at(c, sc, True, "kills", ts, [U2, U3]) == {U2: 7, U3: 50}
+    finally:
+        c.close()
+
+
+def test_startup_fails_when_required_index_missing(world, run_snapshot, monkeypatch):
+    world.set_usercache("smp", {U1: "Alice"})
+    world.add_stats("smp", U1, stone(1))
+    run_snapshot(1_000_000)
+    monkeypatch.setenv("CHRONOS_STATS_DB", world.db_path)
+    with TestClient(create_app()):
+        pass  # all indexes present: starts fine
+    sql(world, "DROP INDEX idx_stat_current_key")
+    with pytest.raises(RuntimeError, match=r"run bot/snapshot.py.*idx_stat_current_key"):
+        with TestClient(create_app()):
+            pass

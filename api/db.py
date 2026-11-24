@@ -44,3 +44,21 @@ def data_version(conn) -> str:
     meta.data_version, so a failed derive cannot pin caches to stale data."""
     row = conn.execute("SELECT MAX(id) FROM snapshot_runs").fetchone()
     return str(row[0] if row and row[0] is not None else 0)
+
+
+# Indexes the API pins with INDEXED BY; created by bot/snapshot.py (API is read-only).
+REQUIRED_INDEXES = ("idx_stat_point", "idx_scoreboard_point",
+                    "idx_stat_current_key", "idx_scoreboard_current_obj")
+
+
+def check_required_indexes() -> None:
+    conn = get_conn()
+    try:
+        have = {r[0] for r in conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='index'")}
+    finally:
+        conn.close()
+    missing = [i for i in REQUIRED_INDEXES if i not in have]
+    if missing:
+        raise RuntimeError("run bot/snapshot.py once to apply the schema; "
+                           f"missing indexes: {', '.join(missing)}")
