@@ -6,6 +6,7 @@ from api import db, timeq
 from api.cache import cached
 from api.scope import (Scope, resolve_scope, scoreboard_filter_sql,
                        stat_filter_sql)
+from api.settings import api_settings
 
 router = APIRouter()
 
@@ -77,8 +78,9 @@ def _parse_uuids(uuids: str) -> list:
         u = u.strip()
         if u and u not in seen:
             seen.append(u)
-    if not 1 <= len(seen) <= 6:
-        raise ValueError("uuids must contain 1 to 6 uuids")
+    most = api_settings().api.series_max_players
+    if not 1 <= len(seen) <= most:
+        raise ValueError(f"uuids must contain 1 to {most} uuids")
     return seen
 
 

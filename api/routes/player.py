@@ -8,9 +8,9 @@ from api.cache import cached
 from api.rivals import closing_stats
 from api.routes.series import build_series
 from api.scope import resolve_scope, scoreboard_filter_sql, stat_filter_sql
+from api.settings import api_settings
 
 router = APIRouter()
-MAX_COMPARE_KEYS = 20
 
 
 def resolve_player(conn, ident: str):
@@ -151,7 +151,8 @@ def player(ident: str, request: Request, conn=Depends(db.get_db),
              "value_at", "earliest_known")
     milestones = [dict(zip(mcols, r)) for r in conn.execute(
         f"SELECT {', '.join(mcols)} FROM milestones WHERE uuid=? AND server_key IN ({marks}) "
-        f"ORDER BY at DESC, id DESC LIMIT 50", sp)]
+        f"ORDER BY at DESC, id DESC LIMIT ?",
+        [*sp, api_settings().api.player_milestones_limit])]
     fcols = ("at", "server_key", "category", "stat_key", "earliest_known")
     firsts = [dict(zip(fcols, r)) for r in conn.execute(
         f"SELECT {', '.join(fcols)} FROM firsts WHERE uuid=? AND server_key IN ({marks}) "
@@ -185,19 +186,22 @@ def compare(request: Request, conn=Depends(db.get_db), uuids: str = "",
             keys: str = "", scope: str = "all", range: str = None,
             from_: int = timeq.ts_param("from"), to: int = timeq.ts_param(),
             include_bots: bool = False):
+    api = api_settings().api
+    lo, hi = api.compare_min_players, api.compare_max_players
+    players_msg = f"uuids must contain {lo} to {hi} distinct players"
     idents = list(dict.fromkeys(u.strip() for u in (uuids or "").split(",") if u.strip()))
-    if not 2 <= len(idents) <= 6:
-        raise ValueError("uuids must contain 2 to 6 distinct players")
+    if not lo <= len(idents) <= hi:
+        raise ValueError(players_msg)
     klist = _parse_keys(keys)
-    if len(klist) > MAX_COMPARE_KEYS:
-        raise ValueError(f"at most {MAX_COMPARE_KEYS} keys")
+    if len(klist) > api.compare_max_keys:
+        raise ValueError(f"at most {api.compare_max_keys} keys")
     sc = resolve_scope(conn, scope)
     resolved = [resolve_player(conn, i) for i in idents]
     if None in resolved:
         return _not_found()
     ulist = list(dict.fromkeys(resolved))
-    if len(ulist) < 2:
-        raise ValueError("uuids must contain 2 to 6 distinct players")
+    if len(ulist) < lo:
+        raise ValueError(players_msg)
     names = dict(conn.execute(
         f"SELECT uuid, name FROM players WHERE uuid IN ({','.join('?' * len(ulist))})",
         ulist).fetchall())

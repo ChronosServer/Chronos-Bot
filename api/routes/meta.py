@@ -2,6 +2,8 @@ from fastapi import APIRouter, Depends, Request
 
 from api import db
 from api.cache import cached
+from api.scope import list_scopes
+from api.settings import api_settings
 
 router = APIRouter()
 
@@ -15,8 +17,7 @@ def get_meta(request: Request, conn=Depends(db.get_db)):
     for s in servers:
         for f in ("filters_bots", "track_stats", "track_scoreboards"):
             s[f] = bool(s[f])
-    scopes = ["all", "smp", "cmps"]
-    scopes += [s["key"] for s in servers if s["key"] not in scopes]
+    scopes = list_scopes(conn)
     m = dict(conn.execute("SELECT key, value FROM meta").fetchall())
     started = {s["key"]: int(m[f"tracking_started_at:{s['key']}"])
                for s in servers if f"tracking_started_at:{s['key']}" in m}
@@ -29,4 +30,5 @@ def get_meta(request: Request, conn=Depends(db.get_db)):
         "categories": [r[0] for r in conn.execute(
             "SELECT DISTINCT category FROM stat_current ORDER BY category")],
         "tracking_started_at": started,
+        "settings": api_settings().public(),
     }

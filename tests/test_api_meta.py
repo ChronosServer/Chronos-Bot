@@ -35,7 +35,7 @@ def test_meta_shape(client):
     assert r.status_code == 200
     j = r.json()
     assert set(j) == {"data_version", "last_run_at", "servers", "scopes",
-                      "categories", "tracking_started_at"}
+                      "categories", "tracking_started_at", "settings"}
     assert [s["key"] for s in j["servers"]] == ["cmp", "cmp2", "smp"]
     assert set(j["servers"][0]) == {"key", "label", "group", "filters_bots",
                                     "track_stats", "track_scoreboards"}

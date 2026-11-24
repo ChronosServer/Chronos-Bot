@@ -8,15 +8,14 @@ from api import db, timeq
 from api.cache import cached
 from api.rivals import closing_stats
 from api.scope import resolve_scope, stat_filter_sql
+from api.settings import api_settings
 
 router = APIRouter()
-BUCKET = 900
-MAX_LIMIT = 200
 _rng = random.SystemRandom()
 
 
 def _limit(limit):
-    return max(1, min(int(limit), MAX_LIMIT))
+    return max(1, min(int(limit), api_settings().api.feed_max_limit))
 
 
 def _parse_cursor(before):
@@ -121,15 +120,16 @@ def rivalries(request: Request, conn=Depends(db.get_db), scope: str = "all",
 def activity(request: Request, conn=Depends(db.get_db), scope: str = "all",
              range: str = "1m", include_bots: bool = False):
     sc = resolve_scope(conn, scope)
+    bucket = int(api_settings().api.activity_bucket_s)
     r = timeq.parse_range(conn, sc, range, None, None, int(time.time()))
     if r.empty:
-        return {"bucket_seconds": BUCKET, "buckets": []}
+        return {"bucket_seconds": bucket, "buckets": []}
     frag, params = stat_filter_sql(sc, include_bots, "a")
     rows = conn.execute(
-        f"SELECT a.at / {BUCKET} * {BUCKET} AS b, COUNT(DISTINCT a.uuid) FROM activity a "
+        f"SELECT a.at / {bucket} * {bucket} AS b, COUNT(DISTINCT a.uuid) FROM activity a "
         f"WHERE a.at >= ? AND a.at <= ? AND {frag} GROUP BY b ORDER BY b",
         [r.effective_from, r.to_ts, *params]).fetchall()
-    return {"bucket_seconds": BUCKET, "buckets": [[b, n] for b, n in rows]}
+    return {"bucket_seconds": bucket, "buckets": [[b, n] for b, n in rows]}
 
 
 def _seen_pairs(seen):

@@ -1,12 +1,18 @@
 """Shared participant/scope rules. The single place these live; the API and
 bot/derive.py both import it.
 
-Bot rule: servers with filters_bots=1 (smp) only count rows whose uuid has a
-player_flags(is_bot=0) row; a missing flag means bot. Other servers are never
-filtered. Fragments use ? params only.
+Bot rule: servers with filters_bots=1 (config servers.<key>.filters_bots;
+default smp only) only count rows whose uuid has a player_flags(is_bot=0) row;
+a missing flag means bot. Other servers are never filtered. Fragments use ?
+params only.
+
+Scopes: "all", every scope_groups name (config; default "cmps" -> group
+"cmp"), and every provisioned server key.
 """
 import re
 from dataclasses import dataclass
+
+from api.settings import api_settings
 
 _RESERVED = {"_scope_pf", "_scope_m"}
 _IDENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
@@ -18,18 +24,42 @@ class Scope:
     servers: tuple
 
 
-def resolve_scope(conn, name: str) -> Scope:
+def _scope_groups(groups):
+    if groups is None:
+        groups = api_settings().scope_groups
+    return groups
+
+
+def resolve_scope(conn, name: str, groups=None) -> Scope:
+    """groups: scope name -> servers.group_key (default: the API's
+    settings.scope_groups)."""
+    groups = _scope_groups(groups)
     prov = conn.execute(
         "SELECT key, group_key FROM servers WHERE provisioned=1 ORDER BY key").fetchall()
     if name == "all":
         servers = tuple(k for k, _ in prov)
-    elif name == "cmps":
-        servers = tuple(k for k, g in prov if g == "cmp")
+    elif name in groups:
+        servers = tuple(k for k, g in prov if g == groups[name])
     else:
         servers = tuple(k for k, _ in prov if k == name)
     if not servers:
         raise ValueError(f"unknown scope: {name!r}")
     return Scope(name, servers)
+
+
+def list_scopes(conn, groups=None) -> list:
+    """Valid scope names, in menu order: "all"; servers whose group has no
+    scope name (e.g. smp); scope_groups names with at least one provisioned
+    server (e.g. cmps); then the servers inside those groups."""
+    groups = _scope_groups(groups)
+    prov = conn.execute(
+        "SELECT key, group_key FROM servers WHERE provisioned=1 ORDER BY key").fetchall()
+    grouped = set(groups.values())
+    out = ["all"]
+    out += [k for k, g in prov if g not in grouped]
+    out += [n for n, g in groups.items() if any(pg == g for _, pg in prov)]
+    out += [k for k, g in prov if g in grouped]
+    return list(dict.fromkeys(out))
 
 
 def _alias(alias):

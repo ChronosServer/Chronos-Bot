@@ -10,6 +10,7 @@ from typing import Optional
 from fastapi import Query
 
 from api.scope import (Scope, scoreboard_filter_sql, stat_filter_sql)
+from api.settings import api_settings
 
 # Bound for `from`/`to` query params: far past any real timestamp, well inside
 # SQLite's int64, so absurd values are a 422 instead of an overflow 500.
@@ -18,10 +19,6 @@ TS_MAX = 2 ** 62
 
 def ts_param(alias=None):
     return Query(None, ge=0, le=TS_MAX, alias=alias)
-
-
-PRESETS = {"1d": 86400, "1w": 604800, "1m": 2592000, "6m": 15724800,
-           "1y": 31536000}
 
 
 @dataclass
@@ -48,14 +45,18 @@ def tracking_start(conn, scope: Scope) -> Optional[int]:
 
 
 def parse_range(conn, scope: Scope, range: Optional[str], from_: Optional[int],
-                to: Optional[int], now: int) -> Range:
+                to: Optional[int], now: int, presets=None) -> Range:
+    """presets: name -> seconds (default: settings.api.range_presets);
+    "all" is always valid."""
+    if presets is None:
+        presets = api_settings().api.range_presets
     start = tracking_start(conn, scope)
     to_ts = now if to is None else int(to)
     if range is not None:
         if range == "all":
             from_ts = start if start is not None else 0
-        elif range in PRESETS:
-            from_ts = to_ts - PRESETS[range]
+        elif range in presets:
+            from_ts = to_ts - presets[range]
         else:
             raise ValueError(f"bad range: {range!r}")
     elif from_ is not None:
@@ -127,9 +128,12 @@ def scoreboard_values_at(conn, scope: Scope, include_bots: bool, objective: str,
     return _sum((r[0], r[1]) for r in rows)
 
 
-def downsample(points, from_ts: int, to_ts: int, max_points: int = 500):
+def downsample(points, from_ts: int, to_ts: int, max_points: Optional[int] = None):
     """Step-preserving: first point is (from_ts, value at from_ts); later points
-    keep the last value per time bucket. Result length <= max_points."""
+    keep the last value per time bucket. Result length <= max_points
+    (default: settings.api.series_max_points)."""
+    if max_points is None:
+        max_points = api_settings().api.series_max_points
     pts = sorted(points)
     v0 = 0
     inside = []

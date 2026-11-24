@@ -8,6 +8,7 @@ from fastapi import APIRouter, Depends, Request
 from api import db
 from api.cache import cached
 from api.scope import Scope, resolve_scope, scoreboard_filter_sql, stat_filter_sql
+from api.settings import api_settings
 
 router = APIRouter()
 
@@ -77,7 +78,7 @@ def _top(items, texts_of, q, limit, tiebreak):
 
 @router.get("/search")
 def search(request: Request, conn=Depends(db.get_db), q: str = "", limit: int = 10):
-    limit = max(1, min(limit, 50))
+    limit = max(1, min(limit, api_settings().api.search_max_limit))
     q = q.strip().lower()
     if not q:
         return {"players": [], "stats": [], "objectives": []}

@@ -9,8 +9,10 @@ Contract (checked at decoration time; violations raise TypeError):
 
 The cache key (and the ETag digest) uses only query params the handler
 declares (by name or Query alias), so cache-busters like `?_=123` share one
-entry. The LRU is bounded by total body bytes (MAX_BYTES) and entry count
-(MAX_ENTRIES); bodies over MAX_BODY are served but never cached.
+entry. The LRU is bounded by total body bytes (api.cache_max_bytes) and entry
+count (api.cache_max_entries); bodies over api.cache_max_body_bytes are served
+but never cached. Cache-Control comes from api.cache_max_age_s /
+api.cache_stale_while_revalidate_s (all in api/settings.py).
 
 Usage:
     @router.get("/thing")
@@ -27,13 +29,28 @@ from fastapi import Response
 from starlette.concurrency import run_in_threadpool
 
 from api import db
+from api.settings import api_settings, api_settings_tag
 
-MAX_ENTRIES = 2048
-MAX_BYTES = 128 * 1024 * 1024
-MAX_BODY = 8 * 1024 * 1024
-CACHE_CONTROL = "public, max-age=60, stale-while-revalidate=900"
+# Limits come from settings.api (cache_*); set one of these to override it
+# (tests). None = use the setting.
+MAX_ENTRIES = None
+MAX_BYTES = None
+MAX_BODY = None
 _lru: "OrderedDict[tuple, bytes]" = OrderedDict()
 _bytes = 0
+
+
+def _limits():
+    a = api_settings().api
+    return (a.cache_max_entries if MAX_ENTRIES is None else MAX_ENTRIES,
+            a.cache_max_bytes if MAX_BYTES is None else MAX_BYTES,
+            a.cache_max_body_bytes if MAX_BODY is None else MAX_BODY)
+
+
+def cache_control() -> str:
+    a = api_settings().api
+    return (f"public, max-age={a.cache_max_age_s}, "
+            f"stale-while-revalidate={a.cache_stale_while_revalidate_s}")
 
 
 def clear():
@@ -44,14 +61,15 @@ def clear():
 
 def _store(key, body):
     global _bytes
-    if len(body) > MAX_BODY:
+    max_entries, max_bytes, max_body = _limits()
+    if len(body) > max_body:
         return
     old = _lru.pop(key, None)
     if old is not None:
         _bytes -= len(old)
     _lru[key] = body
     _bytes += len(body)
-    while _lru and (_bytes > MAX_BYTES or len(_lru) > MAX_ENTRIES):
+    while _lru and (_bytes > max_bytes or len(_lru) > max_entries):
         _, dropped = _lru.popitem(last=False)
         _bytes -= len(dropped)
 
@@ -94,9 +112,9 @@ def cached(fn):
         path = request.url.path
         key = (path, query, version)
         qs = "&".join(f"{k}={v}" for k, v in query)
-        digest = hashlib.sha1(f"{path}?{qs}".encode()).hexdigest()[:12]
+        digest = hashlib.sha1(f"{path}?{qs}#{api_settings_tag()}".encode()).hexdigest()[:12]
         etag = f'"{version}-{digest}"'
-        headers = {"ETag": etag, "Cache-Control": CACHE_CONTROL}
+        headers = {"ETag": etag, "Cache-Control": cache_control()}
         if _matches(request.headers.get("if-none-match"), etag):
             return Response(status_code=304, headers=headers)
         body = _lru.get(key)
@@ -116,3 +134,4 @@ def cached(fn):
             _lru.move_to_end(key)
         return Response(content=body, media_type="application/json", headers=headers)
     return wrapper
+

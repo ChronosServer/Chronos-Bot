@@ -5,6 +5,7 @@ from fastapi import APIRouter, Depends, Request
 from api import db, timeq
 from api.cache import cached
 from api.scope import resolve_scope
+from api.settings import api_settings
 
 router = APIRouter()
 
@@ -22,7 +23,7 @@ def leaderboard(request: Request, conn=Depends(db.get_db), kind: str = "stat",
         raise ValueError("key (and category for kind=stat) required")
     if offset < 0:
         raise ValueError("offset must be >= 0")
-    limit = max(1, min(limit, 200))
+    limit = max(1, min(limit, api_settings().api.leaderboard_max_limit))
     sc = resolve_scope(conn, scope)
     now = int(time.time())
     delta = range is not None or from_ is not None
