@@ -59,31 +59,45 @@ If you run into any issues, please contact chezloc on discord. Or join the [Chro
 
 ## Commands
 
-The bot's help command contains additional information on how to use commands 
+Every command is a hybrid command: it works as a slash command (`/ping`), by mentioning
+the bot (`@Chronos ping`) and with the text prefix (`!!ping`). Which of the three are on
+is set in `config.json` (`bot.slash_commands`, `bot.mention_prefix`, `bot.text_prefix`;
+only the text prefix needs the Message Content intent). Slash commands are registered to
+the Chronos guild only. `help` lists everything.
 
-* Admin only
-        - setstatus | allows you to change the bot's discord status
-        - color | allows assignment of in game color via scoreboard teams
-        - execute | allows you to execute a command via rcon
-        - reload | reload the bot
-        - ban | ban user with user id
-        - purge | delete selected amount of messages
-        - statTransfer | transfer stats from one player to another
-        - webserver | upload to the webserver
-* Member only
-    * The bot member role id can be specified in config.json
-        - region | sends specified region file over discord
-        - structure | allows you to download/upload structure files from cmp
-        - region | allows you to download region files from servers
+* Admin only (Discord administrator; `ban` needs Ban Members)
+    - ban | ban a user by ID, optionally deleting their recent messages
+    - color | change a player's color on the SMP (scoreboard teams), or list the colors
+    - execute | run a console command on a server via RCON
+    - purge | delete the most recent messages in the channel
+    - reload | reload all command files and re-sync slash commands
+    - restart | restart a server, optionally respawning its bots afterwards
+    - setstatus | change the bot's status text
+    - stattransfer | move all scoreboard stats from one player to another
+    - sync | sync storage, server status, forum archive and member list to the website now
+    - sync_members | re-export the member directory to the website now
+    - sync_status | show when each website sync last ran and when it runs next
+    - webserver | upload, delete or list files on the website file server
+    - whitelist | add, remove or list whitelisted players (single name or a .txt file)
+* Members only (member, trial member or inactive member role from `config.json`)
+    - region | download a region file and its entities file from a server
+    - setdisplay | show a scoreboard in the SMP sidebar
+    - structure | download, upload or list structure (.nbt) files on a server
 * Public
-    * Commands available for normal user
-        - hardware | displays usage of hardware
-        - help | shows help command
-        - ping | displays bot ping
-        - worldsize | displays world size information   
-        - hardware | displays hardware information
-        - calc | a calculator
-        - tps | shows server tps
+    - calc | evaluate a math expression
+    - hardware | CPU, RAM, swap, disk and network usage of the host
+    - help | list commands
+    - online | which players are online on each server
+    - ping | bot latency
+    - stats | leaderboards from player stats and scoreboards
+    - status | which servers are online, and whether Main Storage is running
+    - storage | count an item in Main/Dig Storage, or show the 10 most stored items
+    - tps | each server's average TPS over the last 300 seconds
+    - worldsize | size on disk of every world, the SMP recordings and the webserver
+
+Background jobs (no command needed): server status to the website every 5 minutes,
+storage scan + forum archive every 8 hours, member directory every hour, and crash
+report alerts posted to the crash log channel as soon as a server writes one.
 
 ## Version History
 * 1.0

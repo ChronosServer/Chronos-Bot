@@ -36,6 +36,44 @@ accounts WITH stat files, a different thing from the unnamed fake-player NPCs
 above). Missing flag = bot (fail closed). Default-excluded from leaderboards, toggle to include.
 **CMPs never filter bots — always included, no toggle, by explicit decision.**
 
+## Discord bot layout
+- **`main.py`:**
+  - Builds a `commands.Bot` and loads every `commands/*.py` as an extension; each file is
+    one Cog with `async def setup(bot)`.
+  - Starts the client with `await client.start(token)` inside `asyncio.run(main())`.
+    Never `client.run()`, and no `nest_asyncio` (removed for Python 3.14).
+  - Runs a crash-report watcher task that posts new `crash-reports/` files from every
+    server to `bot.crash_report_log_id`.
+  - Defines the admin `reload` command.
+  - `setup_hook` syncs slash commands to the Chronos guild only (`bot.guild_id`).
+- **Commands are hybrid** (`@commands.hybrid_command`): slash, @mention and the `!!` text
+  prefix. Each way is toggled in `config.json`: `bot.slash_commands`,
+  `bot.mention_prefix`, `bot.text_prefix`. The Message Content intent is only requested
+  when the text prefix is on.
+- **Permissions:**
+  - Admin commands use `@commands.has_permissions(administrator=True)`
+    (`ban` uses `ban_members`).
+  - Member-only commands (`region`, `structure`, `setdisplay`) check the author's role
+    IDs by hand against `bot.member_role`, `trial_member_role` and
+    `inactive_member_role`, and reply "Insufficient permission".
+- **Conventions:**
+  - Every reply is a `discord.Embed` with footer `Chronos™`.
+  - Each command file reads `config.json` at import time with a relative path, so run
+    the bot from the repo root.
+  - `examples/exampleCommand.py` is the template for a new command.
+- **`Chronos-Library/`:** shared helpers (`defaultRconLibrary`, `restartLibrary`,
+  `statusLibrary`, `tpsLibrary`, `filesizeLibrary`, `confirmLibrary`). Commands import
+  them via `sys.path.append('./Chronos-Library/')`.
+- **Data sources:**
+  - RCON (`server.<key>_rcon_port` + shared `rcon_pass`): execute, whitelist, color,
+    online, status, tps, restart.
+  - Direct file reads: `stats` reads the SMP `scoreboard.dat`, `players/stats/` and
+    `usercache.json`. `storage` copies the region files listed in
+    `server.storage_regions` / `dig_storage_regions` into `./region-cache` and scans
+    them with `nbt`. `region` and `structure` serve world files.
+  - Website files: `webserver` writes to `server.webserver_path`; `syncCommand` and
+    `membersExport` write JSON to `<website_path>/data/`.
+
 ## commands/syncCommand.py + membersExport.py
 Already hardened: every sync step isolated with its own timeout, atomic JSON writes
 (`write_json_atomic` → temp file + `os.replace`), loops auto-restart after a crash
@@ -43,6 +81,16 @@ instead of dying silently (`tasks.loop` stops permanently on one unhandled
 exception — this bit us before, cost ~9 days of stale members data with zero log
 output). `/sync_status` shows last-success time and next-run time per loop — check
 this first whenever data looks stale, before assuming the sync is broken.
+
+What they write to `<website_path>/data/`:
+- `server_status.json`: every 5 min.
+- `ms_storage.json` and `dig_storage.json`: every 8 h. An empty scan keeps the old file.
+- `archive.json` (forum archive from `bot.archive_channel_id`): every 8 h.
+- `members.json` (membersExport): every 1 h.
+
+Loop state is kept in `sync_state.json`. nginx only serves these files by name (see the
+`location ~ ^/data/(…)\.json$` whitelist in the site config). A new data file must be
+added to that whitelist, or it 404s.
 
 ## Stats subsystem (backend built on branch `stats-api`; frontend next)
 Change-only SQLite storage: a history row is written ONLY when a value differs from
