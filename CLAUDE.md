@@ -245,6 +245,10 @@ tables) → SQLite → `api/` (FastAPI, read-only) → nginx `/api/stats/*` → 
   approximate rows. It reuses the live firsts/crossing INSERTs, fed by value-at-T
   sources, and keeps real live rows (OR IGNORE). It also re-runs the totals backfill
   and badges. It takes its own `BEGIN IMMEDIATE` lock and runs as one transaction.
+- Totals backfill treats the first live run (per table) as a full observation: a
+  (participant, key) with history but absent from `stat_current`/`scoreboard_current`
+  (backup-only) counts 0 from then on, so backfilled totals match the live recompute. This
+  is a no-op without imports. Per-player history is untouched.
 
 ### Deploy (not done yet — commands are in `TEMP_INFO.md`)
 Push `stats-api` → on server: checkout → `pip install` **only** fastapi, uvicorn[standard],

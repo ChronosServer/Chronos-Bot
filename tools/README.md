@@ -34,6 +34,10 @@ server (`rebuild_from_points` in `bot/derive_achievements.py`):
 - **Tracking start** moves back to the oldest backup.
 - **Server totals history** is rebuilt from all history, so it starts at the oldest backup
   with no jump on deploy day.
+  - The first live snapshot counts as a full look at the world. A player or score that
+    appears only in backups, and not in the live data, stops counting toward totals from
+    that date on. Their own history rows are kept.
+  - An objective that exists only in backups drops to a total of 0 at that date.
 - **Firsts and milestones** are recomputed over the points (each backup, plus the first
   live snapshot):
   - Anything already true at the oldest backup is "earliest known", with no date.
@@ -54,6 +58,9 @@ server (`rebuild_from_points` in `bot/derive_achievements.py`):
 - It refuses a backup dated **on or after** the first live snapshot, because that would
   rewrite the live timeline. It also refuses folders in the pre-1.13 stats format.
 - Rivalries and the spotlight refresh on the next live run, as usual.
+- The rebuild deletes and re-inserts firsts and milestones, so their row ids change. If a
+  client is paging through `/firsts` or `/milestones` while the rebuild runs, its cursor
+  may shift. Reloading the page fixes it.
 
 ## Before you start
 

@@ -210,10 +210,13 @@ def test_rows_between_live_start_and_seeding_keep_earliest_known(tmp_path, world
     assert milestones(conn) == [(LIVE + 1000, U1, 1000, 1500, 1, 0)]
     conn.close()
     conn, _ = import_and_rebuild(world, tmp_path, [("b1", T1, {U1: mined(stone=100)})])
-    # crossed after the last point (the first live run): still "already had"
-    [(at, uuid, threshold, value, ek, approx)] = milestones(conn)
-    assert (uuid, threshold, ek, approx) == (U1, 1000, 1, 0)
-    assert first(conn, STONE)[0][2:] == (1, 0)
+    # crossed after the last point (the first live run): still "already had",
+    # and keeps its original seeding date across rebuilds
+    assert milestones(conn) == [(LIVE + 1000, U1, 1000, 1500, 1, 0)]
+    assert first(conn, STONE) == [(T1, U1, 1, 0)]  # held at the oldest point
+    da.rebuild_from_points(conn, "smp", DEFAULTS)
+    assert milestones(conn) == [(LIVE + 1000, U1, 1000, 1500, 1, 0)]
+    assert first(conn, STONE) == [(T1, U1, 1, 0)]  # held at the oldest point
     conn.close()
 
 
@@ -372,3 +375,80 @@ def test_main_without_worlds_exits_2(tmp_path, world, capsys):
     cfg.write_text(__import__("json").dumps(world.config), encoding="utf-8")
     assert ib.main(["--server", "smp", "--config", str(cfg)]) == 2
     assert "world folder" in capsys.readouterr().out
+
+
+# ----------------------------------------------------------------- fix round 1
+
+def recompute_matches(conn):
+    """*_totals_current agrees with the live current-based recompute."""
+    stat = dict(((c, k), t) for c, k, t in conn.execute(
+        "SELECT category, stat_key, SUM(value) FROM stat_current WHERE server_key='smp' "
+        "GROUP BY category, stat_key"))
+    for ck, t in stat.items():
+        assert conn.execute("SELECT total FROM stat_totals_current WHERE server_key='smp' "
+                            "AND category=? AND stat_key=?", ck).fetchone() == (t,)
+
+
+def test_backup_only_player_drops_out_at_first_live_run(tmp_path, world, run_snapshot):
+    """Reviewer repro: U2 is only in a backup. Totals drop at the first live
+    run (a full observation), and the next unchanged live run writes nothing."""
+    live_run(world, run_snapshot, LIVE, {U1: mined(stone=2000)})
+    conn, _ = import_and_rebuild(world, tmp_path, [
+        ("b1", T1, {U1: mined(stone=500), U2: mined(stone=300)})])
+    assert conn.execute(
+        "SELECT at, total FROM stat_totals WHERE server_key='smp' AND category=? "
+        "AND stat_key=? ORDER BY at", STONE).fetchall() == [(T1, 800), (LIVE, 2000)]
+    recompute_matches(conn)
+    before = conn.execute("SELECT COUNT(*) FROM stat_totals").fetchone()[0]
+    conn.close()
+    live_run(world, run_snapshot, LIVE + 3600, {U1: mined(stone=2000)})
+    conn = snapshot.connect_db(world.db_path)
+    assert conn.execute("SELECT COUNT(*) FROM stat_totals").fetchone()[0] == before
+    # per-player history is untouched: U2 keeps its backup row, no fake 0
+    assert conn.execute("SELECT at, value FROM stat_snapshots WHERE uuid=?",
+                        (U2,)).fetchall() == [(T1, 300)]
+    conn.close()
+
+
+def test_scoreboard_reset_and_backup_only_objective_drop_at_first_live_run(
+        tmp_path, world, run_snapshot):
+    world.set_usercache("smp", NAMES)
+    world.add_stats("smp", U1, mined(stone=1))
+    team = {"team": list(NAMES.values())}
+    world.set_scoreboard("smp", ["digs"], [("Alice", "digs", 5)], team)  # Bob reset
+    run_snapshot(LIVE)
+    conn = snapshot.connect_db(world.db_path)
+    b1 = ib.read_backup(make_backup(
+        tmp_path, name="b1", last_played_ms=T1 * 1000,
+        stats={U1: mined(stone=1), U2: mined(stone=1)}, usercache=NAMES,
+        scoreboard=(["digs", "oldobj"], [("Alice", "digs", 4), ("Bob", "digs", 7),
+                                         ("Alice", "oldobj", 3)])), None)
+    ib.import_backups(conn, "smp", [b1], {}, {}, False)
+    da.rebuild_from_points(conn, "smp", DEFAULTS)
+
+    def series(obj):
+        return conn.execute("SELECT at, total FROM scoreboard_totals WHERE server_key='smp' "
+                            "AND objective=? ORDER BY at", (obj,)).fetchall()
+    assert series("digs") == [(T1, 11), (LIVE, 5)]
+    assert series("oldobj") == [(T1, 3), (LIVE, 0)]
+    assert conn.execute("SELECT objective, total FROM scoreboard_totals_current "
+                        "WHERE server_key='smp' ORDER BY objective").fetchall() == [
+        ("digs", 5), ("oldobj", 0)]
+    before = (conn.execute("SELECT COUNT(*) FROM scoreboard_totals").fetchone()[0],
+              conn.execute("SELECT COUNT(*) FROM stat_totals").fetchone()[0])
+    conn.close()
+    run_snapshot(LIVE + 3600)  # nothing changed in game
+    conn = snapshot.connect_db(world.db_path)
+    assert (conn.execute("SELECT COUNT(*) FROM scoreboard_totals").fetchone()[0],
+            conn.execute("SELECT COUNT(*) FROM stat_totals").fetchone()[0]) == before
+    conn.close()
+
+
+def test_main_rebuild_only_rejects_worlds_and_dry_run(tmp_path, world, run_snapshot, capsys):
+    live_run(world, run_snapshot, LIVE, {U1: mined(stone=5)})
+    cfg = tmp_path / "cfg.json"
+    cfg.write_text(__import__("json").dumps(world.config), encoding="utf-8")
+    w = make_backup(tmp_path, name="b1", last_played_ms=T1 * 1000, stats={U1: mined(stone=1)})
+    for extra in (["--dry-run"], [str(w)]):
+        assert ib.main(["--server", "smp", "--rebuild-only", "--config", str(cfg), *extra]) == 2
+        assert "--rebuild-only" in capsys.readouterr().out

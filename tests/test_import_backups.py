@@ -570,3 +570,12 @@ def test_nothing_to_import_skips_db_backup_and_rebuild(tmp_path, world, db, monk
 def test_rename_versions_scute():
     raw = json.loads(ib.RENAMES_PATH.read_text(encoding="utf-8"))
     assert raw["_versions"]["minecraft:scute"] == "1.21.5"
+
+
+def test_other_folder_same_date_as_imported_warns(tmp_path, db, capsys):
+    run(db, [backup(tmp_path, "b1", T1, {U1: mined(5)})])
+    capsys.readouterr()
+    [r] = run(db, [backup(tmp_path, "copy", T1, {U1: mined(9)})])
+    assert "different folder" in r.skipped_reason
+    assert "[warn]" in capsys.readouterr().out
+    assert rows(db) == [(T1, U1, "minecraft:mined", "minecraft:stone", 5)]

@@ -223,7 +223,14 @@ def plan(conn, server_key, backups):
                       f"({_fmt(start)}); it would rewrite the live timeline")
             refused = True
         elif b.at in done_at:
-            reason = "already imported"
+            other = [path for path, at in done
+                     if at == b.at and path and not _same_path(path, b.path)]
+            if other:
+                reason = (f"a different folder ({other[0]}) was already imported with this "
+                          "date; not importing")
+                warn = True
+            else:
+                reason = "already imported"
         elif same_path:
             reason = (f"already imported (this folder, dated {_fmt(same_path[0])}); "
                       "not importing it twice")
@@ -576,6 +583,9 @@ def main(argv=None, *, dictionary=None):
         return 2
     cfg, settings = loaded
     if args.rebuild_only:
+        if args.dry_run or args.worlds:
+            print("error: --rebuild-only takes no world folders and no --dry-run")
+            return 2
         return _rebuild_only(args, settings)
     if not args.worlds:
         print("error: give at least one world folder (or --rebuild-only)")

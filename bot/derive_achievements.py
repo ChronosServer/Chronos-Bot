@@ -384,6 +384,15 @@ def _rebuild(conn, key, settings):
         "AND entries_read>0", (key,)).fetchone()[0]
 
     sync_milestone_rules(conn, settings)
+    # earliest_known rows after the last point came from seeding (live, or a
+    # previous rebuild's end pass): keep their original date across rebuilds.
+    conn.execute("DROP TABLE IF EXISTS temp.chronos_keep_f")
+    conn.execute("DROP TABLE IF EXISTS temp.chronos_keep_m")
+    conn.execute("CREATE TEMP TABLE chronos_keep_f AS SELECT category, stat_key, at FROM firsts "
+                 "WHERE server_key=? AND earliest_known=1 AND at>?", (key, points[-1]))
+    conn.execute("CREATE TEMP TABLE chronos_keep_m AS SELECT uuid, category, stat_key, "
+                 "threshold, at FROM milestones WHERE server_key=? AND earliest_known=1 "
+                 "AND at>?", (key, points[-1]))
     for t in ("firsts", "milestones"):
         conn.execute(f"DELETE FROM {t} WHERE server_key=? AND "
                      "(earliest_known=1 OR approximate=1)", (key,))
@@ -414,6 +423,22 @@ def _rebuild(conn, key, settings):
         current = _sources(key, latest_live)["current"]
         firsts(current, latest_live, 1)
         crossings(current, latest_live, 1, prev="0")
+        conn.execute(
+            "UPDATE firsts SET at=(SELECT k.at FROM temp.chronos_keep_f k WHERE "
+            "k.category=firsts.category AND k.stat_key=firsts.stat_key) "
+            "WHERE server_key=? AND earliest_known=1 AND at=? AND EXISTS (SELECT 1 FROM "
+            "temp.chronos_keep_f k WHERE k.category=firsts.category "
+            "AND k.stat_key=firsts.stat_key)", (key, latest_live))
+        conn.execute(
+            "UPDATE milestones SET at=(SELECT k.at FROM temp.chronos_keep_m k WHERE "
+            "k.uuid=milestones.uuid AND k.category=milestones.category AND "
+            "k.stat_key IS milestones.stat_key AND k.threshold=milestones.threshold) "
+            "WHERE server_key=? AND earliest_known=1 AND at=? AND EXISTS (SELECT 1 FROM "
+            "temp.chronos_keep_m k WHERE k.uuid=milestones.uuid AND "
+            "k.category=milestones.category AND k.stat_key IS milestones.stat_key "
+            "AND k.threshold=milestones.threshold)", (key, latest_live))
+    conn.execute("DROP TABLE temp.chronos_keep_f")
+    conn.execute("DROP TABLE temp.chronos_keep_m")
     conn.execute("INSERT INTO meta (key, value) VALUES (?, '1') "
                  "ON CONFLICT(key) DO UPDATE SET value='1'", (SEED_MARKER,))
 

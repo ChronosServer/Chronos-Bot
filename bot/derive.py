@@ -107,12 +107,40 @@ def _backfill_server(conn, key, run_at, emit_stat, emit_board):
     def is_counted(u):
         return counted is None or u in counted
 
-    def replay(cursor, emit):
+    def first_live(kind):
+        return conn.execute(
+            "SELECT MIN(at) FROM snapshot_runs WHERE server_key=? AND kind=? AND ok=1 "
+            "AND entries_read>0", (key, kind)).fetchone()[0]
+
+    def replay(cursor, emit, cutoff=None, alive=()):
+        """cutoff: the first live run, a full observation. From there on a
+        (participant, key) with history but absent from the current tables
+        (alive) -- e.g. a player or score only in an imported backup --
+        counts 0, so totals at cutoff equal the live current-based
+        recompute. Before any import, history-latest == current: no-op."""
         last_val: dict = {}
         tot: dict = {}
         emitted: dict = {}
         touched: set = set()
         cur_at = None
+        if cutoff is None or cutoff >= run_at:
+            cutoff = None
+
+        def apply(u, k, v):
+            prev = last_val.get((u, k), 0)
+            last_val[(u, k)] = v
+            t = tot.get(k)
+            if t is None:
+                t = tot[k] = [0, 0]
+            t[0] += v - prev
+            if is_counted(u):
+                t[1] += v - prev
+            touched.add(k)
+
+        def cut():
+            for (u, k), v in list(last_val.items()):
+                if v and (u, k) not in alive:
+                    apply(u, k, 0)
 
         def flush(at):
             for k in touched:
@@ -123,19 +151,21 @@ def _backfill_server(conn, key, run_at, emit_stat, emit_board):
             touched.clear()
 
         for at, u, k, v in cursor:
+            if cutoff is not None and at >= cutoff:
+                if cur_at is not None:
+                    flush(cur_at)
+                cur_at, cutoff = cutoff, None
+                cut()
             if at != cur_at:
                 if cur_at is not None:
                     flush(cur_at)
                 cur_at = at
-            prev = last_val.get((u, k), 0)
-            last_val[(u, k)] = v
-            t = tot.get(k)
-            if t is None:
-                t = tot[k] = [0, 0]
-            t[0] += v - prev
-            if is_counted(u):
-                t[1] += v - prev
-            touched.add(k)
+            apply(u, k, v)
+        if cutoff is not None:  # no history row at/after the first live run
+            if cur_at is not None:
+                flush(cur_at)
+            cur_at = cutoff
+            cut()
         if cur_at is not None:
             flush(cur_at)
         return emitted
@@ -145,7 +175,9 @@ def _backfill_server(conn, key, run_at, emit_stat, emit_board):
             "SELECT at, uuid, category, stat_key, value FROM stat_snapshots "
             "INDEXED BY idx_stat_at WHERE server_key=? AND at<? ORDER BY at",
             (key, run_at))),
-        emit_stat)
+        emit_stat, first_live("stats"),
+        {(u, (c, s)) for u, c, s in conn.execute(
+            "SELECT uuid, category, stat_key FROM stat_current WHERE server_key=?", (key,))})
     mirrors = {o for (o,) in conn.execute(
         "SELECT objective FROM scoreboard_meta WHERE server_key=? AND is_vanilla_mirror=1",
         (key,))}
@@ -155,7 +187,10 @@ def _backfill_server(conn, key, run_at, emit_stat, emit_board):
             "INDEXED BY idx_scoreboard_at WHERE server_key=? AND at<? "
             "AND participant_kind != 'unresolved' AND uuid IS NOT NULL ORDER BY at",
             (key, run_at)) if o not in mirrors),
-        emit_board)
+        emit_board, first_live("scoreboards"),
+        set(conn.execute(
+            "SELECT participant_key, objective FROM scoreboard_current WHERE server_key=? "
+            "AND participant_key NOT LIKE 'unresolved:%'", (key,))))
     return stats, boards
 
 
