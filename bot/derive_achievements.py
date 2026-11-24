@@ -6,13 +6,19 @@ had", no fake date). A server's own first qualifying run is treated the same
 way (every row is "changed" then, which is not an observed achievement).
 All writes are INSERT OR IGNORE against unique indexes, so re-running a
 derive for the same run_at never duplicates anything.
+
+Firsts and milestones are computed from row sources (SQL yielding counted
+players' (server_key, uuid, category, stat_key, value[, prev])): the live
+stages use current values or this run's rows; rebuild_from_points uses the
+value at each imported backup point. The INSERT logic is shared.
 """
 import json
 import time
 
-from derive_common import (
-    DEFAULTS, SCOREBOARD_CATEGORY, TICKS_PER_HOUR, _servers, counted_scoreboard,
-    counted_stats, days_s, stat_value_at_sql, tracking_start,
+from derive_common import (  # noqa: F401  (DatabaseBusy/BUSY_MESSAGE re-exported)
+    BUSY_MESSAGE, BUSY_TIMEOUT_S, DEFAULTS, SCOREBOARD_CATEGORY, TICKS_PER_HOUR,
+    DatabaseBusy, _servers, begin_immediate, counted_scoreboard, counted_stats, days_s,
+    stat_value_at_sql, tracking_start,
 )
 
 SEED_MARKER = "seeded_achievements"
@@ -74,11 +80,59 @@ def _sources(key, run_at):
     }
 
 
+# Value at T (latest row at <= T) of every (key, uuid) of one server, in one
+# ordered pass of the point index -- set-based, never a per-row lookup.
+_STAT_AT = (
+    "SELECT server_key, uuid, category, stat_key, value, MAX(at) AS at "
+    "FROM stat_snapshots INDEXED BY idx_stat_point WHERE server_key = ? AND at <= ? "
+    "GROUP BY category, stat_key, uuid")
+_BOARD_AT = (
+    "SELECT server_key, uuid, participant_kind, objective, value, MAX(at) AS at "
+    "FROM scoreboard_snapshots INDEXED BY idx_scoreboard_point "
+    "WHERE server_key = ? AND at <= ? AND uuid IS NOT NULL GROUP BY objective, uuid")
+
+
+def _point_sources(key, at):
+    """Row sources (same shape as _sources) of counted players' values > 0
+    at time `at` (stats, then scoreboards as category 'scoreboard')."""
+    fs, ps = counted_stats(key, "s")
+    fr, pr = counted_scoreboard(key, "ss", False)
+    return [
+        ("SELECT s.server_key, s.uuid, s.category, s.stat_key, s.value "
+         f"FROM ({_STAT_AT}) s WHERE {fs} AND s.value > 0", [key, at, *ps], "0"),
+        (f"SELECT ss.server_key, ss.uuid, '{SCOREBOARD_CATEGORY}' AS category, "
+         "ss.objective AS stat_key, ss.value "
+         f"FROM ({_BOARD_AT}) ss WHERE {fr} AND ss.value > 0", [key, at, *pr], "0"),
+    ]
+
+
+def _materialize_point(conn, key, at, table):
+    """temp.<table> := _point_sources(key, at), read once per point and then
+    reused for firsts, crossings and as the next point's `prev`."""
+    conn.execute(f"DROP TABLE IF EXISTS temp.{table}")
+    conn.execute(f"CREATE TEMP TABLE {table} (server_key TEXT, uuid TEXT, category TEXT, "
+                 "stat_key TEXT, value INTEGER, PRIMARY KEY (category, stat_key, uuid)) "
+                 "WITHOUT ROWID")
+    for src, params, _ in _point_sources(key, at):
+        conn.execute(f"INSERT INTO temp.{table} {src}", params)
+    return [(f"SELECT server_key, uuid, category, stat_key, value FROM temp.{table}", [], "0")]
+
+
+def _pair_source(table, prev_table):
+    """Rows of point q (table) with their value at the previous point p
+    (prev_table) as `prev`, 0 if none; the crossing SQL reads x.prev."""
+    return [(f"SELECT q.server_key, q.uuid, q.category, q.stat_key, q.value, "
+             f"COALESCE(p.value, 0) AS prev FROM temp.{table} q LEFT JOIN temp.{prev_table} p "
+             "ON p.category = q.category AND p.stat_key = q.stat_key AND p.uuid = q.uuid "
+             "WHERE q.value > COALESCE(p.value, 0)", [], "x.prev")]
+
+
 # ----------------------------------------------------------------------- firsts
 
 _TOP_HOLDER = (
-    "INSERT OR IGNORE INTO firsts (at, server_key, uuid, category, stat_key, earliest_known) "
-    "SELECT ?, server_key, uuid, category, stat_key, ? FROM ("
+    "INSERT OR IGNORE INTO firsts (at, server_key, uuid, category, stat_key, earliest_known, "
+    "approximate) "
+    "SELECT ?, server_key, uuid, category, stat_key, ?, ? FROM ("
     " SELECT server_key, uuid, category, stat_key, ROW_NUMBER() OVER ("
     "  PARTITION BY category, stat_key ORDER BY value DESC, uuid) AS rn FROM ({src})"
     ") WHERE rn = 1")
@@ -94,17 +148,22 @@ def derive_firsts(conn, run_at):
         # earliest_known=1. After seeding: a key with no row that changed this
         # run goes to the top holder among this run's rows, earliest_known=0.
         kind, ek = ("current", 1) if seed else ("run", 0)
-        for src, params, _ in _sources(key, run_at)[kind]:
-            conn.execute(_TOP_HOLDER.format(src=src), [run_at, ek, *params])
+        _insert_firsts(conn, _sources(key, run_at)[kind], run_at, ek)
     conn.commit()
+
+
+def _insert_firsts(conn, sources, at, ek, approximate=0):
+    """Top holder of every key in `sources` that has no firsts row yet."""
+    for src, params, _ in sources:
+        conn.execute(_TOP_HOLDER.format(src=src), [at, ek, approximate, *params])
 
 
 # ------------------------------------------------------------------- milestones
 
 _CROSSING = (
     "INSERT OR IGNORE INTO milestones (at, server_key, uuid, rule_key, category, stat_key, "
-    "threshold, value_at, earliest_known) "
-    "SELECT ?, x.server_key, x.uuid, r.rule_key, x.category, x.stat_key, t.value, x.value, ? "
+    "threshold, value_at, earliest_known, approximate) "
+    "SELECT ?, x.server_key, x.uuid, r.rule_key, x.category, x.stat_key, t.value, x.value, ?, ? "
     "FROM ({src}) x "
     "JOIN milestone_rules r ON r.enabled = 1 AND r.category = x.category "
     " AND (r.stat_key IS NULL OR r.stat_key = x.stat_key) "
@@ -140,13 +199,11 @@ def derive_milestones(conn, run_at, settings=None):
     for key, seed in _seed_modes(conn, run_at).items():
         if seed:
             # every counted current value >= threshold, "already had"
-            for src, params, _ in _sources(key, run_at)["current"]:
-                conn.execute(_CROSSING.format(src=src, prev="0"), [run_at, 1, *params])
+            _insert_crossings(conn, _sources(key, run_at)["current"], run_at, 1, prev="0")
         else:
             # prev = latest row at < run_at (else 0); prev < threshold <= new
-            for src, params, prev in _sources(key, run_at)["run"]:
-                conn.execute(_CROSSING.format(src=src, prev=prev),
-                             [run_at, 0, *params, run_at - 1])
+            _insert_crossings(conn, _sources(key, run_at)["run"], run_at, 0,
+                              prev_params=[run_at - 1])
     conn.commit()
     if not seeded:
         # Only after the seeding above has committed (firsts committed earlier
@@ -154,6 +211,14 @@ def derive_milestones(conn, run_at, settings=None):
         conn.execute("INSERT INTO meta (key, value) VALUES (?, '1') "
                      "ON CONFLICT(key) DO UPDATE SET value='1'", (SEED_MARKER,))
         conn.commit()
+
+
+def _insert_crossings(conn, sources, at, ek, approximate=0, prev=None, prev_params=()):
+    """Milestones with prev < threshold <= value for every row of `sources`
+    (prev: SQL over x; default the source's own prev expression)."""
+    for src, params, src_prev in sources:
+        conn.execute(_CROSSING.format(src=src, prev=src_prev if prev is None else prev),
+                     [at, ek, approximate, *params, *prev_params])
 
 
 # ----------------------------------------------------------------------- badges
@@ -181,6 +246,11 @@ def _tiers(count_sql, label_sql):
 
 
 def derive_badges(conn, run_at, settings=None):
+    _derive_badges(conn, run_at, settings)
+    conn.commit()
+
+
+def _derive_badges(conn, run_at, settings=None):
     settings = settings or DEFAULTS
     b = settings.badges
     cats = settings.milestones.count_categories
@@ -196,7 +266,8 @@ def derive_badges(conn, run_at, settings=None):
         fm, pm = counted_stats(key, "m")
         fa, pa = counted_stats(key, "a")
 
-        # Firsts: only earliest_known=0 rows count.
+        # Firsts: only earliest_known=0 rows count (approximate=1 rows are
+        # real observed firsts, dated "by" a backup, so they count).
         _award(conn, key, run_at, _tiers(
             f"SELECT f.uuid, COUNT(*) AS n FROM firsts f WHERE {ff} AND f.earliest_known = 0 "
             "GROUP BY f.uuid", "'firsts:' || t.value"), [*pf, json.dumps(b.firsts)])
@@ -249,13 +320,116 @@ def derive_badges(conn, run_at, settings=None):
                "AND chronos_local_hour(a.at) < ?) > ? * COUNT(*)",
                [*pa, owl_since, run_at, b.night_owl.min_buckets, b.night_owl.start_hour,
                 b.night_owl.end_hour, b.night_owl.share])
-    conn.commit()
 
 
 # ------------------------------------------------------------ backup import
 
-def rebuild_from_points(conn, server_key, settings):
-    """Re-derive firsts/milestones/totals/badges for server_key over the
-    imported backup points (tools/import_backups.py calls it after a
-    non-dry import). Stub until the backup-import Task 3 lands: no-op."""
-    return {}
+def _points(conn, key):
+    """Imported backup dates plus the first live stats run, oldest first."""
+    rows = conn.execute(
+        "SELECT DISTINCT at FROM snapshot_runs WHERE server_key=? AND ok=1 AND entries_read>0 "
+        "AND (kind='import' OR (kind='stats' AND at=(SELECT MIN(at) FROM snapshot_runs "
+        " WHERE server_key=? AND kind='stats' AND ok=1 AND entries_read>0))) ORDER BY at",
+        (key, key))
+    return [r[0] for r in rows]
+
+
+def rebuild_from_points(conn, server_key, settings, *, lock_timeout_s=BUSY_TIMEOUT_S):
+    """Re-derive firsts/milestones/totals/badges of server_key over its
+    points (imported backups + the first live stats run). Called by
+    tools/import_backups.py after an import; the only writer of
+    approximate=1 rows.
+
+    - Deletes the server's earliest_known=1 / approximate=1 firsts and
+      milestones; real live rows (both 0) are never touched, and every insert
+      is OR IGNORE, so they win.
+    - Oldest point: everything true there -> earliest_known=1 (as seeding).
+    - Each later point q (after p): keys first held / thresholds crossed
+      between p and q -> dated q, approximate=1.
+    - Then, as the live seeding did, current values not explained by the
+      points or by live rows (live history between the first live run and
+      the first derive) -> earliest_known=1 at the latest live run.
+    - Totals: totals_backfilled reset and the backfill rerun (all history).
+    - Badges: the badge stage. Meta: seeded_achievements=1, tracking start.
+
+    Takes its own write lock (BEGIN IMMEDIATE; DatabaseBusy if a snapshot
+    holds it) and runs as one transaction. Returns row counts."""
+    if conn.in_transaction:
+        raise RuntimeError("rebuild_from_points needs a connection with no open transaction")
+    begin_immediate(conn, lock_timeout_s)
+    try:
+        counts = _rebuild(conn, server_key, settings or DEFAULTS)
+    except BaseException:
+        conn.rollback()
+        raise
+    conn.commit()
+    return counts
+
+
+def _rebuild(conn, key, settings):
+    import derive  # derive imports this module; import lazily
+
+    def changes(fn, *args, **kw):
+        before = conn.total_changes
+        fn(*args, **kw)
+        return conn.total_changes - before
+
+    counts = {"points": 0, "firsts": 0, "milestones": 0, "badges": 0, "totals": 0}
+    points = _points(conn, key)
+    if not points:
+        return counts
+    counts["points"] = len(points)
+    latest_live = conn.execute(
+        "SELECT MAX(at) FROM snapshot_runs WHERE server_key=? AND kind='stats' AND ok=1 "
+        "AND entries_read>0", (key,)).fetchone()[0]
+
+    sync_milestone_rules(conn, settings)
+    for t in ("firsts", "milestones"):
+        conn.execute(f"DELETE FROM {t} WHERE server_key=? AND "
+                     "(earliest_known=1 OR approximate=1)", (key,))
+
+    def firsts(*a, **kw):
+        counts["firsts"] += changes(_insert_firsts, conn, *a, **kw)
+
+    def crossings(*a, **kw):
+        counts["milestones"] += changes(_insert_crossings, conn, *a, **kw)
+
+    # Oldest point: "already had" (earliest_known=1), like seeding.
+    cur, prev = "chronos_point_a", "chronos_point_b"
+    p0 = points[0]
+    src = _materialize_point(conn, key, p0, cur)
+    firsts(src, p0, 1)
+    crossings(src, p0, 1, prev="0")
+    # Between points: keys with a holder at p already have a firsts row (from
+    # an earlier point or a live row), so OR IGNORE leaves exactly the keys
+    # first held between p and q.
+    for q in points[1:]:
+        cur, prev = prev, cur
+        src = _materialize_point(conn, key, q, cur)
+        firsts(src, q, 0, approximate=1)
+        crossings(_pair_source(cur, prev), q, 0, approximate=1)
+    for t in (cur, prev):
+        conn.execute(f"DROP TABLE IF EXISTS temp.{t}")
+    if latest_live is not None and latest_live > points[-1]:
+        current = _sources(key, latest_live)["current"]
+        firsts(current, latest_live, 1)
+        crossings(current, latest_live, 1, prev="0")
+    conn.execute("INSERT INTO meta (key, value) VALUES (?, '1') "
+                 "ON CONFLICT(key) DO UPDATE SET value='1'", (SEED_MARKER,))
+
+    # Totals history from the oldest point: rerun the one-time backfill over
+    # all history (end = past the newest row, so every point is emitted).
+    end = 1 + max(conn.execute("SELECT COALESCE(MAX(at), 0) FROM stat_snapshots").fetchone()[0],
+                  conn.execute("SELECT COALESCE(MAX(at), 0) FROM scoreboard_snapshots"
+                               ).fetchone()[0])
+    conn.execute("DELETE FROM meta WHERE key=?", (derive.BACKFILL_MARKER,))
+    derive._backfill(conn, end)
+    counts["totals"] = sum(conn.execute(
+        f"SELECT COUNT(*) FROM {t} WHERE server_key=?", (key,)).fetchone()[0]
+        for t in ("stat_totals", "scoreboard_totals"))
+
+    now = latest_live if latest_live is not None else points[-1]
+    counts["badges"] = changes(_derive_badges, conn, now, settings)
+    row = conn.execute("SELECT value FROM meta WHERE key='last_run_at'").fetchone()
+    derive._write_meta(conn, int(row[0]) if row else now)
+    return counts

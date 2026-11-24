@@ -1,6 +1,7 @@
 """Helpers shared by the derive stages (derive.py, derive_achievements.py,
 derive_social.py). Participant rules come from api.scope, never reimplemented.
 """
+import sqlite3
 import sys
 from pathlib import Path
 
@@ -18,6 +19,27 @@ from api.settings import DAY, DEFAULTS, days_s  # noqa: E402,F401
 SCOREBOARD_CATEGORY = "scoreboard"
 WEEK = 7 * DAY  # the rivalry gap_7d_ago window (a column name / API field)
 TICKS_PER_HOUR = 20 * 60 * 60  # Minecraft: 20 ticks per second
+# Backup import spec (Global Constraints), not tuning: how long a by-hand
+# tool waits for the write lock before deciding a live snapshot is running.
+BUSY_TIMEOUT_S = 5
+BUSY_MESSAGE = ("a snapshot is running — stop chronos-stats-snapshot.timer "
+                "and .service first")
+
+
+class DatabaseBusy(RuntimeError):
+    pass
+
+
+def begin_immediate(conn, timeout_s=BUSY_TIMEOUT_S):
+    """BEGIN IMMEDIATE (the write lock) on conn, waiting up to timeout_s;
+    DatabaseBusy when another writer (a live snapshot) holds it."""
+    conn.execute(f"PRAGMA busy_timeout = {int(timeout_s * 1000)}")
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+    except sqlite3.OperationalError as e:
+        if "locked" in str(e) or "busy" in str(e):
+            raise DatabaseBusy(BUSY_MESSAGE) from e
+        raise
 
 
 def _servers(conn):

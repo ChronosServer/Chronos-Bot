@@ -167,9 +167,16 @@ def backfill_totals(conn, run_at):
     stored). Emits only rows with at < run_at; the normal recompute then
     writes this run's changes. Guarded by meta[BACKFILL_MARKER], committed
     together with the rebuilt rows."""
+    if _backfill(conn, run_at):
+        conn.commit()
+
+
+def _backfill(conn, run_at):
+    """backfill_totals without the commit (rebuild_from_points runs it inside
+    its own transaction). True when it rebuilt anything."""
     if conn.execute("SELECT 1 FROM meta WHERE key=? AND value='1'",
                     (BACKFILL_MARKER,)).fetchone():
-        return
+        return False
     for tbl in ("stat_totals", "stat_totals_current",
                 "scoreboard_totals", "scoreboard_totals_current"):
         conn.execute(f"DELETE FROM {tbl}")
@@ -199,7 +206,7 @@ def backfill_totals(conn, run_at):
             [(key, o, t, n) for o, (t, n) in boards.items()])
     conn.execute("INSERT INTO meta (key, value) VALUES (?, '1') "
                  "ON CONFLICT(key) DO UPDATE SET value=excluded.value", (BACKFILL_MARKER,))
-    conn.commit()
+    return True
 
 
 def _flush_stat(conn, rows):
@@ -245,6 +252,11 @@ def resolve_names(conn, run_at, mojang):
 
 
 def write_meta(conn, run_at):
+    _write_meta(conn, run_at)
+    conn.commit()
+
+
+def _write_meta(conn, run_at):
     meta = {
         "data_version": str(conn.execute(
             "SELECT COALESCE(MAX(id), 0) FROM snapshot_runs").fetchone()[0]),
@@ -257,7 +269,6 @@ def write_meta(conn, run_at):
     conn.executemany(
         "INSERT INTO meta (key, value) VALUES (?, ?) "
         "ON CONFLICT(key) DO UPDATE SET value=excluded.value", list(meta.items()))
-    conn.commit()
 
 
 def run_derive(conn, run_at, mojang=None, settings=None):
