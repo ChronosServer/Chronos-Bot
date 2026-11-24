@@ -8,6 +8,7 @@ filtered. Fragments use ? params only.
 import re
 from dataclasses import dataclass
 
+_RESERVED = {"_scope_pf", "_scope_m"}
 _IDENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 
@@ -32,7 +33,7 @@ def resolve_scope(conn, name: str) -> Scope:
 
 
 def _alias(alias):
-    if not _IDENT.match(alias):
+    if not _IDENT.match(alias) or alias in _RESERVED:
         raise ValueError(f"bad alias: {alias!r}")
     return alias
 
@@ -44,8 +45,8 @@ def _scope_sql(scope, include_bots, a, uuid_col):
     if not include_bots:
         sql += (
             f" AND ({a}.server_key NOT IN (SELECT key FROM servers WHERE filters_bots=1)"
-            f" OR EXISTS (SELECT 1 FROM player_flags pf WHERE pf.server_key={a}.server_key"
-            f" AND pf.uuid={a}.{uuid_col} AND pf.is_bot=0))")
+            f" OR EXISTS (SELECT 1 FROM player_flags _scope_pf WHERE _scope_pf.server_key={a}.server_key"
+            f" AND _scope_pf.uuid={a}.{uuid_col} AND _scope_pf.is_bot=0))")
     return sql, params
 
 
@@ -64,8 +65,8 @@ def scoreboard_filter_sql(scope: Scope, include_bots: bool, alias: str,
     else:
         sql, params = _scope_sql(scope, include_bots, a, "uuid")
         unresolved = f"{a}.participant_kind != 'unresolved'"
-    mirror = (f"NOT EXISTS (SELECT 1 FROM scoreboard_meta m WHERE m.server_key={a}.server_key"
-              f" AND m.objective={a}.objective AND m.is_vanilla_mirror=1)")
+    mirror = (f"NOT EXISTS (SELECT 1 FROM scoreboard_meta _scope_m WHERE _scope_m.server_key={a}.server_key"
+              f" AND _scope_m.objective={a}.objective AND _scope_m.is_vanilla_mirror=1)")
     return f"({sql} AND {unresolved} AND {mirror})", params
 
 

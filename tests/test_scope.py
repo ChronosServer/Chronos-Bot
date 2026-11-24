@@ -94,3 +94,28 @@ def test_mirror_objective_excluded(conn):
 def test_unknown_scope_raises(conn):
     with pytest.raises(ValueError):
         sc.resolve_scope(conn, "nope")
+
+
+def test_scoreboard_bot_filter_current(conn):
+    conn.executemany("INSERT INTO scoreboard_current VALUES('smp',?,'o',1,1,1)",
+                     [("R",), ("B",), ("M",)])
+    conn.commit()
+    s = sc.resolve_scope(conn, "smp")
+
+    def got(ib):
+        f, p = sc.scoreboard_filter_sql(s, ib, "x", is_current=True)
+        return {r[0] for r in conn.execute(
+            f"SELECT participant_key FROM scoreboard_current x WHERE {f}", p)}
+    assert got(False) == {"R"}
+    assert got(True) == {"R", "B", "M"}
+
+
+def test_cmps_excludes_unprovisioned(conn):
+    assert "ghost" not in sc.resolve_scope(conn, "cmps").servers
+
+
+def test_reserved_alias_rejected(conn):
+    s = sc.resolve_scope(conn, "smp")
+    for a in ("_scope_pf", "_scope_m", "bad alias"):
+        with pytest.raises(ValueError):
+            sc.stat_filter_sql(s, False, a)
