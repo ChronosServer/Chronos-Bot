@@ -250,3 +250,12 @@ def derive_badges(conn, run_at, settings=None):
                [*pa, owl_since, run_at, b.night_owl.min_buckets, b.night_owl.start_hour,
                 b.night_owl.end_hour, b.night_owl.share])
     conn.commit()
+
+
+# ------------------------------------------------------------ backup import
+
+def rebuild_from_points(conn, server_key, settings):
+    """Re-derive firsts/milestones/totals/badges for server_key over the
+    imported backup points (tools/import_backups.py calls it after a
+    non-dry import). Stub until the backup-import Task 3 lands: no-op."""
+    return {}

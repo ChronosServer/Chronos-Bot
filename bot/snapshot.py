@@ -48,8 +48,8 @@ DICTIONARY_URL_TMPL = (
 # Config / setup
 # --------------------------------------------------------------------------
 
-def load_config():
-    with open(CONFIG_PATH, "r", encoding="utf-8") as f:
+def load_config(path=None):
+    with open(CONFIG_PATH if path is None else path, "r", encoding="utf-8") as f:
         cfg = json.load(f)
     if "stats_tracking" not in cfg:
         raise SystemExit(
@@ -262,6 +262,22 @@ def upsert_player(conn, uuid_str, name, now, name_resolved):
 # Stats (player stat files) snapshot
 # --------------------------------------------------------------------------
 
+def iter_stat_files(stats_dir):
+    """Yields (uuid, parsed JSON) for every <uuid>.json in stats_dir. Files
+    with a non-uuid name or unreadable/invalid JSON are skipped."""
+    for f in Path(stats_dir).glob("*.json"):
+        try:
+            player_uuid = str(uuidlib.UUID(f.stem))
+        except ValueError:
+            continue
+        try:
+            with open(f, "r", encoding="utf-8") as fh:
+                data = json.load(fh)
+        except (json.JSONDecodeError, OSError):
+            continue
+        yield player_uuid, data
+
+
 def run_stats_snapshot(conn, server_key, world_path, usercache, now):
     stats_dir = stat_files_dir(world_path)
     if not stats_dir.is_dir():
@@ -278,17 +294,7 @@ def run_stats_snapshot(conn, server_key, world_path, usercache, now):
     ).fetchall()
     current = {(u, c, k): v for (u, c, k, v) in cur_rows}
 
-    for f in stats_dir.glob("*.json"):
-        try:
-            player_uuid = str(uuidlib.UUID(f.stem))
-        except ValueError:
-            continue
-        try:
-            with open(f, "r", encoding="utf-8") as fh:
-                data = json.load(fh)
-        except (json.JSONDecodeError, OSError):
-            continue
-
+    for player_uuid, data in iter_stat_files(stats_dir):
         entries_read += 1
         name = usercache.get(player_uuid)
         upsert_player(conn, player_uuid, name, now, name_resolved=bool(name))
@@ -353,7 +359,12 @@ def _resolve_participant(raw_name, name_to_uuid, known_stat_uuids):
 def load_scoreboard_dat(world_path):
     # Confirmed real layout: world_dir/data/minecraft/scoreboard.dat
     # (not world_dir/data/scoreboard.dat -- there's an extra 'minecraft' level).
-    path = Path(world_path) / "data" / "minecraft" / "scoreboard.dat"
+    return read_scoreboard_nbt(Path(world_path) / "data" / "minecraft" / "scoreboard.dat")
+
+
+def read_scoreboard_nbt(path):
+    """The scoreboard.dat 'data' compound, or None (missing/unreadable)."""
+    path = Path(path)
     if not path.is_file():
         return None
     try:

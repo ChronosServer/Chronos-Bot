@@ -53,35 +53,83 @@ class FakeWorld:
             json.dumps(entries), encoding="utf-8")
 
     def set_scoreboard(self, server_key, objectives, scores, teams):
-        root = nbt.NBTFile()
-        root.name = ""
-        data = nbt.TAG_Compound(name="data")
-        objs = nbt.TAG_List(name="Objectives", type=nbt.TAG_Compound)
-        for o in objectives:
-            c = nbt.TAG_Compound()
-            c.tags.append(nbt.TAG_String(name="Name", value=o))
-            objs.tags.append(c)
-        sc = nbt.TAG_List(name="PlayerScores", type=nbt.TAG_Compound)
-        for name, obj, val in scores:
-            c = nbt.TAG_Compound()
-            c.tags.append(nbt.TAG_String(name="Name", value=name))
-            c.tags.append(nbt.TAG_String(name="Objective", value=obj))
-            c.tags.append(nbt.TAG_Int(name="Score", value=val))
-            sc.tags.append(c)
-        tl = nbt.TAG_List(name="Teams", type=nbt.TAG_Compound)
-        for tname, players in teams.items():
-            c = nbt.TAG_Compound()
-            c.tags.append(nbt.TAG_String(name="Name", value=tname))
-            pl = nbt.TAG_List(name="Players", type=nbt.TAG_String)
-            for p in players:
-                pl.tags.append(nbt.TAG_String(value=p))
-            c.tags.append(pl)
-            tl.tags.append(c)
-        data.tags.extend([objs, sc, tl])
-        root.tags.append(data)
         d = self.world_dir(server_key) / "data" / "minecraft"
-        d.mkdir(parents=True, exist_ok=True)
-        root.write_file(str(d / "scoreboard.dat"))
+        write_scoreboard(d / "scoreboard.dat", objectives, scores, teams)
+
+
+def write_scoreboard(path, objectives, scores, teams=None):
+    """scoreboard.dat as Minecraft writes it: data.{Objectives,PlayerScores,Teams}."""
+    teams = teams or {}
+    root = nbt.NBTFile()
+    root.name = ""
+    data = nbt.TAG_Compound(name="data")
+    objs = nbt.TAG_List(name="Objectives", type=nbt.TAG_Compound)
+    for o in objectives:
+        c = nbt.TAG_Compound()
+        c.tags.append(nbt.TAG_String(name="Name", value=o))
+        objs.tags.append(c)
+    sc = nbt.TAG_List(name="PlayerScores", type=nbt.TAG_Compound)
+    for name, obj, val in scores:
+        c = nbt.TAG_Compound()
+        c.tags.append(nbt.TAG_String(name="Name", value=name))
+        c.tags.append(nbt.TAG_String(name="Objective", value=obj))
+        c.tags.append(nbt.TAG_Int(name="Score", value=val))
+        sc.tags.append(c)
+    tl = nbt.TAG_List(name="Teams", type=nbt.TAG_Compound)
+    for tname, players in teams.items():
+        c = nbt.TAG_Compound()
+        c.tags.append(nbt.TAG_String(name="Name", value=tname))
+        pl = nbt.TAG_List(name="Players", type=nbt.TAG_String)
+        for p in players:
+            pl.tags.append(nbt.TAG_String(value=p))
+        c.tags.append(pl)
+        tl.tags.append(c)
+    data.tags.extend([objs, sc, tl])
+    root.tags.append(data)
+    Path(path).parent.mkdir(parents=True, exist_ok=True)
+    root.write_file(str(path))
+
+
+def make_backup(tmp, *, layout="old", last_played_ms, stats, scoreboard=None,
+                usercache=None, name="backup", level_name="world",
+                version_name="1.16.5", data_version=2586):
+    """A backup world folder `<tmp>/<name>/world` (usercache.json next to it).
+
+    layout "old" (<=1.21): stats/ + data/scoreboard.dat; "new" (26.x):
+    players/stats/ + data/minecraft/scoreboard.dat. last_played_ms=None
+    writes a level.dat without LastPlayed. scoreboard = (objectives,
+    [(name, objective, score), ...])."""
+    world = Path(tmp) / name / "world"
+    world.mkdir(parents=True, exist_ok=True)
+    root = nbt.NBTFile()
+    root.name = ""
+    data = nbt.TAG_Compound(name="Data")
+    if last_played_ms is not None:
+        data.tags.append(nbt.TAG_Long(name="LastPlayed", value=last_played_ms))
+    data.tags.append(nbt.TAG_String(name="LevelName", value=level_name))
+    data.tags.append(nbt.TAG_Int(name="DataVersion", value=data_version))
+    ver = nbt.TAG_Compound(name="Version")
+    ver.tags.append(nbt.TAG_String(name="Name", value=version_name))
+    ver.tags.append(nbt.TAG_Int(name="Id", value=data_version))
+    data.tags.append(ver)
+    root.tags.append(data)
+    root.write_file(str(world / "level.dat"))
+
+    sdir = world / ("stats" if layout == "old" else "players/stats")
+    sdir.mkdir(parents=True, exist_ok=True)
+    for u, st in stats.items():
+        (sdir / f"{u}.json").write_text(
+            json.dumps({"stats": st, "DataVersion": data_version}), encoding="utf-8")
+    if scoreboard is not None:
+        objectives, scores = scoreboard
+        sb = world / ("data/scoreboard.dat" if layout == "old"
+                      else "data/minecraft/scoreboard.dat")
+        write_scoreboard(sb, objectives, scores)
+    if usercache is not None:
+        entries = [{"name": n, "uuid": u, "expiresOn": "2099-01-01 00:00:00 +0000"}
+                   for u, n in usercache.items()]
+        (world.parent / "usercache.json").write_text(json.dumps(entries), encoding="utf-8")
+    return world
 
 
 @pytest.fixture
