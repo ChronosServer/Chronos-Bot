@@ -177,7 +177,8 @@ CREATE TABLE IF NOT EXISTS scoreboard_totals (
     server_key  TEXT NOT NULL,
     objective   TEXT NOT NULL,
     at          INTEGER NOT NULL,
-    total       INTEGER NOT NULL
+    total       INTEGER NOT NULL,
+    total_no_bots INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_scoreboard_totals ON scoreboard_totals(server_key, objective, at DESC);
 
@@ -185,6 +186,7 @@ CREATE TABLE IF NOT EXISTS scoreboard_totals_current (
     server_key  TEXT NOT NULL,
     objective   TEXT NOT NULL,
     total       INTEGER NOT NULL,
+    total_no_bots INTEGER NOT NULL,
     PRIMARY KEY (server_key, objective)
 );
 

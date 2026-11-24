@@ -51,11 +51,8 @@ def derive_activity(conn, run_at):
 
 
 def _derive_stat_totals(conn, key, run_at):
-    touched = {(c, k) for c, k in conn.execute(
-        "SELECT DISTINCT category, stat_key FROM stat_snapshots "
-        "WHERE at=? AND server_key=?", (run_at, key))}
-    if not touched:
-        return
+    # Full recompute every run: classification (bot flags) can change with no
+    # stat change, and a previously failed derive must self-heal.
     sql, params = stat_filter_sql(Scope(key, (key,)), False, "s")
     totals = {(c, k): t for c, k, t in conn.execute(
         "SELECT category, stat_key, SUM(value) FROM stat_current "
@@ -66,8 +63,8 @@ def _derive_stat_totals(conn, key, run_at):
     cur = {(c, k): (t, n) for c, k, t, n in conn.execute(
         "SELECT category, stat_key, total, total_no_bots FROM stat_totals_current "
         "WHERE server_key=?", (key,))}
-    for ck in touched:
-        new = (totals.get(ck, 0), nobots.get(ck, 0))
+    for ck, total in totals.items():
+        new = (total, nobots.get(ck, 0))
         if cur.get(ck) == new:
             continue
         conn.execute(
@@ -81,28 +78,30 @@ def _derive_stat_totals(conn, key, run_at):
 
 
 def _derive_scoreboard_totals(conn, key, run_at):
-    touched = {r[0] for r in conn.execute(
-        "SELECT DISTINCT objective FROM scoreboard_snapshots WHERE at=? AND server_key=?",
-        (run_at, key))}
-    if not touched:
-        return
-    sql, params = scoreboard_filter_sql(Scope(key, (key,)), True, "sc", is_current=True)
+    scope = Scope(key, (key,))
+    sql_all, p_all = scoreboard_filter_sql(scope, True, "sc", is_current=True)
+    sql_nb, p_nb = scoreboard_filter_sql(scope, False, "sc", is_current=True)
     totals = dict(conn.execute(
-        f"SELECT objective, SUM(value) FROM scoreboard_current sc WHERE {sql} "
-        "GROUP BY objective", params).fetchall())
-    cur = dict(conn.execute(
-        "SELECT objective, total FROM scoreboard_totals_current WHERE server_key=?", (key,)))
-    for obj in touched:
-        new = totals.get(obj, 0)
+        f"SELECT objective, SUM(value) FROM scoreboard_current sc WHERE {sql_all} "
+        "GROUP BY objective", p_all).fetchall())
+    nobots = dict(conn.execute(
+        f"SELECT objective, SUM(value) FROM scoreboard_current sc WHERE {sql_nb} "
+        "GROUP BY objective", p_nb).fetchall())
+    cur = {o: (t, n) for o, t, n in conn.execute(
+        "SELECT objective, total, total_no_bots FROM scoreboard_totals_current "
+        "WHERE server_key=?", (key,))}
+    for obj, total in totals.items():
+        new = (total, nobots.get(obj, 0))
         if cur.get(obj) == new:
             continue
         conn.execute(
-            "INSERT INTO scoreboard_totals (server_key, objective, at, total) VALUES (?, ?, ?, ?)",
-            (key, obj, run_at, new))
+            "INSERT INTO scoreboard_totals (server_key, objective, at, total, total_no_bots) "
+            "VALUES (?, ?, ?, ?, ?)", (key, obj, run_at, *new))
         conn.execute(
-            "INSERT INTO scoreboard_totals_current (server_key, objective, total) VALUES (?, ?, ?) "
-            "ON CONFLICT(server_key, objective) DO UPDATE SET total=excluded.total",
-            (key, obj, new))
+            "INSERT INTO scoreboard_totals_current (server_key, objective, total, total_no_bots) "
+            "VALUES (?, ?, ?, ?) ON CONFLICT(server_key, objective) DO UPDATE SET "
+            "total=excluded.total, total_no_bots=excluded.total_no_bots",
+            (key, obj, *new))
 
 
 def derive_totals(conn, run_at):
@@ -154,12 +153,15 @@ def write_meta(conn, run_at):
 
 
 def run_derive(conn, run_at, mojang=None):
-    derive_activity(conn, run_at)
-    derive_totals(conn, run_at)
-    derive_firsts(conn, run_at)
-    derive_milestones(conn, run_at)
-    derive_rivalries(conn, run_at)
-    derive_badges(conn, run_at)
-    derive_spotlight(conn, run_at)
-    resolve_names(conn, run_at, mojang)
-    write_meta(conn, run_at)
+    try:
+        derive_activity(conn, run_at)
+        derive_totals(conn, run_at)
+        derive_firsts(conn, run_at)
+        derive_milestones(conn, run_at)
+        derive_rivalries(conn, run_at)
+        derive_badges(conn, run_at)
+        derive_spotlight(conn, run_at)
+        resolve_names(conn, run_at, mojang)
+    finally:
+        conn.rollback()
+        write_meta(conn, run_at)

@@ -601,7 +601,6 @@ def run_once(config=None, now_fn=time.time, dictionary=None, mojang_fetch=None):
                            int((time.time() - t0) * 1000), now=now)
                 print(f"[{key}] team_check: ERROR {e}")
 
-    sys.path.insert(0, str(REPO_ROOT))
     t0 = time.time()
     try:
         import derive
