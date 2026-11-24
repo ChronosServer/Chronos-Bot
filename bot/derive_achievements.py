@@ -67,7 +67,10 @@ def _seed_modes(conn, run_at):
 
 
 def _sources(key, run_at):
-    """Normalized (server_key, uuid, category, stat_key, value) row sources of
+    """'run' sources are pinned (INDEXED BY) to the (server_key, at) indexes so
+    reading this run's rows is a seek, not a scan of all history.
+
+    Normalized (server_key, uuid, category, stat_key, value) row sources of
     counted players with value > 0: 'current' = every current value, 'run' =
     rows written at run_at. Scoreboards use category 'scoreboard'."""
     fs, ps = counted_stats(key, "s")
@@ -86,12 +89,15 @@ def _sources(key, run_at):
              f"WHERE {fc} AND sc.value > 0", pc, None),
         ],
         "run": [
-            ("SELECT s.server_key, s.uuid, s.category, s.stat_key, s.value FROM stat_snapshots s "
-             f"WHERE s.at = ? AND {fs} AND s.value > 0", [run_at, *ps],
+            ("SELECT s.server_key, s.uuid, s.category, s.stat_key, s.value "
+             "FROM stat_snapshots s INDEXED BY idx_stat_at "
+             f"WHERE s.server_key = ? AND s.at = ? AND {fs} AND s.value > 0", [key, run_at, *ps],
              stat_value_at_sql("x")),
             (f"SELECT ss.server_key, ss.uuid, '{SCOREBOARD_CATEGORY}' AS category, "
-             "ss.objective AS stat_key, ss.value FROM scoreboard_snapshots ss "
-             f"WHERE ss.at = ? AND {fr} AND ss.value > 0", [run_at, *pr], sb_prev),
+             "ss.objective AS stat_key, ss.value "
+             "FROM scoreboard_snapshots ss INDEXED BY idx_scoreboard_at "
+             f"WHERE ss.server_key = ? AND ss.at = ? AND {fr} AND ss.value > 0",
+             [key, run_at, *pr], sb_prev),
         ],
     }
 
@@ -107,6 +113,10 @@ _TOP_HOLDER = (
 
 
 def derive_firsts(conn, run_at):
+    # Known limitation: post-seed firsts come only from rows written at
+    # run_at. If a derive run fails, its changes are not retried -- the next
+    # run diffs only its own rows (a later change to the key still yields a
+    # first, possibly for a different player).
     for key, seed in _seed_modes(conn, run_at).items():
         # Seed: top current holder of every key with no firsts row, flagged
         # earliest_known=1. After seeding: a key with no row that changed this
@@ -137,6 +147,9 @@ def seed_milestone_rules(conn):
 
 
 def derive_milestones(conn, run_at):
+    # Known limitation: crossings are detected from rows written at run_at
+    # only. If a derive run fails, that run's crossings are never recorded --
+    # the next run diffs only its own changes against their previous rows.
     seed_milestone_rules(conn)
     seeded = _seeded(conn)
     for key, seed in _seed_modes(conn, run_at).items():

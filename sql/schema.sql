@@ -53,6 +53,8 @@ CREATE TABLE IF NOT EXISTS stat_snapshots (
 );
 CREATE INDEX IF NOT EXISTS idx_stat_point ON stat_snapshots(server_key, category, stat_key, uuid, at DESC);
 CREATE INDEX IF NOT EXISTS idx_stat_player ON stat_snapshots(uuid, at DESC);
+-- derive reads "rows written this run" with server_key = ? AND at = ?
+CREATE INDEX IF NOT EXISTS idx_stat_at ON stat_snapshots(server_key, at);
 
 CREATE TABLE IF NOT EXISTS stat_current (
     server_key  TEXT NOT NULL,
@@ -77,6 +79,7 @@ CREATE TABLE IF NOT EXISTS scoreboard_snapshots (
 );
 CREATE INDEX IF NOT EXISTS idx_scoreboard_point ON scoreboard_snapshots(server_key, objective, uuid, at DESC);
 CREATE INDEX IF NOT EXISTS idx_scoreboard_player ON scoreboard_snapshots(uuid, at DESC) WHERE uuid IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_scoreboard_at ON scoreboard_snapshots(server_key, at);
 
 CREATE TABLE IF NOT EXISTS scoreboard_current (
     server_key      TEXT NOT NULL,

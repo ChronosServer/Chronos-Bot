@@ -589,3 +589,30 @@ def test_resolve_names_not_found_leaves_unresolved(run_snapshot, db):
     client = MojangClient(lambda m, u, b: (404, b""), db, 5000, budget=5)
     derive.resolve_names(db, 5000, client)
     assert q(db, "SELECT name, name_resolved FROM players") == [("old", 0)]
+
+
+# ---------------------------------------------------------------- query plans
+
+def test_run_row_queries_use_at_indexes(world, run_snapshot, db):
+    """Every "rows written this run" read must seek (server_key, at), not
+    scan all of a server's history (R18)."""
+    import re
+    world.set_usercache("cmp", {P: "Alice"})
+    world.add_stats("cmp", P, mined(stone=5))
+    world.set_scoreboard("cmp", ["kills"], [("Alice", "kills", 3)], {})
+    run_snapshot(1000)
+    stmts = []
+    db.set_trace_callback(stmts.append)
+    derive.run_derive(db, 1900)
+    db.set_trace_callback(None)
+    run_reads = [s for s in stmts if re.search(r"\bat\s*=\s*1900\b", s)
+                 and re.search(r"\bFROM (stat|scoreboard)_snapshots\b", s)]
+    tables = []
+    for s in run_reads:
+        plan = " | ".join(r[3] for r in db.execute("EXPLAIN QUERY PLAN " + s))
+        m = re.search(r"USING (?:COVERING )?INDEX (idx_(?:stat|scoreboard)_at) \(server_key=\? AND at=\?\)",
+                      plan)
+        assert m, (s, plan)
+        tables.append(m.group(1))
+    # activity + firsts (stats, scoreboard) + milestones (stats, scoreboard)
+    assert tables.count("idx_stat_at") >= 3 and tables.count("idx_scoreboard_at") >= 2

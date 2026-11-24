@@ -27,9 +27,11 @@ def derive_activity(conn, run_at):
         if start is None or start >= run_at:
             continue
         uuids = [r[0] for r in conn.execute(
-            "SELECT DISTINCT uuid FROM stat_snapshots WHERE at=? AND server_key=? "
-            "AND category=? AND stat_key=?",
-            (run_at, key, ACTIVITY_CATEGORY, ACTIVITY_STAT))]
+            # pinned to idx_stat_at (server_key, at): a seek to this run's
+            # rows, not every play_time row ever written (schema.sql creates it)
+            "SELECT DISTINCT uuid FROM stat_snapshots INDEXED BY idx_stat_at "
+            "WHERE server_key=? AND at=? AND category=? AND stat_key=?",
+            (key, run_at, ACTIVITY_CATEGORY, ACTIVITY_STAT))]
         conn.executemany(
             "INSERT OR IGNORE INTO activity (server_key, at, uuid) VALUES (?, ?, ?)",
             [(key, run_at, u) for u in uuids])
