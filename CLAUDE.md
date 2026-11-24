@@ -127,7 +127,7 @@ sync jobs. (`sqlite3` CLI isn't installed on the server — query the DB via
   127.0.0.1:8765 behind nginx. Startup runs `check_required_indexes()`
   (`REQUIRED_INDEXES` in `api/db.py`): the API **refuses to start until
   `bot/snapshot.py` has applied the schema once**.
-- Deploy order: pull → `pip install -r requirements.txt` → stop snapshot timer →
+- Deploy order: pull → pip install only the three API pins (fastapi, uvicorn[standard], orjson — versions in requirements.txt; never `pip install -r requirements.txt` on the server) → stop snapshot timer →
   run `bot/snapshot.py` by hand once (migrations + one-time seeding) → start timer →
   install `deploy/systemd/chronos-stats-api.service` → add
   `deploy/nginx/chronos-stats-api.conf` to the nginx site → `nginx -t && reload`.
