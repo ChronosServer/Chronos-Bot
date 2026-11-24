@@ -466,13 +466,11 @@ def run_team_check(conn, server_key, world_path, now, usercache, mojang=None):
     join). Team names with no known uuid are resolved via Mojang (cached)."""
     data = load_scoreboard_dat(world_path)
     teamed = set()
-    team_spelling = {}
     for team in nbt_list(data, "Teams"):
         for player_tag in nbt_list(team, "Players"):
             name = player_tag.value if hasattr(player_tag, "value") else player_tag
             if name:
                 teamed.add(str(name).lower())
-                team_spelling.setdefault(str(name).lower(), str(name))
 
     name_by_uuid = {u: n for u, n in usercache.items() if n}
     for u, n in conn.execute("SELECT uuid, name FROM players WHERE name IS NOT NULL"):
@@ -482,8 +480,7 @@ def run_team_check(conn, server_key, world_path, now, usercache, mojang=None):
         known_names = {n.lower() for n in name_by_uuid.values()}
         unknown = sorted(teamed - known_names)
         if unknown:
-            for low, resolved_uuid in mojang.names_to_uuids(unknown).items():
-                display = team_spelling.get(low, low)
+            for low, (resolved_uuid, display) in mojang.names_to_uuids(unknown).items():
                 name_by_uuid[resolved_uuid] = display
                 upsert_player(conn, resolved_uuid, display, now, True)
 

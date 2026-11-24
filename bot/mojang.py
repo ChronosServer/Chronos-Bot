@@ -4,6 +4,8 @@ Results (including not-found and failed lookups) are cached in `name_lookups`
 and not retried for CACHE_SECONDS. Never raises on network trouble.
 """
 import json
+import re
+import urllib.error
 import urllib.request
 import uuid as uuidlib
 
@@ -11,6 +13,7 @@ BULK_URL = "https://api.minecraftservices.com/minecraft/profile/lookup/bulk/byna
 PROFILE_URL = "https://sessionserver.mojang.com/session/minecraft/profile/"
 CACHE_SECONDS = 7 * 86400
 CHUNK = 10
+VALID_NAME = re.compile(r"^[A-Za-z0-9_]{1,16}$")
 
 
 def default_fetch(method, url, body=None):
@@ -61,20 +64,32 @@ class MojangClient:
             "ON CONFLICT(lookup_key) DO UPDATE SET result=excluded.result, "
             "checked_at=excluded.checked_at", (key, result, self.now))
 
+    @staticmethod
+    def _parse_hit(result):
+        if not result:
+            return None
+        try:
+            d = json.loads(result)
+            return (d["uuid"], d["name"])
+        except (ValueError, KeyError, TypeError):
+            return None
+
     def names_to_uuids(self, names):
-        """lowercased name -> dashed uuid for names that resolve."""
+        """lowercased name -> (dashed uuid, canonical name) for names that
+        resolve. Invalid usernames are skipped (not cached, no budget)."""
         out = {}
         todo = []
         seen = set()
         for n in names:
             low = n.lower()
-            if not low or low in seen:
+            if not VALID_NAME.match(n) or low in seen:
                 continue
             seen.add(low)
             cached = self._fresh("name:" + low)
             if cached is not None:
-                if cached[0]:
-                    out[low] = cached[0]
+                hit = self._parse_hit(cached[0])
+                if hit:
+                    out[low] = hit
                 continue
             todo.append(n)
         for i in range(0, len(todo), CHUNK):
@@ -89,19 +104,21 @@ class MojangClient:
                     for e in json.loads(body):
                         u = _dash(e.get("id"))
                         if u and e.get("name"):
-                            found[e["name"].lower()] = u
+                            found[e["name"].lower()] = (u, e["name"])
                 except (ValueError, AttributeError, TypeError):
                     ok = False
             for n in chunk:
                 low = n.lower()
-                u = found.get(low) if ok else None
-                self._store("name:" + low, u)
-                if u:
-                    out[low] = u
+                hit = found.get(low) if ok else None
+                self._store("name:" + low,
+                            json.dumps({"uuid": hit[0], "name": hit[1]}) if hit else None)
+                if hit:
+                    out[low] = hit
             self.conn.commit()
         return out
 
     def uuid_to_name(self, uuid):
+        uuid = _dash(uuid.replace("-", "")) or uuid.lower()
         key = "uuid:" + uuid
         cached = self._fresh(key)
         if cached is not None:

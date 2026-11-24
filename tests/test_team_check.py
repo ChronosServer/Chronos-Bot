@@ -32,7 +32,7 @@ def fake_mojang(conn, known):
     def fetch(method, url, body):
         calls.append(body)
         names = json.loads(body)
-        return 200, json.dumps([{"id": known[n.lower()].replace("-", ""), "name": n}
+        return 200, json.dumps([{"id": known[n.lower()].replace("-", ""), "name": n.title()}
                                 for n in names if n.lower() in known]).encode()
     return MojangClient(fetch, conn, NOW), calls
 
@@ -52,6 +52,15 @@ def test_team_member_with_unknown_name_resolved_and_real(world, conn):
     check(world, conn, {}, m)
     assert flags(conn) == {A: 0}
     assert conn.execute("SELECT name, name_resolved FROM players WHERE uuid=?", (A,)).fetchone() == ("Alice", 1)
+
+
+def test_invalid_team_entry_does_not_poison_valid_ones(world, conn):
+    world.add_stats("smp", A, {})
+    world.set_scoreboard("smp", [], [], {"t": ["alice", "not a name!"]})
+    m, calls = fake_mojang(conn, {"alice": A})
+    check(world, conn, {}, m)
+    assert flags(conn) == {A: 0}
+    assert conn.execute("SELECT name FROM players WHERE uuid=?", (A,)).fetchone() == ("Alice",)
 
 
 def test_unteamed_named_player_is_bot(world, conn):
