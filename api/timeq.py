@@ -1,0 +1,113 @@
+"""Time engine over the change-only history tables.
+
+Value at T = latest row with at <= T per (server, uuid, key). History is sparse,
+so `at` is never lower-bounded: a player whose last change predates the range
+still has a value at its start.
+"""
+from dataclasses import dataclass
+from typing import Optional
+
+from api.scope import (Scope, scoreboard_filter_sql, stat_filter_sql)
+
+PRESETS = {"1d": 86400, "1w": 604800, "1m": 2592000, "6m": 15724800,
+           "1y": 31536000}
+
+
+@dataclass
+class Range:
+    from_ts: int
+    to_ts: int
+    effective_from: int
+    is_now: bool
+
+
+def tracking_start(conn, scope: Scope) -> Optional[int]:
+    vals = []
+    for s in scope.servers:
+        row = conn.execute("SELECT value FROM meta WHERE key=?",
+                           (f"tracking_started_at:{s}",)).fetchone()
+        if row and row[0] is not None:
+            vals.append(int(row[0]))
+    return min(vals) if vals else None
+
+
+def parse_range(conn, scope: Scope, range: Optional[str], from_: Optional[int],
+                to: Optional[int], now: int) -> Range:
+    start = tracking_start(conn, scope)
+    to_ts = now if to is None else int(to)
+    if range is not None:
+        if range == "all":
+            from_ts = start if start is not None else 0
+        elif range in PRESETS:
+            from_ts = to_ts - PRESETS[range]
+        else:
+            raise ValueError(f"bad range: {range!r}")
+    elif from_ is not None:
+        from_ts = int(from_)
+    else:
+        from_ts = start if start is not None else 0
+    if from_ts > to_ts:
+        raise ValueError("from must be <= to")
+    eff = from_ts if start is None else max(from_ts, start)
+    return Range(from_ts, to_ts, eff, to is None)
+
+
+def _sum(rows) -> dict:
+    out: dict = {}
+    for uuid, value in rows:
+        out[uuid] = out.get(uuid, 0) + value
+    return out
+
+
+def stat_values_at(conn, scope: Scope, include_bots: bool, category: str,
+                   key: str, ts: Optional[int]) -> dict:
+    frag, params = stat_filter_sql(scope, include_bots, "s")
+    if ts is None:
+        rows = conn.execute(
+            f"SELECT s.uuid, s.value FROM stat_current s WHERE s.category=? "
+            f"AND s.stat_key=? AND {frag}", [category, key, *params]).fetchall()
+        return _sum(rows)
+    rows = conn.execute(
+        f"SELECT s.uuid, s.value, MAX(s.at) FROM stat_snapshots s "
+        f"WHERE s.category=? AND s.stat_key=? AND s.at<=? AND {frag} "
+        f"GROUP BY s.server_key, s.uuid", [category, key, ts, *params]).fetchall()
+    return _sum((r[0], r[1]) for r in rows)
+
+
+def scoreboard_values_at(conn, scope: Scope, include_bots: bool, objective: str,
+                         ts: Optional[int]) -> dict:
+    if ts is None:
+        frag, params = scoreboard_filter_sql(scope, include_bots, "s", is_current=True)
+        rows = conn.execute(
+            f"SELECT s.participant_key, s.value FROM scoreboard_current s "
+            f"WHERE s.objective=? AND {frag}", [objective, *params]).fetchall()
+        return _sum(rows)
+    frag, params = scoreboard_filter_sql(scope, include_bots, "s")
+    rows = conn.execute(
+        f"SELECT s.uuid, s.value, MAX(s.at) FROM scoreboard_snapshots s "
+        f"WHERE s.objective=? AND s.at<=? AND s.uuid IS NOT NULL AND {frag} "
+        f"GROUP BY s.server_key, s.uuid", [objective, ts, *params]).fetchall()
+    return _sum((r[0], r[1]) for r in rows)
+
+
+def downsample(points, from_ts: int, to_ts: int, max_points: int = 500):
+    """Step-preserving: first point is (from_ts, value at from_ts); later points
+    keep the last value per time bucket. Result length <= max_points."""
+    pts = sorted(points)
+    v0 = 0
+    inside = []
+    for t, v in pts:
+        if t <= from_ts:
+            v0 = v
+        elif t <= to_ts:
+            inside.append((t, v))
+    first = (from_ts, v0)
+    if len(inside) + 1 <= max_points:
+        return [first] + inside
+    nb = max_points - 1
+    span = max(to_ts - from_ts, 1)
+    buckets: dict = {}
+    for t, v in inside:
+        b = min((t - from_ts) * nb // span, nb - 1)
+        buckets[b] = (t, v)
+    return [first] + [buckets[b] for b in sorted(buckets)]
