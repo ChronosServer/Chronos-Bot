@@ -143,3 +143,81 @@ CREATE TABLE IF NOT EXISTS dictionary_cache (
     fetched_at   INTEGER NOT NULL,
     content_json TEXT NOT NULL
 );
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_milestones_unique ON milestones(server_key, uuid, category, stat_key, threshold);
+
+CREATE TABLE IF NOT EXISTS activity (
+    server_key  TEXT NOT NULL,
+    at          INTEGER NOT NULL,
+    uuid        TEXT NOT NULL,
+    PRIMARY KEY (server_key, at, uuid)
+);
+CREATE INDEX IF NOT EXISTS idx_activity_uuid ON activity(uuid, at DESC);
+
+CREATE TABLE IF NOT EXISTS stat_totals (
+    server_key     TEXT NOT NULL,
+    category       TEXT NOT NULL,
+    stat_key       TEXT NOT NULL,
+    at             INTEGER NOT NULL,
+    total          INTEGER NOT NULL,
+    total_no_bots  INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_stat_totals ON stat_totals(server_key, category, stat_key, at DESC);
+
+CREATE TABLE IF NOT EXISTS stat_totals_current (
+    server_key     TEXT NOT NULL,
+    category       TEXT NOT NULL,
+    stat_key       TEXT NOT NULL,
+    total          INTEGER NOT NULL,
+    total_no_bots  INTEGER NOT NULL,
+    PRIMARY KEY (server_key, category, stat_key)
+);
+
+CREATE TABLE IF NOT EXISTS scoreboard_totals (
+    server_key  TEXT NOT NULL,
+    objective   TEXT NOT NULL,
+    at          INTEGER NOT NULL,
+    total       INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_scoreboard_totals ON scoreboard_totals(server_key, objective, at DESC);
+
+CREATE TABLE IF NOT EXISTS scoreboard_totals_current (
+    server_key  TEXT NOT NULL,
+    objective   TEXT NOT NULL,
+    total       INTEGER NOT NULL,
+    PRIMARY KEY (server_key, objective)
+);
+
+CREATE TABLE IF NOT EXISTS rivalries (
+    server_key   TEXT NOT NULL,
+    category     TEXT NOT NULL,
+    stat_key     TEXT NOT NULL,
+    uuid_a       TEXT NOT NULL,
+    uuid_b       TEXT NOT NULL,
+    gap          INTEGER NOT NULL,
+    gap_7d_ago   INTEGER,
+    computed_at  INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS meta (
+    key    TEXT PRIMARY KEY,
+    value  TEXT
+);
+
+CREATE TABLE IF NOT EXISTS spotlight_candidates (
+    trigger      TEXT NOT NULL,
+    server_key   TEXT,
+    uuid         TEXT,
+    category     TEXT,
+    stat_key     TEXT,
+    value        INTEGER,
+    detail_json  TEXT,
+    computed_at  INTEGER NOT NULL
+);
+
+-- lookup_key is 'name:<lower>' or 'uuid:<uuid>'; result NULL = not found/failed
+CREATE TABLE IF NOT EXISTS name_lookups (
+    lookup_key  TEXT PRIMARY KEY,
+    result      TEXT,
+    checked_at  INTEGER NOT NULL
+);

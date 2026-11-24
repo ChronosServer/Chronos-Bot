@@ -29,6 +29,10 @@ import nbt.nbt as nbt
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 REPO_ROOT = SCRIPT_DIR.parent
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+from sql.migrations import migrate  # noqa: E402
 SCHEMA_PATH = REPO_ROOT / "sql" / "schema.sql"
 CONFIG_PATH = REPO_ROOT / "config.json"
 
@@ -85,11 +89,12 @@ def connect_db(db_path):
     conn.execute("PRAGMA foreign_keys = ON")
     with open(SCHEMA_PATH, "r", encoding="utf-8") as f:
         conn.executescript(f.read())
+    migrate(conn)
     return conn
 
 
-def sync_servers_table(conn, cfg):
-    now = int(time.time())
+def sync_servers_table(conn, cfg, now=None):
+    now = int(time.time()) if now is None else now
     for key, s in cfg["stats_tracking"]["servers"].items():
         world_path, _ = server_paths(cfg, key)
         provisioned = 1 if is_provisioned(world_path) else 0
@@ -486,32 +491,35 @@ def run_team_check(conn, server_key, world_path, now):
 # Orchestration
 # --------------------------------------------------------------------------
 
-def record_run(conn, server_key, kind, ok, error, entries_read, rows_written, duration_ms):
+def record_run(conn, server_key, kind, ok, error, entries_read, rows_written, duration_ms,
+               now=None):
     conn.execute(
         """
         INSERT INTO snapshot_runs (at, server_key, kind, ok, error, entries_read, rows_written, duration_ms)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         """,
-        (int(time.time()), server_key, kind, 1 if ok else 0, error, entries_read, rows_written, duration_ms),
+        (int(time.time()) if now is None else now, server_key, kind, 1 if ok else 0, error, entries_read, rows_written, duration_ms),
     )
     conn.commit()
 
 
-def run_once():
-    cfg = load_config()
+def run_once(config=None, now_fn=time.time, dictionary=None, mojang_fetch=None):
+    # mojang_fetch is accepted for forward-compat (wired in a later task).
+    cfg = config if config is not None else load_config()
     tracking = cfg["stats_tracking"]
     db_path = tracking["db_path"]
     excluded = set(tracking.get("excluded_servers", []))
     version = cfg.get("server", {}).get("minecraft_version", "unknown")
 
     conn = connect_db(db_path)
-    sync_servers_table(conn, cfg)
+    sync_servers_table(conn, cfg, int(now_fn()))
 
-    try:
-        dictionary = fetch_dictionary(conn, version)
-    except Exception as e:
-        print(f"[warn] dictionary unavailable this run ({e}); vanilla-mirror dedup skipped")
-        dictionary = {}
+    if dictionary is None:
+        try:
+            dictionary = fetch_dictionary(conn, version)
+        except Exception as e:
+            print(f"[warn] dictionary unavailable this run ({e}); vanilla-mirror dedup skipped")
+            dictionary = {}
 
     for key, s in tracking["servers"].items():
         if key in excluded:
@@ -529,7 +537,7 @@ def run_once():
         server_root = cfg.get("server", {}).get(f"{key}_path")
         usercache = load_usercache(server_root) if server_root else {}
 
-        now = int(time.time())
+        now = int(now_fn())
 
         if s.get("track_stats", True):
             t0 = time.time()
@@ -537,11 +545,11 @@ def run_once():
                 result = run_stats_snapshot(conn, key, world_path, usercache, now)
                 record_run(conn, key, "stats", True, None,
                            result["entries_read"], result["rows_written"],
-                           int((time.time() - t0) * 1000))
+                           int((time.time() - t0) * 1000), now=now)
                 print(f"[{key}] stats: ok, read={result['entries_read']} written={result['rows_written']}")
             except Exception as e:
                 record_run(conn, key, "stats", False, str(e), None, None,
-                           int((time.time() - t0) * 1000))
+                           int((time.time() - t0) * 1000), now=now)
                 print(f"[{key}] stats: ERROR {e}")
 
         if s.get("track_scoreboards", True):
@@ -550,11 +558,11 @@ def run_once():
                 result = run_scoreboard_snapshot(conn, key, world_path, usercache, dictionary, now)
                 record_run(conn, key, "scoreboards", True, None,
                            result["entries_read"], result["rows_written"],
-                           int((time.time() - t0) * 1000))
+                           int((time.time() - t0) * 1000), now=now)
                 print(f"[{key}] scoreboards: ok, read={result['entries_read']} written={result['rows_written']}")
             except Exception as e:
                 record_run(conn, key, "scoreboards", False, str(e), None, None,
-                           int((time.time() - t0) * 1000))
+                           int((time.time() - t0) * 1000), now=now)
                 print(f"[{key}] scoreboards: ERROR {e}")
 
         if key == "smp":
@@ -562,11 +570,11 @@ def run_once():
             try:
                 run_team_check(conn, key, world_path, now)
                 record_run(conn, key, "team_check", True, None, None, None,
-                           int((time.time() - t0) * 1000))
+                           int((time.time() - t0) * 1000), now=now)
                 print(f"[{key}] team_check: ok")
             except Exception as e:
                 record_run(conn, key, "team_check", False, str(e), None, None,
-                           int((time.time() - t0) * 1000))
+                           int((time.time() - t0) * 1000), now=now)
                 print(f"[{key}] team_check: ERROR {e}")
 
     conn.close()
