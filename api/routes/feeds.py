@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, Request
 
 from api import db, timeq
 from api.cache import cached
-from api.rivals import closing_stats
+from api.rivals import closing_stats, window_floor
 from api.scope import resolve_scope, stat_filter_sql
 from api.settings import api_settings
 
@@ -99,14 +99,14 @@ def rivalries(request: Request, conn=Depends(db.get_db), scope: str = "all",
         f"JOIN ra ON ra.rid=r.rowid JOIN rb ON rb.rid=r.rowid "
         f"LEFT JOIN players pa ON pa.uuid=r.uuid_a LEFT JOIN players pb ON pb.uuid=r.uuid_b "
         f"WHERE {fa} AND {fb}{usql}", [*pa, *pb, *up]).fetchall()
-    starts = {}
+    starts, points = {}, {}
     out = []
     for sk, cat, key, a, an, b, bn, gap, g7, at in rows:
         if sk not in starts:
             m = conn.execute("SELECT value FROM meta WHERE key=?",
                              (f"tracking_started_at:{sk}",)).fetchone()
             starts[sk] = int(m[0]) if m and m[0] is not None else None
-        closing, overtake = closing_stats(gap, g7, at, starts[sk])
+        closing, overtake = closing_stats(gap, g7, at, window_floor(conn, sk, at, starts[sk], points))
         out.append({"server_key": sk, "category": cat, "key": key,
                     "a": {"uuid": a, "name": an}, "b": {"uuid": b, "name": bn},
                     "gap": gap, "gap_7d_ago": g7, "closing_per_day": closing,

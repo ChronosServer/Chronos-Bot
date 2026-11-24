@@ -194,6 +194,7 @@ tables) → SQLite → `api/` (FastAPI, read-only) → nginx `/api/stats/*` → 
 | `api/settings.py` | **the only place tuning values live**: defaults, deep merge, validation of `stats_tracking`; `load_settings()`, `DEFAULTS`, `api_settings()` |
 | `api/scope.py` | **the only place participant rules live** (scopes, SMP bot rule, fake/unresolved, mirrors) as SQL fragments; derive imports it too |
 | `api/timeq.py` | ranges (presets from `api.range_presets`, default `1d/1w/1m/6m/1y`, plus `all`; from/to), clamp to tracking start, value-at-T reads, downsampling |
+| `api/history.py` | gap snapping: history points per server (meta), `snap_from` — a range starting before live tracking starts at the next real observation |
 | `api/cache.py` | `@cached`: key = path + declared params + data_version; ETag (includes a settings fingerprint)/304; LRU bounds from `api.cache_*` (default ≤128 MiB, bodies >8 MiB not cached) |
 | `api/db.py` | read-only connections; `data_version` = live `MAX(snapshot_runs.id)`; `REQUIRED_INDEXES` startup check |
 | `api/routes/*` | meta, leaderboard, series/totals, player/compare, search/keys, feeds (milestones, firsts, rivalries, activity, spotlight) |
@@ -225,6 +226,16 @@ tables) → SQLite → `api/` (FastAPI, read-only) → nginx `/api/stats/*` → 
   Ranges reaching earlier are clamped and responses carry `effective_from`. After a backup
   import it moves back to the oldest backup, so it (and `effective_from`) can be years
   before 2026-11-24 (live tracking start). Never hardcode that date in docs or the website.
+- **Gap snapping** (`api/history.py`, the one place the rule lives): before a server's
+  first live run L, history exists only at import points. A range start `from_ts < L`
+  becomes the smallest point ≥ `from_ts` among {import points, L} (the next real
+  observation, never a stale earlier backup); `from_ts ≥ L` is unchanged (dense);
+  before the first point it's the tracking-start clamp's job. Multi-server scopes take the
+  max of the servers' snapped starts. derive writes the points to meta
+  (`history_points:<server>` JSON list = imports + L, `live_started_at:<server>`);
+  `timeq.parse_range` and the rivalry window (`api/rivals.window_floor`) read them, and
+  `derive_common.clamped_ago` (spotlight mover baseline, rivalry `gap_7d_ago`) computes
+  them from `snapshot_runs`. Servers without imports: points = [L], i.e. as before.
 - **Firsts/milestones that predate tracking are `earliest_known=1`** ("earliest known
   holder" / "already had"), never given a fake date. Seeding happens once (meta
   `seeded_achievements`) and on each new server's first real run. Seeded firsts don't

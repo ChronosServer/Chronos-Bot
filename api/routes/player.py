@@ -5,7 +5,7 @@ from fastapi.responses import JSONResponse
 
 from api import db, timeq
 from api.cache import cached
-from api.rivals import closing_stats
+from api.rivals import closing_stats, window_floor
 from api.routes.series import build_series
 from api.scope import resolve_scope, scoreboard_filter_sql, stat_filter_sql
 from api.settings import api_settings
@@ -80,14 +80,14 @@ def _rivals(conn, sc, include_bots, uuid):
         f"LEFT JOIN players p ON p.uuid = o.uuid WHERE {frag} "
         f"ORDER BY r.server_key, r.category, r.stat_key",
         [uuid, uuid, uuid, *fp]).fetchall()
-    starts = {}
+    starts, points = {}, {}
     out = []
     for sk, cat, key, a, b, gap, g7, at, oname in rows:
         if sk not in starts:
             m = conn.execute("SELECT value FROM meta WHERE key=?",
                              (f"tracking_started_at:{sk}",)).fetchone()
             starts[sk] = int(m[0]) if m and m[0] is not None else None
-        closing, overtake = closing_stats(gap, g7, at, starts[sk])
+        closing, overtake = closing_stats(gap, g7, at, window_floor(conn, sk, at, starts[sk], points))
         out.append({"server_key": sk, "category": cat, "stat_key": key,
                     "uuid_a": a, "uuid_b": b,
                     "other_uuid": b if a == uuid else a, "other_name": oname,

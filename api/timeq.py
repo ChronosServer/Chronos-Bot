@@ -9,6 +9,7 @@ from typing import Optional
 
 from fastapi import Query
 
+from api.history import snap_scope
 from api.scope import (Scope, scoreboard_filter_sql, stat_filter_sql)
 from api.settings import api_settings
 
@@ -66,6 +67,9 @@ def parse_range(conn, scope: Scope, range: Optional[str], from_: Optional[int],
     if from_ts > to_ts:
         raise ValueError("from must be <= to")
     eff = from_ts if start is None else max(from_ts, start)
+    # Before live tracking a server's history is sparse (import points only):
+    # start at the next real observation, never a stale earlier backup.
+    eff = max(eff, snap_scope(conn, scope.servers, from_ts))
     return Range(from_ts, to_ts, eff, to is None)
 
 

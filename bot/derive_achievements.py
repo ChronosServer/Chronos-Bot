@@ -18,7 +18,7 @@ import time
 from derive_common import (  # noqa: F401  (DatabaseBusy/BUSY_MESSAGE re-exported)
     BUSY_MESSAGE, BUSY_TIMEOUT_S, DEFAULTS, SCOREBOARD_CATEGORY, TICKS_PER_HOUR,
     DatabaseBusy, _servers, begin_immediate, counted_scoreboard, counted_stats, days_s,
-    stat_value_at_sql, tracking_start,
+    history_points, stat_value_at_sql, tracking_start,
 )
 
 SEED_MARKER = "seeded_achievements"
@@ -326,12 +326,7 @@ def _derive_badges(conn, run_at, settings=None):
 
 def _points(conn, key):
     """Imported backup dates plus the first live stats run, oldest first."""
-    rows = conn.execute(
-        "SELECT DISTINCT at FROM snapshot_runs WHERE server_key=? AND ok=1 AND entries_read>0 "
-        "AND (kind='import' OR (kind='stats' AND at=(SELECT MIN(at) FROM snapshot_runs "
-        " WHERE server_key=? AND kind='stats' AND ok=1 AND entries_read>0))) ORDER BY at",
-        (key, key))
-    return [r[0] for r in rows]
+    return history_points(conn, key)[0]
 
 
 def rebuild_from_points(conn, server_key, settings, *, lock_timeout_s=BUSY_TIMEOUT_S):

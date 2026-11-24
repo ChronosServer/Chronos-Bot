@@ -13,6 +13,7 @@ from api.scope import (  # noqa: E402,F401
     Scope, counted_uuids, scoreboard_filter_sql, stat_filter_sql,
 )
 from api.settings import DAY, DEFAULTS, days_s  # noqa: E402,F401
+from api.history import snap_from  # noqa: E402
 
 # Tuning values come from api.settings (config.json stats_tracking); these
 # are fixed facts, not tuning.
@@ -54,6 +55,21 @@ def tracking_start(conn, server_key):
         "AND ok=1 AND entries_read > 0", (server_key,)).fetchone()[0]
 
 
+def history_points(conn, server_key):
+    """(points, live): the server's import points plus its first live stats
+    run L, sorted; live = L (None before any live run). Same qualifying
+    runs as tracking_start (ok=1, entries_read > 0)."""
+    live = conn.execute(
+        "SELECT MIN(at) FROM snapshot_runs WHERE server_key=? AND kind='stats' "
+        "AND ok=1 AND entries_read > 0", (server_key,)).fetchone()[0]
+    points = {r[0] for r in conn.execute(
+        "SELECT DISTINCT at FROM snapshot_runs WHERE server_key=? AND kind='import' "
+        "AND ok=1 AND entries_read > 0", (server_key,))}
+    if live is not None:
+        points.add(live)
+    return sorted(points), live
+
+
 def counted_stats(key, alias):
     """WHERE fragment: counted players' rows on one server (any table with
     server_key + uuid columns)."""
@@ -70,11 +86,13 @@ def counted_scoreboard(key, alias, is_current):
 
 
 def clamped_ago(conn, key, run_at, seconds):
-    """run_at - seconds, clamped to tracking start (None if never tracked)."""
+    """run_at - seconds, clamped to tracking start (None if never tracked),
+    then snapped forward to the next history point when it falls in the
+    sparse span before live tracking (api.history.snap_from)."""
     start = tracking_start(conn, key)
     if start is None:
         return None
-    return max(run_at - seconds, start)
+    return snap_from(max(run_at - seconds, start), *history_points(conn, key))
 
 
 def stat_value_at_sql(alias, uuid_col="uuid"):

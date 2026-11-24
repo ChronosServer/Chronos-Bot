@@ -57,7 +57,9 @@ frontend only.
   (leaderboard/feed/search page sizes, compare player and key counts, series caps) and
   the badge thresholds: read them from `/meta.settings`, never hardcode them.
 - **Pre-tracking data:** honour `effective_from`. Show "since tracking began
-  (<date>)", formatted from `effective_from`, when a range is clamped. History may
+  (<date>)" / "since <date>", formatted from `effective_from`, when a range is clamped
+  or snapped forward to the next data point (a window starting before live tracking is
+  measured from the next backup or the first live snapshot). History may
   reach back to **2021**, because old world backups get imported on the server, so
   never hardcode 24 Nov 2026, and make the range picker and graphs cope with years of
   coarse history (few points between backups).

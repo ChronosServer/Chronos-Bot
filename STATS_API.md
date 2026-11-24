@@ -48,6 +48,17 @@ are backend config: build the range picker from `/meta.settings.range_presets`
   **`effective_from`** says the real start. Show "since tracking began (<date>)", with
   the date formatted from `effective_from` (or `tracking_started_at`), whenever
   `effective_from` > the requested start.
+- **`effective_from` may also snap forward to the next data point before live
+  tracking.** Before a server's first live snapshot its history exists only at imported
+  backups, months apart. A window starting in that sparse span is measured from the next
+  real observation (the next backup, or the first live snapshot), never from an older
+  backup, so "last week" right after the import is the gain since the first live
+  snapshot, not years of play. Example: backups 2021-02 and 2021-09, live since
+  2026-11-24; `range=1w` on 2026-11-28 gives `effective_from` = 2026-11-24, and
+  `from=2021-05-01` gives `effective_from` = the 2021-09 backup. A multi-server scope
+  uses the latest of its servers' snapped starts. Windows starting after the first live
+  snapshot are never moved. Show the same "since <date>" note whenever
+  `effective_from` > the requested start.
 - A window that ends before tracking began returns empty rows.
 - Between backups (and between the last backup and the first live snapshot) history has
   only a few points, so graphs over imported periods are coarse step lines.

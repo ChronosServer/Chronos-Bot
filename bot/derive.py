@@ -6,6 +6,7 @@ mirrors, unresolved) come from api.scope -- never reimplemented here.
 Only provisioned=1 servers are iterated (the 'all' pseudo row is 0).
 """
 import hashlib
+import json
 import sys
 from pathlib import Path
 
@@ -14,7 +15,7 @@ if str(BOT_DIR) not in sys.path:
     sys.path.insert(0, str(BOT_DIR))
 
 from derive_common import (  # noqa: E402,F401  (re-exported for callers/tests)
-    DEFAULTS, Scope, _servers, counted_uuids,
+    DEFAULTS, Scope, _servers, counted_uuids, history_points,
     scoreboard_filter_sql, stat_filter_sql, tracking_start,
 )
 from derive_achievements import derive_badges, derive_firsts, derive_milestones  # noqa: E402
@@ -341,6 +342,12 @@ def _write_meta(conn, run_at):
         start = tracking_start(conn, key)
         if start is not None:
             meta[f"tracking_started_at:{key}"] = str(start)
+        # api.history: where history is sparse (imports) vs dense (live)
+        points, live = history_points(conn, key)
+        if points:
+            meta[f"history_points:{key}"] = json.dumps(points)
+        if live is not None:
+            meta[f"live_started_at:{key}"] = str(live)
     conn.executemany(
         "INSERT INTO meta (key, value) VALUES (?, ?) "
         "ON CONFLICT(key) DO UPDATE SET value=excluded.value", list(meta.items()))
