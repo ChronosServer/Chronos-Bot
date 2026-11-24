@@ -2,7 +2,11 @@
 
 ## Description
 
-The bot features various different commands that can display information about the server and more. 
+A Discord bot for the Chronos Minecraft SMP. It has commands that display and manage the
+servers (see [Commands](#commands)), background jobs that feed the Chronos website, and a
+stats subsystem (see [Stats tracking](#stats-tracking-website-stats-pages)) that stores
+player stat and scoreboard history in SQLite and serves it to the website through a
+read-only API.
 
 The bot is still a work in progress, some commands may not fully function or they may contain issues.
 
@@ -11,7 +15,8 @@ The bot is still a work in progress, some commands may not fully function or the
 * Any os, Linux & Windows run scripts are included
 * Python 3.12 or newer (developed on 3.13, the live server runs 3.14)
 * discord.py, rcon, psutil, nbt and the rest of `requirements.txt`
-* Install requirements with running $ pip install -r requirements.txt
+* Install requirements with running $ pip install -r requirements.txt (the tests also
+  need `requirements-dev.txt`, see below)
 * The bot no longer uses `nest_asyncio` (it breaks on Python 3.14); `main.py` starts the client with `client.start()` inside `asyncio.run(main())`
 
 ### Installing
@@ -35,23 +40,38 @@ section:
   minutes via `deploy/systemd/chronos-stats-snapshot.timer`.
 * After each snapshot, `bot/derive.py` works out activity, server totals, milestones,
   firsts, badges, rivalries and the stat spotlight.
+* **Tuning** lives in the `stats_tracking` block of `config.json`: tracked servers, bot
+  filtering, milestone and badge thresholds, rivalry and spotlight rules, Mojang lookup
+  limits, and the API's date presets, limits and cache. Every key is optional and defaults
+  to the built-in value in `api/settings.py`; a bad value stops the snapshot and the API
+  with an error naming the key. The API shows the values the website needs under
+  `/meta.settings`.
 * `api/` is a read-only FastAPI service (`deploy/systemd/chronos-stats-api.service`,
   127.0.0.1:8765) that nginx exposes at `/api/stats/` (`deploy/nginx/`).
 * **Setting up the database:** see [docs/STATS_DATABASE.md](docs/STATS_DATABASE.md).
   It covers configuration, first setup, upgrades, health checks, backup and reset.
 * **Importing old world backups** into the stats history:
-  `tools/import_backups.py`, see [tools/README.md](tools/README.md).
-* `STATS_PLAN.md` is the feature scope, `STATS_API.md` the HTTP contract the website
-  builds against, and `CLAUDE.md` the full technical notes (rules, deploy order).
+  `tools/import_backups.py`, see [tools/README.md](tools/README.md). It adds the backups
+  as earlier points on the timeline, so graphs, totals and firsts reach back years;
+  firsts and milestones that fall between two points are marked `approximate`.
+* `dictionaries/` holds every-scoreboard's `dictionary-<version>.json` files (1.16 to
+  26.2, except 1.19.1, 1.19.3 and 1.19.4). They list the scoreboard objectives that just
+  copy vanilla stats, which the snapshot and the import skip. The snapshot reads
+  `dictionaries/` first and only fetches from GitHub when a version is missing.
+* Docs: [docs/STATS_DATABASE.md](docs/STATS_DATABASE.md) (operator guide),
+  [tools/README.md](tools/README.md) (backup import), [STATS_API.md](STATS_API.md) (the
+  HTTP contract the website builds against), `STATS_PLAN.md` (feature scope) and
+  `CLAUDE.md` (full technical notes: rules, deploy order).
 
-Run the tests with:
+Run the tests with (Python 3.12 or newer):
 
     pip install -r requirements.txt -r requirements-dev.txt
     python -m pytest tests -q
 
 When deploying the API on a server that already runs the bot, install only the three
 API packages (`fastapi`, `uvicorn[standard]`, `orjson`) and run `bot/snapshot.py` once
-before starting the API. See `CLAUDE.md`.
+before starting the API. Never run `pip install -r requirements.txt` on the server. See
+`CLAUDE.md`.
 
 ## Help
 

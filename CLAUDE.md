@@ -12,7 +12,7 @@ pinning to 3.12/3.13 rather than chasing each incompatibility.
 cmp4, mirror, snapshot, building, building2, tour, public). `server.*_rcon_port` per
 server, shared `rcon_pass`. `server.website_path` = where this bot writes JSON for
 the website to serve (`<website_path>/data/*.json`). `server.minecraft_version` is
-used to pick `dictionary-<version>.json`.
+used to pick `dictionaries/dictionary-<version>.json`.
 
 **mirror and tour are near-duplicates of smp** (confirmed: same stat distributions,
 same fake-player names, nearly identical scoreboard objective counts) — never track
@@ -128,7 +128,8 @@ Three real bugs were found and fixed here by actually running against production
 3. Stat files are under `players/stats/`, not `stats/` directly, and
    `scoreboard.dat` is under `data/minecraft/`, not `data/` directly.
 
-`stats_tracking` config block (add to `config.json`, not yet present by default):
+`stats_tracking` config block (the repo's `config.json` carries every key at its default;
+minimal form shown, everything else is optional):
 ```json
 "stats_tracking": {
   "db_path": "/opt/chronos/stats/chronos-stats.db",
@@ -155,6 +156,11 @@ object (attribute access): the snapshot builds it each run and passes it to
 literals to bot/derive*, bot/mojang.py, bot/snapshot.py or api/ — add a key with a
 default. Full key list and semantics: `docs/STATS_DATABASE.md` section 1.
 
+The repo's `config.json` has secrets as placeholders. On the live server the owner's
+config.json (token, rcon_pass) is never overwritten: only the `stats_tracking` block is
+merged in. Validate it with `python -c "import sys,json; sys.path[:0]=['.'];
+from api.settings import load_settings; load_settings(json.load(open('config.json'))['stats_tracking'])"`.
+
 Real `config.json` today: `excluded_servers: ["mirror","tour","snapshot","building2"]`;
 tracked servers `smp` (group smp), `cmp`, `cmp2`, `cmp3`, `cmp4`, `building` (all group
 cmp), all with stats + scoreboards on.
@@ -165,9 +171,11 @@ scoreboards 7,697 — the ~126k skipped are vanilla mirrors, 9,223 of 9,346 obje
 run 2 with no in-game change wrote 0 everywhere, run 3 after real play wrote smp 61 /
 13, cmp 30, others 0. Then put on a 15-min systemd timer
 (`deploy/systemd/chronos-stats-snapshot.{service,timer}`, installed + enabled on the
-server). Live DB then: ~3.3k players, ~263k stat_current rows, ~10k scoreboard rows.
-The live DB also has early `ok=1` stats runs with `entries_read=0` (from before the
-path fixes) — tracking start must ignore them (see below).
+server, currently running the OLD `snapshot.py` until the branch is deployed). Live DB:
+~3.3k players, ~263k stat_current rows, ~10k scoreboard rows, history since 2026-11-24.
+It also has early `ok=1` stats runs with `entries_read=0` (from before the path fixes)
+— tracking start must ignore them (see below). The API, derive step and import tool are
+verified by tests (326) only; they have not run on the live server yet.
 
 ### What the backend is (branch `stats-api`, not merged/pushed yet)
 Pipeline: timer → `bot/snapshot.py` (history, change-only) → `bot/derive.py` (derived
@@ -184,9 +192,12 @@ tables) → SQLite → `api/` (FastAPI, read-only) → nginx `/api/stats/*` → 
 | `api/cache.py` | `@cached`: key = path + declared params + data_version; ETag (includes a settings fingerprint)/304; LRU bounds from `api.cache_*` (default ≤128 MiB, bodies >8 MiB not cached) |
 | `api/db.py` | read-only connections; `data_version` = live `MAX(snapshot_runs.id)`; `REQUIRED_INDEXES` startup check |
 | `api/routes/*` | meta, leaderboard, series/totals, player/compare, search/keys, feeds (milestones, firsts, rivalries, activity, spotlight) |
-| `sql/schema.sql`, `sql/migrations.py` | schema (CREATE IF NOT EXISTS) then migrations by `PRAGMA user_version` (now 2) |
+| `sql/schema.sql`, `sql/migrations.py` | schema (CREATE IF NOT EXISTS) then migrations by `PRAGMA user_version` (now 3: v3 adds `approximate` on firsts/milestones and the `imports` table) |
+| `tools/` | `import_backups.py` (old world backups into history), `stat_renames.json` (old->new stat keys, editable), `README.md` (operator guide) |
+| `dictionaries/` | bundled every-scoreboard `dictionary-<version>.json`, 1.16-26.2 (33 files; 1.19.1/.3/.4 missing); mirror-objective lists for the snapshot and the import |
 | `deploy/` | systemd units (snapshot, timer, api) + nginx snippet |
-| `tests/` | pytest, 252 tests, synthetic worlds built through the real snapshot write path, no network; tests never read the repo's config.json (autouse fixture; `api_config` writes one) |
+| `tests/` | pytest, 326 tests, synthetic worlds built through the real snapshot write path, no network; tests never read the repo's config.json (autouse fixture; `api_config` writes one) |
+| `STATS_PLAN.md` | agreed scope, hard rules, build order/status |
 | `STATS_API.md` | the HTTP contract for the website (copy into the website repo) |
 | `docs/STATS_DATABASE.md` | operator guide: config, first setup, upgrade, health checks, backup, reset |
 | `STATS_FRONTEND_PROMPT.md` | the kickoff prompt for Claude Code in the website repo |
@@ -206,7 +217,9 @@ tables) → SQLite → `api/` (FastAPI, read-only) → nginx `/api/stats/*` → 
   only as an FK target for `snapshot_runs.kind='derive'`). Multi-server scopes sum per
   player. A bot on SMP still counts on CMPs.
 - **Tracking start** per server = `MIN(at)` of stats **and import** runs with `ok=1 AND entries_read>0`.
-  Ranges reaching earlier are clamped and responses carry `effective_from`.
+  Ranges reaching earlier are clamped and responses carry `effective_from`. After a backup
+  import it moves back to the oldest backup, so it (and `effective_from`) can be years
+  before 2026-11-24 (live tracking start). Never hardcode that date in docs or the website.
 - **Firsts/milestones that predate tracking are `earliest_known=1`** ("earliest known
   holder" / "already had"), never given a fake date. Seeding happens once (meta
   `seeded_achievements`) and on each new server's first real run. Seeded firsts don't
@@ -234,9 +247,14 @@ tables) → SQLite → `api/` (FastAPI, read-only) → nginx `/api/stats/*` → 
   earlier change-only history points (`snapshot_runs.kind='import'`, `imports` table);
   never writes `stat_current`/`scoreboard_current`. Old keys are mapped through
   `tools/stat_renames.json` (editable data).
-- `dictionaries/` bundles every-scoreboard's `dictionary-<version>.json` for 1.16–26.2.
-  The import skips the mirror names of all of them, and `fetch_dictionary` prefers the
-  local file.
+- `dictionaries/` bundles every-scoreboard's `dictionary-<version>.json` for 1.16–26.2
+  (not 1.19.1/.3/.4). The import skips the mirror names of all of them (dry run should
+  show ~0 "probable mirrors"), and `fetch_dictionary` prefers the local file over GitHub.
+- Run it on the server by hand with the timer + service stopped (it gives up after 5 s on
+  a busy DB), after at least one live snapshot exists; `--dry-run` first. It makes
+  `pre-import-<UTC stamp>.db` next to the DB before writing (undo = restore it). Refuses
+  backups dated on/after the first live snapshot. `--rebuild-only` reruns just the rebuild.
+  No activity history is imported (heatmap/pulse/active badges start at deploy).
 - **`approximate=1`** on firsts/milestones: crossed between two points (backup→backup or
   last backup→first live run), dated at the later point, shown as "by <date>". Distinct
   from `earliest_known=1` (already true at the oldest point, no date). Approximate firsts
@@ -250,19 +268,31 @@ tables) → SQLite → `api/` (FastAPI, read-only) → nginx `/api/stats/*` → 
   (backup-only) counts 0 from then on, so backfilled totals match the live recompute. This
   is a no-op without imports. Per-player history is untouched.
 
-### Deploy (not done yet — commands are in `TEMP_INFO.md`)
-Push `stats-api` → on server: checkout → `pip install` **only** fastapi, uvicorn[standard],
-orjson (pins in requirements.txt; **never `pip install -r requirements.txt` on the
-server** — it re-pins the bot and re-adds nest_asyncio) → stop timer + in-flight
-snapshot service → run `bot/snapshot.py` once by hand (migrations, totals backfill,
-seeding ≈20–60 s) → start timer → install + start `chronos-stats-api.service` → add the
-nginx block inside the existing `server {}` next to `/api/status` → `nginx -t && reload`.
+### Deploy (not done yet — step-by-step runbook for the live server is in `TEMP_INFO.md`)
+Order, on the live server (Debian, root, repo `/opt/chronos/Chronos-Bot`, Python
+`/opt/python/bin/python3`):
+1. Get the code there: the owner normally copies the changed files with WinSCP (never
+   overwriting the server's `config.json` or anything in `/opt/chronos/stats/`); `git pull`
+   works too but a locally modified tracked `config.json` blocks it (stash/re-apply).
+2. Merge ONLY the `stats_tracking` block into the server's `config.json` and validate it
+   with `load_settings` (see above).
+3. `pip install` **only** fastapi, uvicorn[standard], orjson (pins in requirements.txt;
+   **never `pip install -r requirements.txt` on the server** — it re-pins the bot and
+   re-adds nest_asyncio).
+4. Stop the snapshot timer + in-flight service, run `bot/snapshot.py` once by hand
+   (migrations to v3, totals backfill, seeding, about 20-60 s), start the timer.
+5. Install + start `chronos-stats-api.service`; add the nginx block inside the existing
+   `server {}` next to `/api/status`; `nginx -t && reload`; curl checks.
+6. Backup import: stop timer + service, `tools/import_backups.py --server smp --dry-run`
+   on the SMP backups (1.16/1.17/1.18/1.20/1.21), then the real run, then start the timer.
+   The API can keep running. Then check `/meta.tracking_started_at.smp` moved back.
+7. The `stats-api` branch is not pushed to origin yet — push before any `git pull` deploy.
 
 ### Working with the owner
 The owner can't copy/paste reliably from the server terminal: put server commands in
 `TEMP_INFO.md` (untracked scratch, never commit) and have them paste output at the
 bottom. No `sqlite3` CLI on the server — use `python3 -c "import sqlite3..."`.
-Local tests: `python -m pip install pytest httpx nbt fastapi "uvicorn[standard]" orjson`
+Local tests: `pip install -r requirements.txt -r requirements-dev.txt`
 then `python -m pytest tests -q` (Windows, Python 3.13 locally; server is 3.14).
 
 ## Website nav plan (for when Stats ships)

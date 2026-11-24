@@ -14,8 +14,8 @@ frontend only.
 1. `STATS_PLAN.md`: the agreed scope, feature list and hard rules. Its decisions are
    final; don't relitigate them.
 2. `STATS_API.md`: the exact API contract. It covers every endpoint, response shape,
-   units, scopes/bots, time ranges, the `earliest_known` labelling, badge names and
-   spotlight sentence templates. Build against it exactly. Don't invent endpoints or
+   units, scopes/bots, time ranges, the `earliest_known` / `approximate` labelling, `/meta.settings`, badge names
+   and spotlight sentence templates. Build against it exactly. Don't invent endpoints or
    fields; if something you need is missing, tell me instead of working around it.
 3. This repo's `CLAUDE.md` and the existing pages/CSS/JS: the established Chronos
    design system (dark panels, teal accent, Syncopate / IBM Plex, scroll-reveal) and
@@ -35,7 +35,8 @@ frontend only.
   - the latest milestones and firsts.
 - **Explorer:** search or browse any vanilla stat, with autocomplete from `/search`
   (debounced, keyboard-navigable). Show a sortable leaderboard with player heads, and a
-  graph with timeframe 1d / 1w / 1m / 6m / 1y / custom.
+  graph with a timeframe picker (the presets from `/meta.settings.range_presets`, plus
+  `all` and custom).
 - **Scoreboards:** the same, for custom objectives (`kind=scoreboard`). Mark removed
   objectives as removed.
 - **Player (dossier):**
@@ -52,11 +53,18 @@ frontend only.
 
 **Rules that must hold:**
 - **Nothing hardcoded:** stat lists, objectives, servers and scopes all come from the
-  API. New stats must appear automatically.
+  API. New stats must appear automatically. So do the date presets, the limits
+  (leaderboard/feed/search page sizes, compare player and key counts, series caps) and
+  the badge thresholds: read them from `/meta.settings`, never hardcode them.
 - **Pre-tracking data:** honour `effective_from`. Show "since tracking began
-  (24 Nov 2026)" when a range is clamped.
+  (<date>)", formatted from `effective_from`, when a range is clamped. History may
+  reach back to **2021**, because old world backups get imported on the server, so
+  never hardcode 24 Nov 2026, and make the range picker and graphs cope with years of
+  coarse history (few points between backups).
 - **`earliest_known: 1` items** read as "earliest known holder" or "already reached
   before tracking", never as a dated first.
+- **`approximate: 1` items** (firsts and milestones) read as "by <date>", not as an
+  exact date.
 - **Graphs:** step lines (values are cumulative and only change at snapshots). Smooth
   and fast, with a sensible empty state while history is short.
 - **Speed:** a page should need one or two requests. Let the browser's HTTP cache work

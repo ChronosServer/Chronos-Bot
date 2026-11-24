@@ -108,13 +108,28 @@ aren't part of the same subsystem the way the six stats views are.
    smp stats wrote 61, smp scoreboards 13, cmp stats 30, everything else 0.
 3. ~~Wire `snapshot.py` into a scheduler~~ — systemd oneshot service + 15-min
    timer in `deploy/systemd/` (separate process, not a bot `tasks.loop`, to
-   keep the heavy NBT/SQLite work out of the bot).
-4. ~~Backend API layer (FastAPI or similar) reading the stats SQLite DB:
-   leaderboards, deltas over arbitrary timeframes, graph data, rankings,
-   heatmap data, rivalry/catching-up detection, milestone/firsts derivation
-   jobs.~~ — done (`api/`, `bot/derive.py`; see Chronos-Bot/CLAUDE.md).
-5. Website (NEXT): Stats frontend: the six pages listed above, in the established
+   keep the heavy NBT/SQLite work out of the bot). Installed and running on the
+   server (still the old `snapshot.py` until step 7).
+4. ~~Backend API layer (FastAPI) reading the stats SQLite DB: leaderboards,
+   deltas over arbitrary timeframes, graph data, rankings, heatmap data,
+   rivalry/catching-up detection, milestone/firsts derivation jobs.~~ — done
+   (`api/`, `bot/derive.py`; see Chronos-Bot/CLAUDE.md and `STATS_API.md`).
+5. ~~Settings in config: every tuning value (thresholds, limits, range presets,
+   cache) moved to `stats_tracking` in `config.json`, defaults in
+   `api/settings.py`, exposed to the website as `/meta.settings`.~~ — done.
+6. ~~Backup import tool: `tools/import_backups.py` reads old SMP world backups
+   (1.16 - 1.21) into history as earlier points; `dictionaries/` bundles the
+   every-scoreboard dictionaries; firsts and milestones between points are
+   marked `approximate`.~~ — done (guide: `tools/README.md`).
+7. Deployment and backup import on the server (PENDING): copy/pull the branch,
+   merge the `stats_tracking` block into the server's config.json, install the
+   3 API pins, run `snapshot.py` once by hand, start the API + nginx block, then
+   run the backup import (dry run first). Steps: `docs/STATS_DATABASE.md`,
+   `tools/README.md`.
+8. Website (NEXT): Stats frontend: the six pages listed above, in the established
    Chronos design system (dark panels, teal accent, Syncopate/IBM Plex,
    scroll-reveal — see website's CLAUDE.md), built from the Design/
    Engineering/Impeccable/taste/Emil-Kowalski skill set now installed in
-   Claude Code for this.
+   Claude Code for this. The kickoff prompt is `STATS_FRONTEND_PROMPT.md`; the
+   data contract is `STATS_API.md`. History may start years before 2026-11-24
+   once the backups are imported, so the UI reads dates and presets from the API.

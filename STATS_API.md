@@ -40,10 +40,17 @@ are backend config: build the range picker from `/meta.settings.range_presets`
 (name → seconds) plus `all`, which is always valid.
 - No `range`/`from` → **current totals** (`mode: "total"`). With `to` only → totals as of `to`.
 - With `range` or `from` → **the gain over that window** (`mode: "delta"`).
-- Tracking began on 2026-11-24, and nothing earlier exists. Windows that reach further
-  back are clamped, and the response's **`effective_from`** says the real start. Show
-  "since tracking began (24 Nov 2026)" whenever `effective_from` > the requested start.
+- History starts at the server's **tracking start**, `/meta.tracking_started_at[server]`.
+  Live tracking began on 2026-11-24, but once old world backups are imported
+  (`tools/import_backups.py`) the tracking start moves back to the oldest backup, so
+  `tracking_started_at` and `effective_from` can be **years earlier** (for example 2021). Never hardcode the 24 Nov 2026 date.
+- Windows that reach further back than the tracking start are clamped, and the response's
+  **`effective_from`** says the real start. Show "since tracking began (<date>)", with
+  the date formatted from `effective_from` (or `tracking_started_at`), whenever
+  `effective_from` > the requested start.
 - A window that ends before tracking began returns empty rows.
+- Between backups (and between the last backup and the first live snapshot) history has
+  only a few points, so graphs over imported periods are coarse step lines.
 
 ### Units (raw values → display)
 - `minecraft:custom` keys ending in `_one_cm` are **centimetres**: /100 = m, /100000 = km.
@@ -73,6 +80,9 @@ Load this once per page.
  "settings": {…}}
 ```
 - Use `last_run_at` for an "updated N min ago" label.
+- `tracking_started_at`: per server key, unix seconds of the oldest history point
+  (the oldest imported backup if there is one, else the first live snapshot). Servers
+  with no history yet are missing from the map.
 - `filters_bots: true` marks the server where the bot toggle matters (smp).
 - `scopes` is in menu order: `all`, single servers outside any group (`smp`), group
   scopes (`cmps`), then the servers inside groups.
@@ -223,9 +233,14 @@ The milestones feed. `limit` max `settings.limits.feed` (200).
 ### `GET /firsts?scope=all`
 `{"rows": [{"server_key","category","key","uuid","name","at","earliest_known","approximate"}, …]}`
 - `earliest_known: 1` → label it **"earliest known holder"**, not "first ever".
-- `earliest_known: 0` → a real, observed first, so show the date.
-- `approximate: 1` (on firsts and milestones, in `/firsts`, `/milestones` and `/player`) → the date comes
-  from an imported backup, so it is only known to lie before that backup: show "by <date>", not an exact date.
+- `earliest_known: 0` → an observed first, so show the date (but see `approximate`).
+- `approximate: 1` (on firsts and milestones, in `/firsts`, `/milestones` and `/player`)
+  → the thing happened *between two history points* (backup to backup, or the last
+  backup to the first live snapshot) and `at` is the **later** point. So it is only known
+  to have happened **by** that date: show "by <date>", not an exact date. It is a
+  different thing from `earliest_known: 1` (already true at the oldest point, no date).
+  Approximate firsts and milestones sort and count like dated ones. `approximate` is
+  always `0` until a backup has been imported.
 
 ### `GET /rivalries?scope=all&uuid=<optional>&limit=50`
 `limit` max `settings.limits.feed` (200).
@@ -246,8 +261,8 @@ The milestones feed. `limit` max `settings.limits.feed` (200).
 - Bin them in the **viewer's local time** to build:
   - the **activity heatmap** (day of week × hour);
   - the **server pulse clock** (24-hour radial: average players per hour of day).
-- Activity history starts at deploy time, so these fill in over the first weeks. Show
-  an empty state until then.
+- Activity history starts at deploy time (never from imported backups), so these fill in
+  over the first weeks. Show an empty state until then. `include_bots` applies here too.
 
 ### `GET /spotlight?scope=all&seen=<cat|key,…>`
 A random notable fact; it is never cached. Keep the last 10 shown `category|key` pairs
@@ -285,9 +300,13 @@ Verb per category:
 Badges are per server and are kept once earned. The display names below are the
 agreed names. Map them in the frontend (the backend only stores keys), by family and
 tier order. The thresholds in the keys and the "Meaning" column are the defaults; the
-live ones are in `/meta.settings.badges`. If a threshold is changed in the backend
-config, new badges get the new key (`firsts:20` instead of `firsts:10`) and already
-earned ones keep the old key, so map names by tier position, not by the number.
+live ones are in `/meta.settings.badges`. **Badge keys follow the configured
+thresholds**: if a threshold is changed in the backend config, new badges get the new key
+(`firsts:20` instead of `firsts:10`) and already earned ones keep the old key. So map
+names by family + tier position in the matching `/meta.settings.badges` list (the first
+`firsts` entry is Trailblazer, the second Pioneer, the third Founder), not by the number.
+A key whose number is no longer in the list is a retired tier: show it with the generic
+family name.
 
 | badge_key | Name | Meaning |
 |---|---|---|
@@ -317,4 +336,7 @@ Category nouns:
 - A public/export API.
 - Scoreboard correlation views.
 - Storage tracking.
-- Historic data from before 2026-11-24.
+- Activity (`/activity`, the heatmap and pulse clock) before the live snapshot was
+  deployed, even after a backup import. Backups are months apart and cannot say who was
+  online when.
+- Any history older than the oldest imported backup.
