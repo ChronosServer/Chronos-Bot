@@ -33,6 +33,7 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from sql.migrations import migrate  # noqa: E402
+from mojang import MojangClient, default_fetch  # noqa: E402
 SCHEMA_PATH = REPO_ROOT / "sql" / "schema.sql"
 CONFIG_PATH = REPO_ROOT / "config.json"
 
@@ -455,26 +456,39 @@ def run_scoreboard_snapshot(conn, server_key, world_path, usercache, dictionary,
 # SMP-only bot classification via team membership
 # --------------------------------------------------------------------------
 
-def run_team_check(conn, server_key, world_path, now):
+def run_team_check(conn, server_key, world_path, now, usercache, mojang=None):
     """SMP-only. In any team = real player, in no team = bot. This is
     classification, independent of whether scoreboard history is tracked --
     always runs for SMP regardless of track_scoreboards. Never applied to
-    CMPs (CMPs always include everyone, by explicit decision)."""
-    data = load_scoreboard_dat(world_path)
-    teams_tag = nbt_list(data, "Teams")
+    CMPs (CMPs always include everyone, by explicit decision).
 
-    teamed_names = set()
-    for team in teams_tag:
+    Only uuids holding an SMP stat file are classified (proof of a real
+    join). Team names with no known uuid are resolved via Mojang (cached)."""
+    data = load_scoreboard_dat(world_path)
+    teamed = set()
+    team_spelling = {}
+    for team in nbt_list(data, "Teams"):
         for player_tag in nbt_list(team, "Players"):
             name = player_tag.value if hasattr(player_tag, "value") else player_tag
             if name:
-                teamed_names.add(name)
+                teamed.add(str(name).lower())
+                team_spelling.setdefault(str(name).lower(), str(name))
 
-    # Need name->uuid; reuse usercache already loaded by caller via known names
-    # pulled from existing players table (best-effort; team tag only has names).
-    rows = conn.execute("SELECT uuid, name FROM players WHERE name IS NOT NULL").fetchall()
-    for player_uuid, name in rows:
-        is_bot = 0 if name in teamed_names else 1
+    name_by_uuid = {u: n for u, n in usercache.items() if n}
+    for u, n in conn.execute("SELECT uuid, name FROM players WHERE name IS NOT NULL"):
+        name_by_uuid.setdefault(u, n)
+
+    if mojang is not None:
+        known_names = {n.lower() for n in name_by_uuid.values()}
+        unknown = sorted(teamed - known_names)
+        if unknown:
+            for low, resolved_uuid in mojang.names_to_uuids(unknown).items():
+                display = team_spelling.get(low, low)
+                name_by_uuid[resolved_uuid] = display
+                upsert_player(conn, resolved_uuid, display, now, True)
+
+    for player_uuid in known_stat_file_uuids(world_path):
+        is_bot = 0 if (name_by_uuid.get(player_uuid) or "").lower() in teamed else 1
         conn.execute(
             """
             INSERT INTO player_flags (server_key, uuid, is_bot, updated_at)
@@ -504,7 +518,6 @@ def record_run(conn, server_key, kind, ok, error, entries_read, rows_written, du
 
 
 def run_once(config=None, now_fn=time.time, dictionary=None, mojang_fetch=None):
-    # mojang_fetch is accepted for forward-compat (wired in a later task).
     cfg = config if config is not None else load_config()
     tracking = cfg["stats_tracking"]
     db_path = tracking["db_path"]
@@ -513,6 +526,7 @@ def run_once(config=None, now_fn=time.time, dictionary=None, mojang_fetch=None):
 
     conn = connect_db(db_path)
     sync_servers_table(conn, cfg, int(now_fn()))
+    mojang = MojangClient(mojang_fetch or default_fetch, conn, int(now_fn()))
 
     if dictionary is None:
         try:
@@ -568,7 +582,7 @@ def run_once(config=None, now_fn=time.time, dictionary=None, mojang_fetch=None):
         if key == "smp":
             t0 = time.time()
             try:
-                run_team_check(conn, key, world_path, now)
+                run_team_check(conn, key, world_path, now, usercache, mojang)
                 record_run(conn, key, "team_check", True, None, None, None,
                            int((time.time() - t0) * 1000), now=now)
                 print(f"[{key}] team_check: ok")

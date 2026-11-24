@@ -1,0 +1,120 @@
+"""Mojang name/uuid lookups with a persistent cache and a per-run call budget.
+
+Results (including not-found and failed lookups) are cached in `name_lookups`
+and not retried for CACHE_SECONDS. Never raises on network trouble.
+"""
+import json
+import urllib.request
+import uuid as uuidlib
+
+BULK_URL = "https://api.minecraftservices.com/minecraft/profile/lookup/bulk/byname"
+PROFILE_URL = "https://sessionserver.mojang.com/session/minecraft/profile/"
+CACHE_SECONDS = 7 * 86400
+CHUNK = 10
+
+
+def default_fetch(method, url, body=None):
+    """Return (status, body bytes); status 0 on any exception."""
+    try:
+        req = urllib.request.Request(
+            url, data=body, method=method,
+            headers={"Content-Type": "application/json", "User-Agent": "chronos-stats"})
+        with urllib.request.urlopen(req, timeout=10) as r:
+            return r.status, r.read()
+    except urllib.error.HTTPError as e:
+        return e.code, b""
+    except Exception:
+        return 0, b""
+
+
+def _dash(hex_id):
+    try:
+        return str(uuidlib.UUID(hex_id))
+    except (ValueError, AttributeError, TypeError):
+        return None
+
+
+class MojangClient:
+    def __init__(self, fetch, conn, now, budget=60):
+        self.fetch = fetch
+        self.conn = conn
+        self.now = int(now)
+        self.budget = budget
+        self.calls = 0
+
+    def _spend(self):
+        if self.calls >= self.budget:
+            return False
+        self.calls += 1
+        return True
+
+    def _fresh(self, key):
+        row = self.conn.execute(
+            "SELECT result, checked_at FROM name_lookups WHERE lookup_key=?", (key,)).fetchone()
+        if row and self.now - row[1] < CACHE_SECONDS:
+            return row
+        return None
+
+    def _store(self, key, result):
+        self.conn.execute(
+            "INSERT INTO name_lookups (lookup_key, result, checked_at) VALUES (?, ?, ?) "
+            "ON CONFLICT(lookup_key) DO UPDATE SET result=excluded.result, "
+            "checked_at=excluded.checked_at", (key, result, self.now))
+
+    def names_to_uuids(self, names):
+        """lowercased name -> dashed uuid for names that resolve."""
+        out = {}
+        todo = []
+        seen = set()
+        for n in names:
+            low = n.lower()
+            if not low or low in seen:
+                continue
+            seen.add(low)
+            cached = self._fresh("name:" + low)
+            if cached is not None:
+                if cached[0]:
+                    out[low] = cached[0]
+                continue
+            todo.append(n)
+        for i in range(0, len(todo), CHUNK):
+            chunk = todo[i:i + CHUNK]
+            if not self._spend():
+                break
+            status, body = self.fetch("POST", BULK_URL, json.dumps(chunk).encode())
+            found = {}
+            ok = status == 200
+            if ok:
+                try:
+                    for e in json.loads(body):
+                        u = _dash(e.get("id"))
+                        if u and e.get("name"):
+                            found[e["name"].lower()] = u
+                except (ValueError, AttributeError, TypeError):
+                    ok = False
+            for n in chunk:
+                low = n.lower()
+                u = found.get(low) if ok else None
+                self._store("name:" + low, u)
+                if u:
+                    out[low] = u
+            self.conn.commit()
+        return out
+
+    def uuid_to_name(self, uuid):
+        key = "uuid:" + uuid
+        cached = self._fresh(key)
+        if cached is not None:
+            return cached[0]
+        if not self._spend():
+            return None
+        status, body = self.fetch("GET", PROFILE_URL + uuid.replace("-", ""), None)
+        name = None
+        if status == 200:
+            try:
+                name = json.loads(body).get("name") or None
+            except (ValueError, AttributeError):
+                name = None
+        self._store(key, name)
+        self.conn.commit()
+        return name

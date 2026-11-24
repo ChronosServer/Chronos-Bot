@@ -95,6 +95,7 @@ def run_snapshot(world):
 
     def _run(now, dictionary=None, **kw):
         # Never touches the network: dictionary is always injected.
+        kw.setdefault("mojang_fetch", lambda method, url, body: (0, b""))
         snapshot.run_once(config=world.config, now_fn=lambda: now,
                           dictionary={} if dictionary is None else dictionary, **kw)
     return _run
