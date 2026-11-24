@@ -5,9 +5,7 @@ from discord import client
 import json
 import os
 import asyncio
-import nest_asyncio
 from datetime import datetime, timezone
-nest_asyncio.apply()
 
 # reads config
 f = open('config.json')
@@ -164,9 +162,11 @@ class NewHelpName(commands.MinimalHelpCommand):
 client.help_command = NewHelpName()
 
 async def main():
+    # client.start() runs inside this event loop. client.run() would start its own loop,
+    # which is what nest_asyncio used to paper over; nest_asyncio breaks on Python 3.14.
     async with client:
         await load_extensions()
-        client.loop.create_task(watch_folders())
-        await client.run(token)
+        watcher = asyncio.create_task(watch_folders())  # keep a reference so it isn't garbage-collected
+        await client.start(token)
 
 asyncio.run(main())

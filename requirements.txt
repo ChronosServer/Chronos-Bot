@@ -1,11 +1,15 @@
+# Discord bot
 discord.py==2.7.1
-nbt==1.5.1
-nest_asyncio==1.6.0
 parse==1.22.4
 psutil==7.2.2
 rcon==2.4.9
 Requests==2.34.2
 simpleeval==1.0.8
+
+# Stats snapshot (bot/snapshot.py) - also used by the bot's NBT commands
+nbt==1.5.1
+
+# Stats API (api/) - on the live server install ONLY these three, never `pip install -r`
 fastapi==0.165.0
 uvicorn[standard]==0.54.0
 orjson==3.13.0
