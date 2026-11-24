@@ -1,0 +1,15 @@
+[Unit]
+Description=Run Chronos stats snapshot every 15 minutes
+
+[Timer]
+# 15 min is also the time resolution of the activity heatmap / pulse clock,
+# since those are derived from snapshot timestamps.
+OnCalendar=*:0/15
+# If the machine was down at a scheduled time, run once on boot to catch up.
+Persistent=true
+# A oneshot service is never started twice concurrently: if a run is still
+# going when the next tick fires, that tick is skipped, not queued in parallel.
+AccuracySec=30s
+
+[Install]
+WantedBy=timers.target
