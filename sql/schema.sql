@@ -67,6 +67,9 @@ CREATE TABLE IF NOT EXISTS stat_current (
     PRIMARY KEY (server_key, uuid, category, stat_key)
 );
 
+-- per-key reads of current values (leaderboard total mode, player ranks)
+CREATE INDEX IF NOT EXISTS idx_stat_current_key ON stat_current(server_key, category, stat_key, value DESC);
+
 CREATE TABLE IF NOT EXISTS scoreboard_snapshots (
     id               INTEGER PRIMARY KEY AUTOINCREMENT,
     at               INTEGER NOT NULL,
@@ -90,6 +93,8 @@ CREATE TABLE IF NOT EXISTS scoreboard_current (
     seen_at         INTEGER NOT NULL,
     PRIMARY KEY (server_key, participant_key, objective)
 );
+
+CREATE INDEX IF NOT EXISTS idx_scoreboard_current_obj ON scoreboard_current(server_key, objective, value DESC);
 
 CREATE TABLE IF NOT EXISTS scoreboard_meta (
     server_key         TEXT NOT NULL,

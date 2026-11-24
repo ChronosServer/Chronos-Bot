@@ -83,7 +83,7 @@ def stat_values_at(conn, scope: Scope, include_bots: bool, category: str,
     frag, params = stat_filter_sql(scope, include_bots, "s")
     if ts is None:
         rows = conn.execute(
-            f"SELECT s.uuid, s.value FROM stat_current s WHERE s.category=? "
+            f"SELECT s.uuid, s.value FROM stat_current s INDEXED BY idx_stat_current_key WHERE s.category=? "
             f"AND s.stat_key=? AND {frag}", [category, key, *params]).fetchall()
         return _sum(rows)
     rows = conn.execute(stat_history_sql(frag),
@@ -97,7 +97,7 @@ def scoreboard_values_at(conn, scope: Scope, include_bots: bool, objective: str,
         frag, params = scoreboard_filter_sql(scope, include_bots, "s", is_current=True)
         rows = conn.execute(
             f"SELECT s.participant_key, s.value FROM scoreboard_current s "
-            f"WHERE s.objective=? AND {frag}", [objective, *params]).fetchall()
+            f"INDEXED BY idx_scoreboard_current_obj WHERE s.objective=? AND {frag}", [objective, *params]).fetchall()
         return _sum(rows)
     frag, params = scoreboard_filter_sql(scope, include_bots, "s")
     rows = conn.execute(scoreboard_history_sql(frag),
