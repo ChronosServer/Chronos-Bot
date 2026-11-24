@@ -29,6 +29,16 @@ def _parse_cursor(before):
     return ek, at, id_
 
 
+def milestones_sql(frag, cur_sql=""):
+    # Pinned: walks idx_milestones_feed in ORDER BY order and stops at LIMIT,
+    # instead of sorting every milestone row in a temp b-tree per page.
+    return (
+        f"SELECT m.id, m.at, m.server_key, m.uuid, p.name, m.category, m.stat_key, "
+        f"m.threshold, m.earliest_known FROM milestones m INDEXED BY idx_milestones_feed "
+        f"LEFT JOIN players p ON p.uuid = m.uuid WHERE {frag}{cur_sql} "
+        f"ORDER BY m.earliest_known ASC, m.at DESC, m.id DESC LIMIT ?")
+
+
 @router.get("/milestones")
 @cached
 def milestones(request: Request, conn=Depends(db.get_db), scope: str = "all",
@@ -42,12 +52,8 @@ def milestones(request: Request, conn=Depends(db.get_db), scope: str = "all",
         cur_sql = (" AND (m.earliest_known > ? OR (m.earliest_known = ? AND "
                    "(m.at < ? OR (m.at = ? AND m.id < ?))))")
         cur = [ek, ek, at, at, id_]
-    rows = conn.execute(
-        f"SELECT m.id, m.at, m.server_key, m.uuid, p.name, m.category, m.stat_key, "
-        f"m.threshold, m.earliest_known FROM milestones m "
-        f"LEFT JOIN players p ON p.uuid = m.uuid WHERE {frag}{cur_sql} "
-        f"ORDER BY m.earliest_known ASC, m.at DESC, m.id DESC LIMIT ?",
-        [*params, *cur, limit + 1]).fetchall()
+    rows = conn.execute(milestones_sql(frag, cur_sql),
+                        [*params, *cur, limit + 1]).fetchall()
     more = len(rows) > limit
     rows = rows[:limit]
     cols = ("id", "at", "server_key", "uuid", "name", "category", "key", "threshold",

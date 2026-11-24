@@ -46,9 +46,11 @@ def data_version(conn) -> str:
     return str(row[0] if row and row[0] is not None else 0)
 
 
-# Indexes the API pins with INDEXED BY; created by bot/snapshot.py (API is read-only).
+# Indexes the API pins with INDEXED BY; created by bot/snapshot.py (schema.sql
+# + sql/migrations.py; the API is read-only).
 REQUIRED_INDEXES = ("idx_stat_point", "idx_scoreboard_point",
-                    "idx_stat_current_key", "idx_scoreboard_current_obj")
+                    "idx_stat_current_key", "idx_scoreboard_current_obj",
+                    "idx_milestones_feed")
 
 
 def check_required_indexes() -> None:

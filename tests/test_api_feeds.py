@@ -163,3 +163,30 @@ def test_spotlight_empty_returns_null_trigger(env):
 def test_spotlight_not_cached(env):
     r = env.get("/api/stats/spotlight")
     assert "etag" not in r.headers
+
+
+@pytest.mark.parametrize("include_bots", [False, True])
+@pytest.mark.parametrize("cursor", [False, True])
+def test_milestones_feed_uses_index_no_sort(env, include_bots, cursor):
+    from api.routes.feeds import milestones_sql
+    from api.scope import resolve_scope, stat_filter_sql
+    add_ms(env.world, [(1000 + i, U1, i, 0) for i in range(50)])
+    c = sqlite3.connect(env.world.db_path)
+    try:
+        frag, params = stat_filter_sql(resolve_scope(c, "all"), include_bots, "m")
+        cur_sql, cur = "", []
+        if cursor:
+            cur_sql = (" AND (m.earliest_known > ? OR (m.earliest_known = ? AND "
+                       "(m.at < ? OR (m.at = ? AND m.id < ?))))")
+            cur = [0, 0, 1020, 1020, 21]
+        plan = " | ".join(r[3] for r in c.execute(
+            "EXPLAIN QUERY PLAN " + milestones_sql(frag, cur_sql), [*params, *cur, 51]))
+    finally:
+        c.close()
+    assert "INDEX idx_milestones_feed" in plan, plan
+    assert "USE TEMP B-TREE FOR ORDER BY" not in plan, plan
+
+
+def test_milestones_feed_index_required():
+    from api import db
+    assert "idx_milestones_feed" in db.REQUIRED_INDEXES
