@@ -175,6 +175,7 @@ tables) → SQLite → `api/` (FastAPI, read-only) → nginx `/api/stats/*` → 
 | `deploy/` | systemd units (snapshot, timer, api) + nginx snippet |
 | `tests/` | pytest, 201 tests, synthetic worlds built through the real snapshot write path, no network |
 | `STATS_API.md` | the HTTP contract for the website (copy into the website repo) |
+| `docs/STATS_DATABASE.md` | operator guide: config, first setup, upgrade, health checks, backup, reset |
 | `STATS_FRONTEND_PROMPT.md` | the kickoff prompt for Claude Code in the website repo |
 | `docs/superpowers/specs/2026-11-24-stats-api-design.md` | approved backend design incl. Addendum A (badges/rivalries/spotlight rules) |
 
