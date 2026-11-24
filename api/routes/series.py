@@ -1,6 +1,6 @@
 import time
 
-from fastapi import APIRouter, Depends, Query, Request
+from fastapi import APIRouter, Depends, Request
 
 from api import db, timeq
 from api.cache import cached
@@ -86,7 +86,8 @@ def _parse_uuids(uuids: str) -> list:
 @cached
 def series(request: Request, conn=Depends(db.get_db), kind: str = "stat",
            category: str = "", key: str = "", uuids: str = "", scope: str = "all",
-           range: str = None, from_: int = Query(None, alias="from"), to: int = None,
+           range: str = None, from_: int = timeq.ts_param("from"),
+           to: int = timeq.ts_param(),
            include_bots: bool = False):
     _check(kind, category, key)
     ulist = _parse_uuids(uuids)
@@ -121,7 +122,8 @@ def _totals_events(conn, kind, category, key, servers, col, rng):
 @cached
 def totals(request: Request, conn=Depends(db.get_db), kind: str = "stat",
            category: str = "", key: str = "", scopes: str = "all",
-           range: str = None, from_: int = Query(None, alias="from"), to: int = None,
+           range: str = None, from_: int = timeq.ts_param("from"),
+           to: int = timeq.ts_param(),
            include_bots: bool = False):
     _check(kind, category, key)
     names = []

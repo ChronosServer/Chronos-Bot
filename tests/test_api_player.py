@@ -70,6 +70,8 @@ def test_player_by_uuid(env):
 def test_player_by_name_picks_latest_observed(env):
     sql(env.world, "INSERT INTO players (uuid, name, name_resolved, first_seen, "
         "last_observed) VALUES (?, 'alice', 0, 0, 9000000)", (U9,))
+    sql(env.world, "INSERT INTO stat_current VALUES ('cmp', ?, 'minecraft:mined', "
+        "'minecraft:stone', 1, 1, 1)", (U9,))  # has rows: a real profile (M4)
     assert env.get(P + "ALICE").json()["uuid"] == U9
     assert env.get(P + U1).json()["uuid"] == U1
 
@@ -244,3 +246,28 @@ def test_startup_fails_when_required_index_missing(world, run_snapshot, monkeypa
     with pytest.raises(RuntimeError, match=r"run bot/snapshot.py.*idx_stat_current_key"):
         with TestClient(create_app()):
             pass
+
+
+def test_player_without_any_rows_is_404(env):
+    sql(env.world, "INSERT INTO players (uuid, name, name_resolved, first_seen, last_observed) "
+        "VALUES (?, 'Ghost', 1, 1, 1)", (U9,))
+    cache.clear()
+    assert env.get(P + U9).status_code == 404
+    r = env.get(P + "ghost")
+    assert r.status_code == 404 and r.json() == {"error": "player not found"}
+    assert env.get(P + U3).status_code == 200  # an SMP bot with rows keeps a profile
+
+
+def test_player_rivals_reapply_bot_rule_to_other(env):
+    sql(env.world, "INSERT INTO rivalries VALUES ('smp','c','k',?,?,10,17,1001200)", (U1, U3))
+    sql(env.world, "INSERT INTO rivalries VALUES ('smp','c','k2',?,?,10,17,1001200)", (U2, U1))
+    cache.clear()
+    j = env.get(P + U1 + "?scope=smp").json()
+    assert [r["other_uuid"] for r in j["rivals"]] == [U2]
+    j = env.get(P + U1 + "?scope=smp&include_bots=true").json()
+    assert sorted(r["other_uuid"] for r in j["rivals"]) == sorted([U2, U3])
+
+
+def test_compare_total_mode_with_to_only(env):
+    j = env.get(C + f"uuids={U1},{U2}&keys={STONE}&scope=smp&to=1000300").json()
+    assert j["values"][STONE] == {U1: 5, U2: 20}

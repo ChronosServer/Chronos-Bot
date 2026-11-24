@@ -7,7 +7,18 @@ still has a value at its start.
 from dataclasses import dataclass
 from typing import Optional
 
+from fastapi import Query
+
 from api.scope import (Scope, scoreboard_filter_sql, stat_filter_sql)
+
+# Bound for `from`/`to` query params: far past any real timestamp, well inside
+# SQLite's int64, so absurd values are a 422 instead of an overflow 500.
+TS_MAX = 2 ** 62
+
+
+def ts_param(alias=None):
+    return Query(None, ge=0, le=TS_MAX, alias=alias)
+
 
 PRESETS = {"1d": 86400, "1w": 604800, "1m": 2592000, "6m": 15724800,
            "1y": 31536000}

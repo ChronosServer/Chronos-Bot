@@ -121,3 +121,28 @@ def test_to_before_tracking_start_is_empty(env):
     j = env.get(ST + "&scope=smp&from=0&to=500").json()
     assert j["rows"] == [] and j["total_count"] == 0
     assert j["effective_from"] == 1_000_000 and j["to"] == 500 and j["mode"] == "delta"
+
+
+def test_total_mode_with_to_only_reads_values_at_to(env):
+    j = env.get(ST + "&scope=smp&to=1000300").json()
+    assert j["mode"] == "total" and j["to"] == 1_000_300
+    assert {r["uuid"]: r["value"] for r in j["rows"]} == {U1: 5, U4: 5}
+    j = env.get(ST + "&scope=smp").json()  # no `to`: current values
+    assert {r["uuid"]: r["value"] for r in j["rows"]} == {U1: 9, U2: 7, U4: 5}
+
+
+@pytest.mark.parametrize("q", ["to=99999999999999999999999", "from=99999999999999999999999",
+                               "to=-1", "from=-5&to=10"])
+def test_absurd_from_to_rejected_not_500(env, q):
+    r = env.get(ST + "&scope=smp&" + q)
+    assert r.status_code in (400, 422), r.text
+
+
+@pytest.mark.parametrize("path", [
+    "/api/stats/series?kind=stat&category=minecraft:mined&key=minecraft:stone&uuids=" + U1,
+    "/api/stats/totals?kind=stat&category=minecraft:mined&key=minecraft:stone",
+    f"/api/stats/compare?uuids={U1},{U2}&keys=minecraft:mined|minecraft:stone",
+])
+def test_absurd_to_rejected_on_other_routes(env, path):
+    assert env.get(path + "&to=99999999999999999999999").status_code in (400, 422)
+    assert env.get(path + "&from=99999999999999999999999").status_code in (400, 422)

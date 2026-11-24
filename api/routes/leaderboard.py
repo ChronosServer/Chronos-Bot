@@ -1,6 +1,6 @@
 import time
 
-from fastapi import APIRouter, Depends, Query, Request
+from fastapi import APIRouter, Depends, Request
 
 from api import db, timeq
 from api.cache import cached
@@ -13,7 +13,8 @@ router = APIRouter()
 @cached
 def leaderboard(request: Request, conn=Depends(db.get_db), kind: str = "stat",
                 category: str = "", key: str = "", scope: str = "all",
-                range: str = None, from_: int = Query(None, alias="from"), to: int = None,
+                range: str = None, from_: int = timeq.ts_param("from"),
+                to: int = timeq.ts_param(),
                 include_bots: bool = False, limit: int = 50, offset: int = 0):
     if kind not in ("stat", "scoreboard"):
         raise ValueError(f"bad kind: {kind!r}")
@@ -40,7 +41,8 @@ def leaderboard(request: Request, conn=Depends(db.get_db), kind: str = "stat",
         vals = {u: end.get(u, 0) - start.get(u, 0) for u in set(end) | set(start)}
         vals = {u: v for u, v in vals.items() if v != 0}
     else:
-        vals = values_at(None)
+        # total mode: values at `to` when given, else current
+        vals = values_at(None if r.is_now else r.to_ts)
     ordered = sorted(vals.items(), key=lambda kv: (-kv[1], kv[0]))
     ranks, prev, rank = [], None, 0
     for i, (_, v) in enumerate(ordered):

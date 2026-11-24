@@ -1,6 +1,6 @@
 import time
 
-from fastapi import APIRouter, Depends, Query, Request
+from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse
 
 from api import db, timeq
@@ -67,15 +67,19 @@ def _ranked_scoreboards(conn, sc, include_bots, uuid):
             for c, _, v, r, n in rows]
 
 
-def _rivals(conn, sc, uuid):
-    marks = ",".join("?" * len(sc.servers))
+def _rivals(conn, sc, include_bots, uuid):
+    # The scope/bot rule is re-applied to the other participant at read time
+    # (as /rivalries does): bot flags can change after the derive ran.
+    frag, fp = stat_filter_sql(sc, include_bots, "o")
     rows = conn.execute(
+        f"WITH o AS (SELECT rowid AS rid, server_key, "
+        f"CASE WHEN uuid_a=? THEN uuid_b ELSE uuid_a END AS uuid FROM rivalries "
+        f"WHERE uuid_a=? OR uuid_b=?) "
         f"SELECT r.server_key, r.category, r.stat_key, r.uuid_a, r.uuid_b, r.gap, "
-        f"r.gap_7d_ago, r.computed_at, p.name FROM rivalries r "
-        f"LEFT JOIN players p ON p.uuid = CASE WHEN r.uuid_a=? THEN r.uuid_b ELSE r.uuid_a END "
-        f"WHERE (r.uuid_a=? OR r.uuid_b=?) AND r.server_key IN ({marks}) "
+        f"r.gap_7d_ago, r.computed_at, p.name FROM o JOIN rivalries r ON r.rowid=o.rid "
+        f"LEFT JOIN players p ON p.uuid = o.uuid WHERE {frag} "
         f"ORDER BY r.server_key, r.category, r.stat_key",
-        [uuid, uuid, uuid, *sc.servers]).fetchall()
+        [uuid, uuid, uuid, *fp]).fetchall()
     starts = {}
     out = []
     for sk, cat, key, a, b, gap, g7, at, oname in rows:
@@ -90,6 +94,17 @@ def _rivals(conn, sc, uuid):
                     "gap": gap, "gap_7d_ago": g7, "computed_at": at,
                     "closing_per_day": closing, "overtake_days": overtake})
     return out
+
+
+def _has_rows(conn, uuid):
+    """Any stat_current/scoreboard_current row on a provisioned server, scope
+    and bot status aside. A players row alone (e.g. a Mojang-resolved team
+    member who never joined) is not a profile."""
+    return conn.execute(
+        "SELECT 1 FROM servers s WHERE s.provisioned=1 AND ("
+        "EXISTS (SELECT 1 FROM stat_current c WHERE c.server_key=s.key AND c.uuid=?) OR "
+        "EXISTS (SELECT 1 FROM scoreboard_current c WHERE c.server_key=s.key "
+        "AND c.participant_key=?)) LIMIT 1", (uuid, uuid)).fetchone() is not None
 
 
 def _is_bot_on_smp(conn, uuid):
@@ -115,7 +130,7 @@ def player(ident: str, request: Request, conn=Depends(db.get_db),
            scope: str = "all", include_bots: bool = False):
     sc = resolve_scope(conn, scope)
     uuid = resolve_player(conn, ident)
-    if uuid is None:
+    if uuid is None or not _has_rows(conn, uuid):
         return _not_found()
     name, resolved, last = conn.execute(
         "SELECT name, name_resolved, last_activity FROM players WHERE uuid=?",
@@ -145,7 +160,7 @@ def player(ident: str, request: Request, conn=Depends(db.get_db),
             "last_activity": last, "is_bot_on_smp": _is_bot_on_smp(conn, uuid),
             "servers": servers, "stats": stats, "scoreboards": boards,
             "badges": badges, "milestones": milestones, "firsts": firsts,
-            "rivals": _rivals(conn, sc, uuid)}
+            "rivals": _rivals(conn, sc, include_bots, uuid)}
 
 
 def _parse_keys(keys: str):
@@ -168,7 +183,7 @@ def _parse_keys(keys: str):
 @cached
 def compare(request: Request, conn=Depends(db.get_db), uuids: str = "",
             keys: str = "", scope: str = "all", range: str = None,
-            from_: int = Query(None, alias="from"), to: int = None,
+            from_: int = timeq.ts_param("from"), to: int = timeq.ts_param(),
             include_bots: bool = False):
     idents = list(dict.fromkeys(u.strip() for u in (uuids or "").split(",") if u.strip()))
     if not 2 <= len(idents) <= 6:
@@ -200,7 +215,7 @@ def compare(request: Request, conn=Depends(db.get_db), uuids: str = "",
             end, start = at(None if r.is_now else r.to_ts), at(r.effective_from)
             values[label] = {u: end.get(u, 0) - start.get(u, 0) for u in ulist}
         else:
-            cur = at(None)
+            cur = at(None if r.is_now else r.to_ts)
             values[label] = {u: cur.get(u, 0) for u in ulist}
         series[label] = build_series(conn, sc, include_bots, kind, cat, key, ulist, r)
     return {"players": [{"uuid": u, "name": names.get(u)} for u in ulist],
