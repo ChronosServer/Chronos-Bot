@@ -315,7 +315,22 @@ After a reset:
 - Tracking starts again from now.
 - Existing firsts and milestones are seeded as "earliest known" again.
 
-## 7. Developing locally
+## 7. Importing old world backups
+
+Old backup world folders (1.16 – 1.21 and 26.x) can be imported as earlier history
+points, so graphs, totals, firsts and milestones reach back to the oldest backup. Use the
+command-line tool `tools/import_backups.py`:
+
+- Stop `chronos-stats-snapshot.timer` and `.service` first, and start the timer again
+  afterwards.
+- Always run it with `--dry-run` first.
+- It backs up the database to `pre-import-*.db` before writing. Restoring that file undoes
+  the import.
+
+The full guide covers every flag, how to read the dry-run output, the rename table, the
+bundled dictionaries and a worked example: [tools/README.md](../tools/README.md).
+
+## 8. Developing locally
 
 The tests build small fake worlds and run the real snapshot and derive code against
 them. Nothing touches the network or a real database.

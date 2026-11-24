@@ -205,7 +205,7 @@ tables) → SQLite → `api/` (FastAPI, read-only) → nginx `/api/stats/*` → 
   `provisioned=1` servers (the `all` pseudo row in `servers` is provisioned=0 and exists
   only as an FK target for `snapshot_runs.kind='derive'`). Multi-server scopes sum per
   player. A bot on SMP still counts on CMPs.
-- **Tracking start** per server = `MIN(at)` of stats runs with `ok=1 AND entries_read>0`.
+- **Tracking start** per server = `MIN(at)` of stats **and import** runs with `ok=1 AND entries_read>0`.
   Ranges reaching earlier are clamped and responses carry `effective_from`.
 - **Firsts/milestones that predate tracking are `earliest_known=1`** ("earliest known
   holder" / "already had"), never given a fake date. Seeding happens once (meta
@@ -228,6 +228,23 @@ tables) → SQLite → `api/` (FastAPI, read-only) → nginx `/api/stats/*` → 
 - Routes are sync `def h(request: Request, conn=Depends(db.get_db), ...)` under
   `@cached` (decoration fails without `request`+`conn`); `/search` and `/spotlight` are
   deliberately not cached.
+
+### Backup import (`tools/`)
+- `tools/import_backups.py` (guide: `tools/README.md`) imports old SMP world backups as
+  earlier change-only history points (`snapshot_runs.kind='import'`, `imports` table);
+  never writes `stat_current`/`scoreboard_current`. Old keys are mapped through
+  `tools/stat_renames.json` (editable data).
+- `dictionaries/` bundles every-scoreboard's `dictionary-<version>.json` for 1.16–26.2.
+  The import skips the mirror names of all of them, and `fetch_dictionary` prefers the
+  local file.
+- **`approximate=1`** on firsts/milestones: crossed between two points (backup→backup or
+  last backup→first live run), dated at the later point, shown as "by <date>". Distinct
+  from `earliest_known=1` (already true at the oldest point, no date). Approximate firsts
+  count for Firsts badges; earliest-known ones don't.
+- `rebuild_from_points` (`bot/derive_achievements.py`) is the **only** writer of
+  approximate rows. It reuses the live firsts/crossing INSERTs, fed by value-at-T
+  sources, and keeps real live rows (OR IGNORE). It also re-runs the totals backfill
+  and badges. It takes its own `BEGIN IMMEDIATE` lock and runs as one transaction.
 
 ### Deploy (not done yet — commands are in `TEMP_INFO.md`)
 Push `stats-api` → on server: checkout → `pip install` **only** fastapi, uvicorn[standard],

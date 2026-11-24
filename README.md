@@ -39,6 +39,8 @@ section:
   127.0.0.1:8765) that nginx exposes at `/api/stats/` (`deploy/nginx/`).
 * **Setting up the database:** see [docs/STATS_DATABASE.md](docs/STATS_DATABASE.md).
   It covers configuration, first setup, upgrades, health checks, backup and reset.
+* **Importing old world backups** into the stats history:
+  `tools/import_backups.py`, see [tools/README.md](tools/README.md).
 * `STATS_PLAN.md` is the feature scope, `STATS_API.md` the HTTP contract the website
   builds against, and `CLAUDE.md` the full technical notes (rules, deploy order).
 
