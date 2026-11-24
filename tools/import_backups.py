@@ -517,7 +517,10 @@ def main(argv=None, *, dictionary=None):
                 print(f"error: dictionary-{version}.json unavailable ({e}); without it "
                       "vanilla-mirror objectives can't be skipped")
                 return 1
-        mirrors = merge_dictionaries(dictionary, args.dictionary)
+        # Every dictionary in the repo (1.16 .. current) plus any --dictionary files:
+        # old backups hold mirrors of names that no longer exist today.
+        bundled = sorted(str(f) for f in snapshot.DICTIONARY_DIR.glob("dictionary-*.json"))
+        mirrors = merge_dictionaries(dictionary, bundled + list(args.dictionary))
 
         if not args.dry_run:
             try:

@@ -23,7 +23,7 @@ smp_rcon_port = data['server']['smp_rcon_port']
 rcon_pass = data['server']['rcon_pass']
 f.close()
 
-with open(f'dictionary-{minecraft_version}.json') as f:
+with open(os.path.join('dictionaries', f'dictionary-{minecraft_version}.json')) as f:
     SCOREBOARD_DICT = json.load(f)
 
 SCOREBOARD_PATH = os.path.join(smp_path, smp_world_name, 'data', 'minecraft', 'scoreboard.dat')

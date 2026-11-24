@@ -390,7 +390,10 @@ def test_no_backup_flag(tmp_path, world, db):
     assert db.execute("SELECT COUNT(*) FROM stat_snapshots").fetchone()[0] == 1
 
 
-def test_main_dry_run_date_override_and_output(tmp_path, world, db, capsys):
+def test_main_dry_run_date_override_and_output(tmp_path, world, db, capsys, monkeypatch):
+    import snapshot
+    # no bundled dictionaries here, so the prefix fallback is what catches m-grass_path
+    monkeypatch.setattr(snapshot, "DICTIONARY_DIR", tmp_path / "no-dictionaries")
     w = make_backup(tmp_path, name="b1", last_played_ms=None,
                     stats={U1: {"minecraft:custom": {"minecraft:play_one_minute": 7}}},
                     scoreboard=(["digs", "m-grass_path"], [("npc", "digs", 1),
@@ -445,3 +448,38 @@ def test_boat_entity_renamed_only_in_entity_categories(tmp_path, db):
         (T1, U1, "minecraft:mined", "minecraft:iron_chain", 4),
         (T1, U1, "minecraft:used", "minecraft:oak_boat", 5)]
     assert "minecraft:boat" not in shipped["*"] and "minecraft:potion" not in shipped["*"]
+
+
+def test_bundled_dictionaries_catch_old_mirror_names(tmp_path, world, db, capsys, monkeypatch):
+    import snapshot
+    d = tmp_path / "dicts"
+    d.mkdir()
+    (d / "dictionary-1.16.5.json").write_text('{"m-grass_path": "m-grass_path"}', encoding="utf-8")
+    monkeypatch.setattr(snapshot, "DICTIONARY_DIR", d)
+    w = make_backup(tmp_path, name="b1", last_played_ms=None,
+                    stats={U1: {"minecraft:custom": {"minecraft:play_one_minute": 7}}},
+                    scoreboard=(["digs", "m-grass_path"], [("npc", "digs", 1),
+                                                           ("npc", "m-grass_path", 1)]))
+    rc = ib.main(["--server", "smp", "--dry-run", "--config",
+                  str(write_config(tmp_path, world)), "--date", f"{w}=2020-09-13", str(w)],
+                 dictionary={})
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "mirrors skipped by dictionary: 1" in out
+    assert "probable mirrors skipped: 1" not in out
+
+
+def test_fetch_dictionary_prefers_local_file(tmp_path, monkeypatch):
+    import snapshot
+    d = tmp_path / "dicts"
+    d.mkdir()
+    (d / "dictionary-9.9.json").write_text('{"m-x": "m-x"}', encoding="utf-8")
+    monkeypatch.setattr(snapshot, "DICTIONARY_DIR", d)
+    def no_network(*a, **k):
+        raise AssertionError("network used")
+    monkeypatch.setattr(snapshot.urllib.request, "urlopen", no_network)
+    conn = snapshot.connect_db(str(tmp_path / "t.db"))
+    try:
+        assert snapshot.fetch_dictionary(conn, "9.9") == {"m-x": "m-x"}
+    finally:
+        conn.close()

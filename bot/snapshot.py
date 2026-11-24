@@ -37,10 +37,11 @@ from api.settings import DEFAULTS, load_settings  # noqa: E402
 from mojang import MojangClient, default_fetch  # noqa: E402
 SCHEMA_PATH = REPO_ROOT / "sql" / "schema.sql"
 CONFIG_PATH = REPO_ROOT / "config.json"
+DICTIONARY_DIR = REPO_ROOT / "dictionaries"
 
 DICTIONARY_URL_TMPL = (
     "https://raw.githubusercontent.com/ChronosServer/Chronos-Bot/"
-    "refs/heads/master/dictionary-{version}.json"
+    "refs/heads/master/dictionaries/dictionary-{version}.json"
 )
 
 
@@ -185,7 +186,14 @@ def fetch_dictionary(conn, version, settings=None):
     the bot's own scoreboard tooling. Used ONLY to detect vanilla-mirrored
     scoreboard objectives for dedup -- never as a general name resolver.
     Cached in dictionary_cache (snapshot.dictionary_cache_hours) to avoid
-    hammering GitHub every run."""
+    hammering GitHub every run.
+
+    The repo's own dictionaries/dictionary-<version>.json is used first (no
+    network); GitHub is only the fallback when that file is missing."""
+    local = DICTIONARY_DIR / f"dictionary-{version}.json"
+    if local.is_file():
+        with open(local, "r", encoding="utf-8") as f:
+            return json.load(f)
     tuning = (settings or DEFAULTS).snapshot
     row = conn.execute(
         "SELECT fetched_at, content_json FROM dictionary_cache WHERE version = ?",
