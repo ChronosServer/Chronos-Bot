@@ -99,3 +99,28 @@ def run_snapshot(world):
         snapshot.run_once(config=world.config, now_fn=lambda: now,
                           dictionary={} if dictionary is None else dictionary, **kw)
     return _run
+
+
+@pytest.fixture(autouse=True)
+def _isolated_api_settings(tmp_path, monkeypatch):
+    """The API reads its settings from config.json once (cached). Tests never
+    see the repo's real config.json: by default there is none (= defaults);
+    `api_config` writes one."""
+    from api import db, settings
+    monkeypatch.setattr(db, "CONFIG_PATH", tmp_path / "no-config.json")
+    settings.reset_api_settings()
+    yield
+    settings.reset_api_settings()
+
+
+@pytest.fixture
+def api_config(tmp_path, monkeypatch):
+    """api_config(stats_tracking_dict): the API's config.json for this test."""
+    from api import db, settings
+
+    def _set(tracking):
+        p = tmp_path / "api-config.json"
+        p.write_text(json.dumps({"stats_tracking": tracking}), encoding="utf-8")
+        monkeypatch.setattr(db, "CONFIG_PATH", p)
+        settings.reset_api_settings()
+    return _set

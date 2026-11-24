@@ -33,6 +33,7 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from sql.migrations import migrate  # noqa: E402
+from api.settings import DEFAULTS, load_settings  # noqa: E402
 from mojang import MojangClient, default_fetch  # noqa: E402
 SCHEMA_PATH = REPO_ROOT / "sql" / "schema.sql"
 CONFIG_PATH = REPO_ROOT / "config.json"
@@ -41,7 +42,6 @@ DICTIONARY_URL_TMPL = (
     "https://raw.githubusercontent.com/ChronosServer/Chronos-Bot/"
     "refs/heads/master/dictionary-{version}.json"
 )
-DICTIONARY_CACHE_SECONDS = 24 * 3600
 
 
 # --------------------------------------------------------------------------
@@ -94,9 +94,10 @@ def connect_db(db_path):
     return conn
 
 
-def sync_servers_table(conn, cfg, now=None):
+def sync_servers_table(conn, cfg, now=None, settings=None):
     now = int(time.time()) if now is None else now
-    for key, s in cfg["stats_tracking"]["servers"].items():
+    settings = settings or load_settings(cfg["stats_tracking"])
+    for key, s in settings.servers.items():
         world_path, _ = server_paths(cfg, key)
         provisioned = 1 if is_provisioned(world_path) else 0
         conn.execute(
@@ -114,11 +115,11 @@ def sync_servers_table(conn, cfg, now=None):
             """,
             (
                 key,
-                s["label"],
-                s["group"],
-                1 if key == "smp" else 0,  # filters_bots is SMP-only, always
-                1 if s.get("track_stats", True) else 0,
-                1 if s.get("track_scoreboards", True) else 0,
+                s.label,
+                s.group,
+                1 if s.filters_bots else 0,  # default: smp only (api/settings.py)
+                1 if s.track_stats else 0,
+                1 if s.track_scoreboards else 0,
                 provisioned,
             ),
         )
@@ -179,22 +180,24 @@ def load_usercache(website_path_or_server_root):
     return out
 
 
-def fetch_dictionary(conn, version):
+def fetch_dictionary(conn, version, settings=None):
     """Auto-generated truncated-name -> full-vanilla-stat-name map, built by
     the bot's own scoreboard tooling. Used ONLY to detect vanilla-mirrored
     scoreboard objectives for dedup -- never as a general name resolver.
-    Cached 24h in dictionary_cache to avoid hammering GitHub every run."""
+    Cached in dictionary_cache (snapshot.dictionary_cache_hours) to avoid
+    hammering GitHub every run."""
+    tuning = (settings or DEFAULTS).snapshot
     row = conn.execute(
         "SELECT fetched_at, content_json FROM dictionary_cache WHERE version = ?",
         (version,),
     ).fetchone()
     now = int(time.time())
-    if row and (now - row[0]) < DICTIONARY_CACHE_SECONDS:
+    if row and (now - row[0]) < tuning.dictionary_cache_hours * 3600:
         return json.loads(row[1])
 
     url = DICTIONARY_URL_TMPL.format(version=version)
     try:
-        with urllib.request.urlopen(url, timeout=15) as resp:
+        with urllib.request.urlopen(url, timeout=tuning.dictionary_timeout_s) as resp:
             content = resp.read().decode("utf-8")
         data = json.loads(content)
         conn.execute(
@@ -463,17 +466,18 @@ def run_scoreboard_snapshot(conn, server_key, world_path, usercache, dictionary,
 
 
 # --------------------------------------------------------------------------
-# SMP-only bot classification via team membership
+# Bot classification via team membership (filters_bots servers: SMP only by default)
 # --------------------------------------------------------------------------
 
 def run_team_check(conn, server_key, world_path, now, usercache, mojang=None):
-    """SMP-only. In any team = real player, in no team = bot. This is
-    classification, independent of whether scoreboard history is tracked --
-    always runs for SMP regardless of track_scoreboards. Never applied to
-    CMPs (CMPs always include everyone, by explicit decision).
+    """Runs for every server with filters_bots (default: SMP only). In any
+    team = real player, in no team = bot. This is classification,
+    independent of whether scoreboard history is tracked -- always runs
+    regardless of track_scoreboards. CMPs default to filters_bots false
+    (CMPs always include everyone, by explicit decision).
 
-    Only uuids holding an SMP stat file are classified (proof of a real
-    join). Team names with no known uuid are resolved via Mojang (cached)."""
+    Only uuids holding a stat file on that server are classified (proof of a
+    real join). Team names with no known uuid are resolved via Mojang (cached)."""
     data = load_scoreboard_dat(world_path)
     teamed = set()
     for team in nbt_list(data, "Teams"):
@@ -526,26 +530,33 @@ def record_run(conn, server_key, kind, ok, error, entries_read, rows_written, du
 
 def run_once(config=None, now_fn=time.time, dictionary=None, mojang_fetch=None):
     cfg = config if config is not None else load_config()
-    tracking = cfg["stats_tracking"]
-    db_path = tracking["db_path"]
-    excluded = set(tracking.get("excluded_servers", []))
+    # Validated before anything is touched: a bad stats_tracking raises here.
+    settings = load_settings(cfg["stats_tracking"])
+    if not settings.db_path:
+        raise ValueError("stats_tracking.db_path is required")
+    excluded = set(settings.excluded_servers)
     version = cfg.get("server", {}).get("minecraft_version", "unknown")
 
-    conn = connect_db(db_path)
-    sync_servers_table(conn, cfg, int(now_fn()))
+    conn = connect_db(settings.db_path)
+    sync_servers_table(conn, cfg, int(now_fn()), settings)
     # One run-wide timestamp: every row written this run shares `at`, so
     # derive can find the whole run with `at = run_at`.
     run_at = int(now_fn())
-    mojang = MojangClient(mojang_fetch or default_fetch, conn, run_at)
+    if mojang_fetch is None:
+        timeout = settings.mojang.timeout_s
+
+        def mojang_fetch(method, url, body=None):
+            return default_fetch(method, url, body, timeout=timeout)
+    mojang = MojangClient(mojang_fetch, conn, run_at, settings=settings.mojang)
 
     if dictionary is None:
         try:
-            dictionary = fetch_dictionary(conn, version)
+            dictionary = fetch_dictionary(conn, version, settings)
         except Exception as e:
             print(f"[warn] dictionary unavailable this run ({e}); vanilla-mirror dedup skipped")
             dictionary = {}
 
-    for key, s in tracking["servers"].items():
+    for key, s in settings.servers.items():
         if key in excluded:
             print(f"[{key}] excluded (mirror/tour-style duplicate) -- skipping")
             continue
@@ -563,7 +574,7 @@ def run_once(config=None, now_fn=time.time, dictionary=None, mojang_fetch=None):
 
         now = run_at
 
-        if s.get("track_stats", True):
+        if s.track_stats:
             t0 = time.time()
             try:
                 result = run_stats_snapshot(conn, key, world_path, usercache, now)
@@ -576,7 +587,7 @@ def run_once(config=None, now_fn=time.time, dictionary=None, mojang_fetch=None):
                            int((time.time() - t0) * 1000), now=now)
                 print(f"[{key}] stats: ERROR {e}")
 
-        if s.get("track_scoreboards", True):
+        if s.track_scoreboards:
             t0 = time.time()
             try:
                 result = run_scoreboard_snapshot(conn, key, world_path, usercache, dictionary, now)
@@ -589,7 +600,7 @@ def run_once(config=None, now_fn=time.time, dictionary=None, mojang_fetch=None):
                            int((time.time() - t0) * 1000), now=now)
                 print(f"[{key}] scoreboards: ERROR {e}")
 
-        if key == "smp":
+        if s.filters_bots:
             t0 = time.time()
             try:
                 run_team_check(conn, key, world_path, now, usercache, mojang)
@@ -604,7 +615,7 @@ def run_once(config=None, now_fn=time.time, dictionary=None, mojang_fetch=None):
     t0 = time.time()
     try:
         import derive
-        derive.run_derive(conn, run_at, mojang)
+        derive.run_derive(conn, run_at, mojang, settings)
         record_run(conn, "all", "derive", True, None, None, None,
                    int((time.time() - t0) * 1000), now=run_at)
         print("[all] derive: ok")

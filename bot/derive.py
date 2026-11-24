@@ -13,14 +13,15 @@ if str(BOT_DIR) not in sys.path:
     sys.path.insert(0, str(BOT_DIR))
 
 from derive_common import (  # noqa: E402,F401  (re-exported for callers/tests)
-    ACTIVITY_CATEGORY, ACTIVITY_STAT, Scope, _servers, counted_uuids,
+    DEFAULTS, Scope, _servers, counted_uuids,
     scoreboard_filter_sql, stat_filter_sql, tracking_start,
 )
 from derive_achievements import derive_badges, derive_firsts, derive_milestones  # noqa: E402
 from derive_social import derive_rivalries, derive_spotlight  # noqa: E402
 
 
-def derive_activity(conn, run_at):
+def derive_activity(conn, run_at, settings=None):
+    category, stat = (settings or DEFAULTS).activity_stat
     for key in _servers(conn):
         start = tracking_start(conn, key)
         # First qualifying run: every player is "changed", which is not activity.
@@ -28,10 +29,10 @@ def derive_activity(conn, run_at):
             continue
         uuids = [r[0] for r in conn.execute(
             # pinned to idx_stat_at (server_key, at): a seek to this run's
-            # rows, not every play_time row ever written (schema.sql creates it)
+            # rows, not every activity-stat row ever written (schema.sql creates it)
             "SELECT DISTINCT uuid FROM stat_snapshots INDEXED BY idx_stat_at "
             "WHERE server_key=? AND at=? AND category=? AND stat_key=?",
-            (key, run_at, ACTIVITY_CATEGORY, ACTIVITY_STAT))]
+            (key, run_at, category, stat))]
         conn.executemany(
             "INSERT OR IGNORE INTO activity (server_key, at, uuid) VALUES (?, ?, ?)",
             [(key, run_at, u) for u in uuids])
@@ -259,15 +260,18 @@ def write_meta(conn, run_at):
     conn.commit()
 
 
-def run_derive(conn, run_at, mojang=None):
+def run_derive(conn, run_at, mojang=None, settings=None):
+    """settings: api.settings.Settings built by snapshot.py from config.json
+    (DEFAULTS if None)."""
+    settings = settings or DEFAULTS
     try:
-        derive_activity(conn, run_at)
+        derive_activity(conn, run_at, settings)
         derive_totals(conn, run_at)
         derive_firsts(conn, run_at)
-        derive_milestones(conn, run_at)
-        derive_rivalries(conn, run_at)
-        derive_badges(conn, run_at)
-        derive_spotlight(conn, run_at)
+        derive_milestones(conn, run_at, settings)
+        derive_rivalries(conn, run_at, settings)
+        derive_badges(conn, run_at, settings)
+        derive_spotlight(conn, run_at, settings)
         resolve_names(conn, run_at, mojang)
     finally:
         conn.rollback()

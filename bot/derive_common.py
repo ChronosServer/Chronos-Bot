@@ -11,12 +11,13 @@ if str(REPO_ROOT) not in sys.path:
 from api.scope import (  # noqa: E402,F401
     Scope, counted_uuids, scoreboard_filter_sql, stat_filter_sql,
 )
+from api.settings import DAY, DEFAULTS, days_s  # noqa: E402,F401
 
-ACTIVITY_CATEGORY = "minecraft:custom"
-ACTIVITY_STAT = "minecraft:play_time"
+# Tuning values come from api.settings (config.json stats_tracking); these
+# are fixed facts, not tuning.
 SCOREBOARD_CATEGORY = "scoreboard"
-DAY = 86400
-WEEK = 7 * DAY
+WEEK = 7 * DAY  # the rivalry gap_7d_ago window (a column name / API field)
+TICKS_PER_HOUR = 20 * 60 * 60  # Minecraft: 20 ticks per second
 
 
 def _servers(conn):

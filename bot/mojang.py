@@ -1,35 +1,43 @@
 """Mojang name/uuid lookups with a persistent cache and a per-run call budget.
 
 Results (including not-found and failed lookups) are cached in `name_lookups`
-and not retried for CACHE_SECONDS. Never raises on network trouble.
+and not retried for mojang.retry_after_days. Never raises on network trouble.
 
-Time bound per run: each HTTP call times out after TIMEOUT seconds, and the
-client stops calling once WALL_SECONDS have passed since its first call
-(treated like budget exhaustion: names not yet looked up stay uncached).
+Time bound per run: each HTTP call times out after mojang.timeout_s, at most
+mojang.max_calls calls are made, and the client stops calling once
+mojang.max_seconds have passed since its first call (treated like budget
+exhaustion: names not yet looked up stay uncached). Defaults: api/settings.py.
 """
 import json
 import re
+import sys
 import time
 import urllib.error
 import urllib.request
 import uuid as uuidlib
+from pathlib import Path
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+from api.settings import DAY, DEFAULTS  # noqa: E402
 
 BULK_URL = "https://api.minecraftservices.com/minecraft/profile/lookup/bulk/byname"
 PROFILE_URL = "https://sessionserver.mojang.com/session/minecraft/profile/"
-CACHE_SECONDS = 7 * 86400
-CHUNK = 10
+CHUNK = 10  # Mojang's bulk lookup accepts at most 10 names per request
 VALID_NAME = re.compile(r"^[A-Za-z0-9_]{1,16}$")
-TIMEOUT = 3
-WALL_SECONDS = 60
 
 
-def default_fetch(method, url, body=None):
+def default_fetch(method, url, body=None, timeout=None):
     """Return (status, body bytes); status 0 on any exception."""
+    if timeout is None:
+        timeout = DEFAULTS.mojang.timeout_s
     try:
         req = urllib.request.Request(
             url, data=body, method=method,
             headers={"Content-Type": "application/json", "User-Agent": "chronos-stats"})
-        with urllib.request.urlopen(req, timeout=TIMEOUT) as r:
+        with urllib.request.urlopen(req, timeout=timeout) as r:
             return r.status, r.read()
     except urllib.error.HTTPError as e:
         return e.code, b""
@@ -45,15 +53,19 @@ def _dash(hex_id):
 
 
 class MojangClient:
-    def __init__(self, fetch, conn, now, budget=60, clock=time.monotonic,
-                 wall_seconds=WALL_SECONDS):
+    def __init__(self, fetch, conn, now, budget=None, clock=time.monotonic,
+                 wall_seconds=None, settings=None):
+        """settings: a settings.mojang block (DEFAULTS.mojang if None);
+        budget / wall_seconds override its max_calls / max_seconds."""
+        tuning = settings or DEFAULTS.mojang
         self.fetch = fetch
         self.conn = conn
         self.now = int(now)
-        self.budget = budget
+        self.budget = tuning.max_calls if budget is None else budget
         self.calls = 0
         self.clock = clock
-        self.wall_seconds = wall_seconds
+        self.wall_seconds = tuning.max_seconds if wall_seconds is None else wall_seconds
+        self.cache_seconds = tuning.retry_after_days * DAY
         self._started = None
         self._timed_out = False
 
@@ -77,7 +89,7 @@ class MojangClient:
     def _fresh(self, key):
         row = self.conn.execute(
             "SELECT result, checked_at FROM name_lookups WHERE lookup_key=?", (key,)).fetchone()
-        if row and self.now - row[1] < CACHE_SECONDS:
+        if row and self.now - row[1] < self.cache_seconds:
             return row
         return None
 

@@ -214,7 +214,8 @@ def test_meta_last_run_at_written_when_stage_fails(world, run_snapshot, db, monk
 def _runs_without_derive(monkeypatch, run_snapshot, ats):
     import snapshot  # noqa: F401  (run_once imports derive lazily)
     real = derive.run_derive
-    monkeypatch.setattr(derive, "run_derive", lambda conn, run_at, mojang=None: None)
+    monkeypatch.setattr(derive, "run_derive",
+                        lambda conn, run_at, mojang=None, settings=None: None)
     for at in ats:
         run_snapshot(at)
     monkeypatch.setattr(derive, "run_derive", real)

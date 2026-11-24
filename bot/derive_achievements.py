@@ -11,42 +11,14 @@ import json
 import time
 
 from derive_common import (
-    SCOREBOARD_CATEGORY, DAY, _servers, counted_scoreboard, counted_stats,
-    stat_value_at_sql, tracking_start,
+    DEFAULTS, SCOREBOARD_CATEGORY, TICKS_PER_HOUR, _servers, counted_scoreboard,
+    counted_stats, days_s, stat_value_at_sql, tracking_start,
 )
 
 SEED_MARKER = "seeded_achievements"
 
-# --- milestone_rules seed rows (the only literal stat lists allowed) ---------
-COUNT_CATEGORIES = (
-    "minecraft:mined", "minecraft:used", "minecraft:crafted", "minecraft:broken",
-    "minecraft:picked_up", "minecraft:dropped", "minecraft:killed", "minecraft:killed_by",
-)
-CATEGORY_THRESHOLDS = [1000, 10000, 100000, 1000000, 10000000]
-TICKS_PER_HOUR = 72000
-CM_PER_KM = 100000
-MILESTONE_RULES = (
-    [(f"cat:{c}", c, None, CATEGORY_THRESHOLDS) for c in COUNT_CATEGORIES]
-    + [
-        ("key:minecraft:custom/minecraft:play_time", "minecraft:custom", "minecraft:play_time",
-         [h * TICKS_PER_HOUR for h in (100, 500, 1000, 5000, 10000)]),
-        ("key:minecraft:custom/minecraft:walk_one_cm", "minecraft:custom", "minecraft:walk_one_cm",
-         [km * CM_PER_KM for km in (100, 1000, 10000)]),
-        ("key:minecraft:custom/minecraft:deaths", "minecraft:custom", "minecraft:deaths",
-         [100, 1000, 10000]),
-    ]
-)
-
-# --- Addendum A1 badge constants ---------------------------------------------
-BADGE_FIRSTS_TIERS = [1, 10, 50]                 # firsts:1 / :10 / :50
-BADGE_TOP1_TIERS = [1, 10, 50]                   # top1:1 / :10 / :50
-BADGE_MILESTONE_THRESHOLDS = (1000000, 10000000)  # milestone:1000000 / :10000000
-BADGE_CATEGORY_TIERS = [100000, 1000000, 10000000]  # cat:<category>:1 / :2 / :3
-VETERAN_TICKS = 1000 * TICKS_PER_HOUR            # 1000 h = 72,000,000 ticks
-ACTIVITY_WINDOW = 30 * DAY
-REGULAR_MIN_DAYS = 20
-NIGHT_OWL_MIN_BUCKETS = 40
-NIGHT_START_HOUR, NIGHT_END_HOUR = 0, 6          # [00:00, 06:00) server-local
+# Milestone rules and badge thresholds: settings.milestones / settings.badges
+# (config.json stats_tracking; defaults in api/settings.py).
 
 
 # ----------------------------------------------------------------- seeding mode
@@ -139,18 +111,31 @@ _CROSSING = (
     "JOIN json_each(r.thresholds) t ON t.value <= x.value AND t.value > {prev}")
 
 
-def seed_milestone_rules(conn):
+def sync_milestone_rules(conn, settings=None):
+    """Upsert the configured rules (thresholds updated, enabled=1) and set
+    enabled=0 on rules no longer configured. Never deletes: milestones rows
+    keep their rule_key. New thresholds are not backfilled -- crossings are
+    only detected from changes after the rule exists."""
+    rules = (settings or DEFAULTS).milestones.rules()
     conn.executemany(
-        "INSERT OR IGNORE INTO milestone_rules (rule_key, category, stat_key, thresholds) "
-        "VALUES (?, ?, ?, ?)",
-        [(rk, c, k, json.dumps(t)) for rk, c, k, t in MILESTONE_RULES])
+        "INSERT INTO milestone_rules (rule_key, category, stat_key, thresholds, enabled) "
+        "VALUES (?, ?, ?, ?, 1) ON CONFLICT(rule_key) DO UPDATE SET "
+        "category=excluded.category, stat_key=excluded.stat_key, "
+        "thresholds=excluded.thresholds, enabled=1",
+        [(rk, c, k, json.dumps(t)) for rk, c, k, t in rules])
+    keys = [r[0] for r in rules]
+    if keys:
+        conn.execute("UPDATE milestone_rules SET enabled=0 WHERE enabled=1 AND rule_key "
+                     f"NOT IN ({','.join('?' * len(keys))})", keys)
+    else:
+        conn.execute("UPDATE milestone_rules SET enabled=0")
 
 
-def derive_milestones(conn, run_at):
+def derive_milestones(conn, run_at, settings=None):
     # Known limitation: crossings are detected from rows written at run_at
     # only. If a derive run fails, that run's crossings are never recorded --
     # the next run diffs only its own changes against their previous rows.
-    seed_milestone_rules(conn)
+    sync_milestone_rules(conn, settings)
     seeded = _seeded(conn)
     for key, seed in _seed_modes(conn, run_at).items():
         if seed:
@@ -195,10 +180,16 @@ def _tiers(count_sql, label_sql):
             "JOIN json_each(?) t ON c.n >= t.value")
 
 
-def derive_badges(conn, run_at):
+def derive_badges(conn, run_at, settings=None):
+    settings = settings or DEFAULTS
+    b = settings.badges
+    cats = settings.milestones.count_categories
+    play_cat, play_key = settings.activity_stat
+    veteran_ticks = int(round(b.veteran_hours * TICKS_PER_HOUR))
+    regular_since = run_at - days_s(b.regular.window_days)
+    owl_since = run_at - days_s(b.night_owl.window_days)
     conn.create_function("chronos_local_hour", 1, _local_hour, deterministic=True)
     conn.create_function("chronos_local_day", 1, _local_day, deterministic=True)
-    since = run_at - ACTIVITY_WINDOW
     for key in _servers(conn):
         fs, ps = counted_stats(key, "s")
         ff, pf = counted_stats(key, "f")
@@ -208,48 +199,54 @@ def derive_badges(conn, run_at):
         # Firsts: only earliest_known=0 rows count.
         _award(conn, key, run_at, _tiers(
             f"SELECT f.uuid, COUNT(*) AS n FROM firsts f WHERE {ff} AND f.earliest_known = 0 "
-            "GROUP BY f.uuid", "'firsts:' || t.value"), [*pf, json.dumps(BADGE_FIRSTS_TIERS)])
+            "GROUP BY f.uuid", "'firsts:' || t.value"), [*pf, json.dumps(b.firsts)])
 
         # Champion: #1 (ties included) in N stat keys at the same time.
         _award(conn, key, run_at, _tiers(
             "SELECT uuid, COUNT(*) AS n FROM (SELECT s.uuid, RANK() OVER ("
             " PARTITION BY s.category, s.stat_key ORDER BY s.value DESC) AS rk "
             f" FROM stat_current s WHERE {fs} AND s.value > 0) WHERE rk = 1 GROUP BY uuid",
-            "'top1:' || t.value"), [*ps, json.dumps(BADGE_TOP1_TIERS)])
+            "'top1:' || t.value"), [*ps, json.dumps(b.top1)])
 
-        # Big numbers: a milestone row at 1M / 10M, either earliest_known flag,
-        # from count rules only (cat:*) -- unit-bearing rules (play time,
-        # distance, deaths) never read as "Ten-Millionaire".
-        marks = ",".join("?" * len(BADGE_MILESTONE_THRESHOLDS))
-        _award(conn, key, run_at,
-               f"SELECT DISTINCT m.uuid, 'milestone:' || m.threshold AS badge_key FROM milestones m "
-               f"WHERE {fm} AND m.rule_key LIKE 'cat:%' AND m.threshold IN ({marks})",
-               [*pm, *BADGE_MILESTONE_THRESHOLDS])
+        # Big numbers: a milestone row at each big_numbers threshold, either
+        # earliest_known flag, from count rules only (cat:*) -- unit-bearing
+        # rules (play time, distance, deaths) never read as "Ten-Millionaire".
+        # Only thresholds that are also milestones.count_thresholds can match.
+        if b.big_numbers:
+            marks = ",".join("?" * len(b.big_numbers))
+            _award(conn, key, run_at,
+                   "SELECT DISTINCT m.uuid, 'milestone:' || m.threshold AS badge_key "
+                   f"FROM milestones m WHERE {fm} AND m.rule_key LIKE 'cat:%' "
+                   f"AND m.threshold IN ({marks})", [*pm, *b.big_numbers])
 
-        # Category tiers: sum over all keys in the category.
-        cats = ",".join("?" * len(COUNT_CATEGORIES))
-        _award(conn, key, run_at, _tiers(
-            "SELECT s.uuid, s.category, SUM(s.value) AS n FROM stat_current s "
-            f"WHERE {fs} AND s.category IN ({cats}) GROUP BY s.uuid, s.category",
-            "'cat:' || c.category || ':' || (t.key + 1)"),
-            [*ps, *COUNT_CATEGORIES, json.dumps(BADGE_CATEGORY_TIERS)])
+        # Category tiers: sum over all keys in each milestones.count_categories.
+        if cats:
+            marks = ",".join("?" * len(cats))
+            _award(conn, key, run_at, _tiers(
+                "SELECT s.uuid, s.category, SUM(s.value) AS n FROM stat_current s "
+                f"WHERE {fs} AND s.category IN ({marks}) GROUP BY s.uuid, s.category",
+                "'cat:' || c.category || ':' || (t.key + 1)"),
+                [*ps, *cats, json.dumps(b.category_tiers)])
 
-        # Veteran: play time >= 1000 h.
+        # Veteran: activity_stat (play time, ticks) >= veteran_hours.
         _award(conn, key, run_at,
                "SELECT s.uuid, 'veteran' AS badge_key FROM stat_current s "
-               f"WHERE {fs} AND s.category = 'minecraft:custom' "
-               "AND s.stat_key = 'minecraft:play_time' AND s.value >= ?", [*ps, VETERAN_TICKS])
+               f"WHERE {fs} AND s.category = ? AND s.stat_key = ? AND s.value >= ?",
+               [*ps, play_cat, play_key, veteran_ticks])
 
         recent = f"FROM activity a WHERE {fa} AND a.at > ? AND a.at <= ? GROUP BY a.uuid"
-        # Regular: active on >= 20 distinct (server-local) days of the last 30.
+        # Regular: active on >= regular.days distinct (server-local) days of
+        # the last regular.window_days.
         _award(conn, key, run_at,
                f"SELECT a.uuid, 'regular' AS badge_key {recent} "
                "HAVING COUNT(DISTINCT chronos_local_day(a.at)) >= ?",
-               [*pa, since, run_at, REGULAR_MIN_DAYS])
-        # Night Owl: >= 40 buckets in the last 30 days, > 50% in [00:00, 06:00).
+               [*pa, regular_since, run_at, b.regular.days])
+        # Night Owl: >= min_buckets buckets in the last window_days, more than
+        # `share` of them in [start_hour, end_hour) server-local.
         _award(conn, key, run_at,
                f"SELECT a.uuid, 'night_owl' AS badge_key {recent} "
-               "HAVING COUNT(*) >= ? AND 2 * SUM(chronos_local_hour(a.at) >= ? "
-               "AND chronos_local_hour(a.at) < ?) > COUNT(*)",
-               [*pa, since, run_at, NIGHT_OWL_MIN_BUCKETS, NIGHT_START_HOUR, NIGHT_END_HOUR])
+               "HAVING COUNT(*) >= ? AND SUM(chronos_local_hour(a.at) >= ? "
+               "AND chronos_local_hour(a.at) < ?) > ? * COUNT(*)",
+               [*pa, owl_since, run_at, b.night_owl.min_buckets, b.night_owl.start_hour,
+                b.night_owl.end_hour, b.night_owl.share])
     conn.commit()

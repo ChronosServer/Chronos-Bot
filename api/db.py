@@ -5,13 +5,28 @@ import sqlite3
 from functools import lru_cache
 from pathlib import Path
 
+from api.settings import api_settings
+
 CONFIG_PATH = Path(__file__).resolve().parent.parent / "config.json"
 
 
 @lru_cache(maxsize=1)
+def config_tracking():
+    """config.json's stats_tracking block, read once; None with no config
+    file. Source of both db_path and the API's settings (api/settings.py)."""
+    try:
+        with open(CONFIG_PATH, "r", encoding="utf-8") as f:
+            return json.load(f).get("stats_tracking")
+    except FileNotFoundError:
+        return None
+
+
 def _config_db_path() -> str:
-    with open(CONFIG_PATH, "r", encoding="utf-8") as f:
-        return json.load(f)["stats_tracking"]["db_path"]
+    tracking = config_tracking()
+    if not tracking or not tracking.get("db_path"):
+        raise RuntimeError(f"no stats_tracking.db_path in {CONFIG_PATH} "
+                           "and CHRONOS_STATS_DB is not set")
+    return tracking["db_path"]
 
 
 def db_path() -> str:
@@ -24,8 +39,9 @@ def get_conn() -> sqlite3.Connection:
     conn = sqlite3.connect(uri, uri=True, check_same_thread=False)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA query_only=1")
-    conn.execute("PRAGMA mmap_size=268435456")
-    conn.execute("PRAGMA cache_size=-65536")
+    api = api_settings().api
+    conn.execute(f"PRAGMA mmap_size={int(api.sqlite_mmap_bytes)}")
+    conn.execute(f"PRAGMA cache_size=-{int(api.sqlite_cache_kib)}")
     conn.execute("PRAGMA temp_store=MEMORY")
     return conn
 

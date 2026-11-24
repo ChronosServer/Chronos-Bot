@@ -8,6 +8,7 @@ from fastapi.responses import JSONResponse
 
 from api import db
 from api.routes import feeds, leaderboard, meta, player, search, series
+from api.settings import api_settings
 
 
 class ORJSONResponse(JSONResponse):
@@ -23,9 +24,12 @@ async def _lifespan(app: FastAPI):
 
 
 def create_app() -> FastAPI:
+    # Settings are read (and validated: a bad config.json raises here) once
+    # per process; a config change needs a restart.
+    settings = api_settings()
     app = FastAPI(title="Chronos Stats", default_response_class=ORJSONResponse,
                   lifespan=_lifespan)
-    app.add_middleware(GZipMiddleware, minimum_size=1000)
+    app.add_middleware(GZipMiddleware, minimum_size=settings.api.gzip_min_bytes)
 
     @app.exception_handler(ValueError)
     async def _value_error(request: Request, exc: ValueError):

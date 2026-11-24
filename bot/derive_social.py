@@ -5,26 +5,12 @@ import json
 from collections import Counter
 
 from derive_common import (
-    DAY, WEEK, _servers, clamped_ago, counted_all, counted_stats, stat_value_at_sql,
+    DAY, DEFAULTS, WEEK, _servers, clamped_ago, counted_all, counted_stats, days_s,
+    stat_value_at_sql,
 )
 
-# --- Addendum A2 ---------------------------------------------------------------
-RIVALRY_MIN_VALUE = 1000
-RIVALRY_MAX_GAP_RATIO = 0.02
-RIVALRY_PER_PLAYER = 5
-RIVALRY_PER_KEY = 3
-RIVALRY_ACTIVE_WINDOW = WEEK
-
-# --- Addendum A3 ---------------------------------------------------------------
-OUTLIER_FACTOR = 10
-OUTLIER_MIN_HOLDERS = 10
-RARE_MAX_HOLDERS = 3
-RECENT_MILESTONE_WINDOW = 7 * DAY
-RECENT_FIRST_WINDOW = 30 * DAY
-MOVER_TOP = 20
-MOVER_MIN_DELTA = 1000
-MOVER_WINDOW = WEEK
-# delta >= 50% of the value 7 days ago, written as 2 * delta >= then (exact)
+# Thresholds: settings.rivalries / settings.spotlight (config.json
+# stats_tracking; defaults in api/settings.py).
 
 
 # -------------------------------------------------------------------- rivalries
@@ -44,8 +30,10 @@ def _award_overtakers(conn, run_at):
         [run_at, *pb])
 
 
-def _rivalry_candidates(conn, key, run_at):
-    """Adjacent counted pairs (A directly above B) passing every A2 filter."""
+def _rivalry_candidates(conn, key, run_at, rv):
+    """Adjacent counted pairs (A directly above B) passing every A2 filter.
+    rv: settings.rivalries. The gap comparison window stays 7 days (WEEK):
+    it is what gap_7d_ago means."""
     then = clamped_ago(conn, key, run_at, WEEK)
     if then is None:
         return []
@@ -64,15 +52,15 @@ def _rivalry_candidates(conn, key, run_at):
         f" SELECT p.category, p.stat_key, p.uuid, p.uuid_b, p.value, p.value_b,"
         f"  {stat_value_at_sql('p', 'uuid')}, {stat_value_at_sql('p', 'uuid_b')}"
         " FROM pairs p",
-        [*ps, key, run_at - RIVALRY_ACTIVE_WINDOW, run_at,
-         RIVALRY_MIN_VALUE, RIVALRY_MAX_GAP_RATIO, then, then]).fetchall()
+        [*ps, key, run_at - days_s(rv.active_days), run_at,
+         rv.min_value, rv.max_gap_ratio, then, then]).fetchall()
     out = []
     for cat, sk, ua, ub, va, vb, a_then, b_then in rows:
         gap, gap_ago = va - vb, a_then - b_then
         # The race is moving: gap changed and B gained on this stat this week.
         if gap == gap_ago or vb - b_then < 1:
             continue
-        closing = (gap_ago - gap) / 7
+        closing = (gap_ago - gap) / (WEEK / DAY)
         overtake_days = gap / closing if closing > 0 else None
         out.append({"category": cat, "stat_key": sk, "a": ua, "b": ub, "gap": gap,
                     "gap_7d_ago": gap_ago, "overtake_days": overtake_days,
@@ -80,7 +68,7 @@ def _rivalry_candidates(conn, key, run_at):
     return out
 
 
-def _cap(cands):
+def _cap(cands, rv):
     """Per-key cap, then per-player cap, both in order of lowest overtake_days
     (None last), then smallest relative gap."""
     cands.sort(key=lambda c: (c["overtake_days"] is None, c["overtake_days"] or 0,
@@ -88,23 +76,24 @@ def _cap(cands):
     per_key, kept_key = Counter(), []
     for c in cands:
         k = (c["category"], c["stat_key"])
-        if per_key[k] < RIVALRY_PER_KEY:
+        if per_key[k] < rv.per_key:
             per_key[k] += 1
             kept_key.append(c)
     per_player, kept = Counter(), []
     for c in kept_key:
-        if per_player[c["a"]] < RIVALRY_PER_PLAYER and per_player[c["b"]] < RIVALRY_PER_PLAYER:
+        if per_player[c["a"]] < rv.per_player and per_player[c["b"]] < rv.per_player:
             per_player[c["a"]] += 1
             per_player[c["b"]] += 1
             kept.append(c)
     return kept
 
 
-def derive_rivalries(conn, run_at):
+def derive_rivalries(conn, run_at, settings=None):
+    rv = (settings or DEFAULTS).rivalries
     _award_overtakers(conn, run_at)
     conn.execute("DELETE FROM rivalries")
     for key in _servers(conn):
-        kept = _cap(_rivalry_candidates(conn, key, run_at))
+        kept = _cap(_rivalry_candidates(conn, key, run_at, rv), rv)
         conn.executemany(
             "INSERT INTO rivalries (server_key, category, stat_key, uuid_a, uuid_b, gap, "
             "gap_7d_ago, computed_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
@@ -132,7 +121,8 @@ def _holders(filt):
         f" FROM stat_current s WHERE {filt} AND s.value > 0")
 
 
-def derive_spotlight(conn, run_at):
+def derive_spotlight(conn, run_at, settings=None):
+    sp = (settings or DEFAULTS).spotlight
     conn.execute("DELETE FROM spotlight_candidates")
     for key in _servers(conn):
         fs, ps = counted_stats(key, "s")
@@ -140,7 +130,8 @@ def derive_spotlight(conn, run_at):
         ff, pf = counted_stats(key, "f")
 
         # outlier: the top counted holder (one per key), if their value is
-        # >= 10x the median of non-zero holders, with >= 10 holders.
+        # >= outlier.ratio x the median of non-zero holders, with
+        # >= outlier.min_holders holders.
         # rn is descending, so the median sits at rn (n+1)/2 and (n+2)/2.
         _spot(conn, "outlier", key, run_at,
               f"WITH h AS ({_holders(fs)}),"
@@ -150,22 +141,22 @@ def derive_spotlight(conn, run_at):
               "  json_object('median', med.m, 'ratio', ROUND(h.value / med.m, 1), 'holders', med.n)"
               "  AS detail FROM h JOIN med ON med.category = h.category AND med.stat_key = h.stat_key"
               "  WHERE h.rn = 1 AND h.value >= ? * med.m",
-              [*ps, OUTLIER_MIN_HOLDERS, OUTLIER_FACTOR])
+              [*ps, sp.outlier.min_holders, sp.outlier.ratio])
 
-        # rare: held by <= 3 counted players (value > 0); the top holder.
+        # rare: held by <= rare.max_holders counted players (value > 0); the top holder.
         _spot(conn, "rare", key, run_at,
               f"SELECT uuid, category, stat_key, value, json_object('holders', n) AS detail"
               f" FROM ({_holders(fs)}) WHERE rn = 1 AND n <= ?",
-              [*ps, RARE_MAX_HOLDERS])
+              [*ps, sp.rare.max_holders])
 
-        # recent_milestone: earliest_known = 0 within the last 7 days.
+        # recent_milestone: earliest_known = 0 within recent_milestone_days.
         _spot(conn, "recent_milestone", key, run_at,
               "SELECT m.uuid, m.category, m.stat_key, m.value_at AS value,"
               " json_object('threshold', m.threshold, 'rule_key', m.rule_key, 'at', m.at) AS detail"
               f" FROM milestones m WHERE {fm} AND m.earliest_known = 0 AND m.at >= ?",
-              [*pm, run_at - RECENT_MILESTONE_WINDOW])
+              [*pm, run_at - days_s(sp.recent_milestone_days)])
 
-        # recent_first: earliest_known = 0 within the last 30 days.
+        # recent_first: earliest_known = 0 within recent_first_days.
         _spot(conn, "recent_first", key, run_at,
               "SELECT f.uuid, f.category, f.stat_key, CASE WHEN f.category = 'scoreboard'"
               " THEN (SELECT value FROM scoreboard_current WHERE server_key = f.server_key"
@@ -174,18 +165,20 @@ def derive_spotlight(conn, run_at):
               "  AND uuid = f.uuid AND category = f.category AND stat_key = f.stat_key) END AS value,"
               " json_object('at', f.at) AS detail"
               f" FROM firsts f WHERE {ff} AND f.earliest_known = 0 AND f.at >= ?",
-              [*pf, run_at - RECENT_FIRST_WINDOW])
+              [*pf, run_at - days_s(sp.recent_first_days)])
 
-        # mover: top 20 7-day deltas with delta >= 1000 and >= 50% of the
-        # value 7 days ago (clamped to tracking start).
-        then = clamped_ago(conn, key, run_at, MOVER_WINDOW)
+        # mover: top mover.top deltas over mover.window_days with
+        # delta >= min_delta and >= min_growth x the value at the window
+        # start (clamped to tracking start).
+        mv = sp.mover
+        then = clamped_ago(conn, key, run_at, days_s(mv.window_days))
         if then is not None:
             _spot(conn, "mover", key, run_at,
                   "SELECT uuid, category, stat_key, value,"
                   " json_object('from', then_v, 'delta', value - then_v) AS detail FROM ("
                   f"  SELECT s.uuid, s.category, s.stat_key, s.value, {stat_value_at_sql('s')} AS then_v"
                   f"  FROM stat_current s WHERE {fs} AND s.updated_at > ?)"
-                  " WHERE value - then_v >= ? AND 2 * (value - then_v) >= then_v"
+                  " WHERE value - then_v >= ? AND (value - then_v) >= ? * then_v"
                   " ORDER BY value - then_v DESC, uuid, category, stat_key LIMIT ?",
-                  [then, *ps, then, MOVER_MIN_DELTA, MOVER_TOP])
+                  [then, *ps, then, mv.min_delta, mv.min_growth, mv.top])
     conn.commit()
