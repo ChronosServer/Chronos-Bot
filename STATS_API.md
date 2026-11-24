@@ -26,7 +26,8 @@ the data contract.
 
 ### Scopes and bots (apply on every page)
 - `scope` is one of `all`, `smp`, `cmps`, or a single server key such as `cmp2` or
-  `building`. `/meta.scopes` lists the valid ones. The UI needs **All / CMPs / SMP**
+  `building`. `/meta.scopes` lists the valid ones (group scopes like `cmps` are set in
+  the backend config, so take the list from there rather than hardcoding it). The UI needs **All / CMPs / SMP**
   as the main switch, plus a picker for single servers.
 - `include_bots` (default `false`) only affects SMP: on SMP, players in no team are bots
   and are hidden by default. CMPs always show everyone. Offer an "include bots" toggle
@@ -34,7 +35,9 @@ the data contract.
 - Multi-server scopes **sum** a player's values across servers.
 
 ### Time ranges
-`range=1d|1w|1m|6m|1y|all`, or `from=<unix>&to=<unix>` (both optional).
+`range=1d|1w|1m|6m|1y|all`, or `from=<unix>&to=<unix>` (both optional). The presets
+are backend config: build the range picker from `/meta.settings.range_presets`
+(name → seconds) plus `all`, which is always valid.
 - No `range`/`from` → **current totals** (`mode: "total"`). With `to` only → totals as of `to`.
 - With `range` or `from` → **the gain over that window** (`mode: "delta"`).
 - Tracking began on 2026-11-24, and nothing earlier exists. Windows that reach further
@@ -66,10 +69,46 @@ Load this once per page.
               "track_stats":true,"track_scoreboards":true}, …],
  "scopes": ["all","smp","cmps","building","cmp","cmp2","cmp3","cmp4"],
  "categories": ["minecraft:broken","minecraft:crafted","minecraft:custom", …],
- "tracking_started_at": {"smp": 1795527876, …}}
+ "tracking_started_at": {"smp": 1795527876, …},
+ "settings": {…}}
 ```
 - Use `last_run_at` for an "updated N min ago" label.
 - `filters_bots: true` marks the server where the bot toggle matters (smp).
+- `scopes` is in menu order: `all`, single servers outside any group (`smp`), group
+  scopes (`cmps`), then the servers inside groups.
+
+#### `/meta.settings`
+The backend's tuning values. They come from the server's config, so **read presets,
+limits and badge thresholds from here instead of hardcoding them**:
+```json
+"settings": {
+  "range_presets": {"1d": 86400, "1w": 604800, "1m": 2592000, "6m": 15724800, "1y": 31536000},
+  "activity_bucket_s": 900,
+  "limits": {"leaderboard": 200, "feed": 200, "search": 50, "series_players": 6,
+             "series_points": 500, "player_milestones": 50},
+  "compare": {"min_players": 2, "max_players": 6, "max_keys": 20},
+  "badges": {"firsts": [1, 10, 50], "top1": [1, 10, 50],
+             "big_numbers": [1000000, 10000000],
+             "category_tiers": [100000, 1000000, 10000000],
+             "categories": ["minecraft:mined", "minecraft:used", …],
+             "veteran_hours": 1000,
+             "regular": {"days": 20, "window_days": 30},
+             "night_owl": {"min_buckets": 40, "window_days": 30, "share": 0.5,
+                           "start_hour": 0, "end_hour": 6}}
+}
+```
+(the values shown are the defaults)
+- `range_presets`: the valid `range=` values besides `all`.
+- `limits`: the most a request returns. `leaderboard` caps `/leaderboard` `limit`, `feed`
+  caps `/milestones` and `/rivalries`, `search` caps `/search`, `series_players` is the
+  most uuids `/series` takes, `series_points` the most points per line,
+  `player_milestones` how many milestones `/player` returns. A larger `limit` is clamped,
+  not rejected.
+- `compare`: how many players (min/max) and keys `/compare` accepts.
+- `badges`: the thresholds behind each badge key, for "Pioneer: 10 real firsts" style
+  descriptions and progress bars. Badge **display names stay in the frontend**, keyed by
+  family and tier order (the first `firsts` tier is Trailblazer, the second Pioneer, the
+  third Founder; `cat:<category>:1/2/3` are I/II/III, and so on).
 
 ### `GET /search?q=sto&limit=10`
 Autocomplete. It answers from memory, so call it on every keystroke (debounce about 120 ms).
@@ -81,7 +120,7 @@ Autocomplete. It answers from memory, so call it on every keystroke (debounce ab
 - Matching is case-insensitive. Prefix matches come first, then shorter ones.
 - `stone` matches `minecraft:stone`. The same key appears once per category (mined,
   used, crafted…), so group them in the dropdown.
-- `limit` defaults to 10, max 50.
+- `limit` defaults to 10, max `settings.limits.search` (50).
 
 ### `GET /keys?scope=all&kind=stat|scoreboard`
 Every stat or objective present in the scope, for browse menus.
@@ -97,7 +136,7 @@ Params:
 - `scope`
 - `range` or `from`/`to`
 - `include_bots`
-- `limit` (default 50, max 200) and `offset`
+- `limit` (default 50, max `settings.limits.leaderboard`, 200) and `offset`
 
 ```json
 {"effective_from": 1795527876, "to": 1795600000, "mode": "total",
@@ -108,7 +147,7 @@ Params:
 - In delta mode, players with a gain of 0 are left out.
 
 ### `GET /series`
-Graph lines for 1–6 players. Params: `kind`, `category`, `key`, `uuids=a,b,c`,
+Graph lines for 1–6 players (`settings.limits.series_players`). Params: `kind`, `category`, `key`, `uuids=a,b,c`,
 `scope`, `range` or `from`/`to`, `include_bots`.
 ```json
 {"effective_from": …, "to": …,
@@ -117,7 +156,8 @@ Graph lines for 1–6 players. Params: `kind`, `category`, `key`, `uuids=a,b,c`,
 - Values are **cumulative totals** in step form. The first point is at
   `effective_from`, and each later point is a change.
 - Draw as a step line (`curveStepAfter`) and extend the last value to `to`.
-- At most 500 points per line. A uuid with no data returns `[]`.
+- At most 500 points per line (`settings.limits.series_points`). A uuid with no data
+  returns `[]`.
 
 ### `GET /totals`
 Server-vs-server comparison: whole-server total lines. Params: `kind`, `category`,
@@ -146,15 +186,16 @@ The player profile ("dossier"). Params: `scope`, `include_bots`.
              "closing_per_day":65.8,"overtake_days":5.2}, …]}
 ```
 - A name lookup is case-insensitive.
-- `milestones` holds the latest 50 entries.
+- `milestones` holds the latest 50 entries (`settings.limits.player_milestones`).
 - "Best ranks" = sort `stats` by `rank / of`.
 - If `is_bot_on_smp` is true, the player's own numbers still show. Label them as a bot
   account.
 
 ### `GET /compare`
 N-way compare. Params:
-- `uuids=` 2–6 names or uuids
-- `keys=minecraft:mined|minecraft:stone,scoreboard|digs`: up to 20 keys; each key is
+- `uuids=` 2–6 names or uuids (`settings.compare.min_players` / `max_players`)
+- `keys=minecraft:mined|minecraft:stone,scoreboard|digs`: up to 20 keys
+  (`settings.compare.max_keys`); each key is
   `category|key` for stats or `scoreboard|<objective>`
 - `scope`, `range` or `from`/`to`, `include_bots`
 
@@ -167,7 +208,7 @@ N-way compare. Params:
   `is_bot_on_smp`, turn the bot toggle on for the comparison.
 
 ### `GET /milestones?scope=all&limit=50&before=<cursor>`
-The milestones feed.
+The milestones feed. `limit` max `settings.limits.feed` (200).
 ```json
 {"rows": [{"id":…,"at":…,"server_key":"smp","uuid":"…","name":"…",
            "category":"minecraft:mined","key":"minecraft:stone",
@@ -185,6 +226,7 @@ The milestones feed.
 - `earliest_known: 0` → a real, observed first, so show the date.
 
 ### `GET /rivalries?scope=all&uuid=<optional>&limit=50`
+`limit` max `settings.limits.feed` (200).
 ```json
 {"rows": [{"server_key":"smp","category":"…","key":"…",
            "a":{"uuid":"…","name":"…"}, "b":{"uuid":"…","name":"…"},
@@ -197,7 +239,8 @@ The milestones feed.
 
 ### `GET /activity?scope=smp&range=1m`
 `{"bucket_seconds": 900, "buckets": [[ts, active_players], …]}`
-- Each bucket is 15 minutes (UTC). Empty buckets are left out, so fill gaps with 0.
+- Each bucket is `bucket_seconds` long (15 minutes by default, same as
+  `settings.activity_bucket_s`; UTC). Empty buckets are left out, so fill gaps with 0.
 - Bin them in the **viewer's local time** to build:
   - the **activity heatmap** (day of week × hour);
   - the **server pulse clock** (24-hour radial: average players per hour of day).
@@ -238,7 +281,11 @@ Verb per category:
 ## Badges (36): key → display
 
 Badges are per server and are kept once earned. The display names below are the
-agreed names. Map them in the frontend (the backend only stores keys).
+agreed names. Map them in the frontend (the backend only stores keys), by family and
+tier order. The thresholds in the keys and the "Meaning" column are the defaults; the
+live ones are in `/meta.settings.badges`. If a threshold is changed in the backend
+config, new badges get the new key (`firsts:20` instead of `firsts:10`) and already
+earned ones keep the old key, so map names by tier position, not by the number.
 
 | badge_key | Name | Meaning |
 |---|---|---|

@@ -143,6 +143,18 @@ Three real bugs were found and fixed here by actually running against production
 scoreboards are mostly noise (MotX/health/gt/boatnumber), set `track_scoreboards:
 false` there rather than filtering client-side.
 
+**Tuning lives in `stats_tracking` (defaults in `api/settings.py`).** Every tuning value
+(per-server `filters_bots`, `scope_groups`, `activity_stat`, milestone rules, badge /
+rivalry / spotlight thresholds, Mojang limits, dictionary cache, API presets / limits /
+cache) is an optional key there; a missing key = the default in `DEFAULT_CONFIG`, which
+is the old hardcoded value. `load_settings()` deep-merges and validates (ValueError naming
+the key path; snapshot and API fail loudly, never fall back). Consumers take a `Settings`
+object (attribute access): the snapshot builds it each run and passes it to
+`run_derive(conn, run_at, mojang, settings)`; the API builds it once via
+`api_settings()` from the same config.json as `db_path` (restart to apply). Don't add new
+literals to bot/derive*, bot/mojang.py, bot/snapshot.py or api/ — add a key with a
+default. Full key list and semantics: `docs/STATS_DATABASE.md` section 1.
+
 Real `config.json` today: `excluded_servers: ["mirror","tour","snapshot","building2"]`;
 tracked servers `smp` (group smp), `cmp`, `cmp2`, `cmp3`, `cmp4`, `building` (all group
 cmp), all with stats + scoreboards on.
@@ -164,16 +176,17 @@ tables) → SQLite → `api/` (FastAPI, read-only) → nginx `/api/stats/*` → 
 | Path | Role |
 |---|---|
 | `bot/snapshot.py` | reads stat files + scoreboard.dat, writes change-only history; `run_once(config, now_fn, dictionary, mojang_fetch)` — injectable for tests; one run-wide `now` shared by every server |
-| `bot/mojang.py` | `MojangClient`: bulk name→uuid + uuid→name, ≤60 calls, 3 s/call, 60 s wall cap per run, results (incl. failures) cached 7 days in `name_lookups`; only valid MC usernames are sent |
+| `bot/mojang.py` | `MojangClient`: bulk name→uuid + uuid→name, limits from `stats_tracking.mojang` (defaults ≤60 calls, 3 s/call, 60 s wall cap per run, results incl. failures cached 7 days in `name_lookups`); only valid MC usernames are sent |
 | `bot/derive.py` (+ `derive_common.py`, `derive_achievements.py`, `derive_social.py`) | stages in order: activity → totals (incl. one-time history backfill) → firsts → milestones → rivalries → badges → spotlight → resolve_names → write_meta (always). Failure = `snapshot_runs.kind='derive' ok=0`, never fails the snapshot |
+| `api/settings.py` | **the only place tuning values live**: defaults, deep merge, validation of `stats_tracking`; `load_settings()`, `DEFAULTS`, `api_settings()` |
 | `api/scope.py` | **the only place participant rules live** (scopes, SMP bot rule, fake/unresolved, mirrors) as SQL fragments; derive imports it too |
-| `api/timeq.py` | ranges (`1d/1w/1m/6m/1y/all`, from/to), clamp to tracking start, value-at-T reads, downsampling |
-| `api/cache.py` | `@cached`: key = path + declared params + data_version; ETag/304; LRU ≤128 MiB, bodies >8 MiB not cached |
+| `api/timeq.py` | ranges (presets from `api.range_presets`, default `1d/1w/1m/6m/1y`, plus `all`; from/to), clamp to tracking start, value-at-T reads, downsampling |
+| `api/cache.py` | `@cached`: key = path + declared params + data_version; ETag (includes a settings fingerprint)/304; LRU bounds from `api.cache_*` (default ≤128 MiB, bodies >8 MiB not cached) |
 | `api/db.py` | read-only connections; `data_version` = live `MAX(snapshot_runs.id)`; `REQUIRED_INDEXES` startup check |
 | `api/routes/*` | meta, leaderboard, series/totals, player/compare, search/keys, feeds (milestones, firsts, rivalries, activity, spotlight) |
 | `sql/schema.sql`, `sql/migrations.py` | schema (CREATE IF NOT EXISTS) then migrations by `PRAGMA user_version` (now 2) |
 | `deploy/` | systemd units (snapshot, timer, api) + nginx snippet |
-| `tests/` | pytest, 201 tests, synthetic worlds built through the real snapshot write path, no network |
+| `tests/` | pytest, 252 tests, synthetic worlds built through the real snapshot write path, no network; tests never read the repo's config.json (autouse fixture; `api_config` writes one) |
 | `STATS_API.md` | the HTTP contract for the website (copy into the website repo) |
 | `docs/STATS_DATABASE.md` | operator guide: config, first setup, upgrade, health checks, backup, reset |
 | `STATS_FRONTEND_PROMPT.md` | the kickoff prompt for Claude Code in the website repo |
@@ -185,8 +198,10 @@ tables) → SQLite → `api/` (FastAPI, read-only) → nginx `/api/stats/*` → 
   stat-file holders are bots (`BedBot`, `Endswitch`, `digsort`, `001`…) — these are named
   automation accounts WITH stat files, a different thing from the fake-player NPCs.
   Flags are written only for uuids with an SMP stat file. Bot filtering keys on
-  `servers.filters_bots=1` (only smp). CMPs never filter.
-- **Scopes:** `all`, `smp`, `cmps` (group_key `cmp`), or one server key; only
+  `servers.filters_bots=1`, set from config `servers.<key>.filters_bots` (default: smp
+  only — keep it that way, it is the owner's rule). CMPs never filter.
+- **Scopes:** `all`, each `scope_groups` name (default `cmps` → group_key `cmp`), or one
+  server key (`smp`, `cmp2`, …); only
   `provisioned=1` servers (the `all` pseudo row in `servers` is provisioned=0 and exists
   only as an FK target for `snapshot_runs.kind='derive'`). Multi-server scopes sum per
   player. A bot on SMP still counts on CMPs.
@@ -198,7 +213,11 @@ tables) → SQLite → `api/` (FastAPI, read-only) → nginx `/api/stats/*` → 
   count toward Firsts badges.
 - Badges (36), rivalries (gap ≤2%, leader ≥1000, both active 7d, gap moving, ≤5/player,
   ≤3/key) and spotlight (outlier/rare/recent_milestone/recent_first/mover) are specified
-  exactly in the spec's Addendum A — implement changes there first.
+  exactly in the spec's Addendum A — implement changes there first. The numbers are the
+  `stats_tracking` defaults; changing a number is a config edit, not a code change.
+  Milestone rules are synced each run (thresholds updated, removed rules `enabled=0`,
+  never deleted, no backfill); a changed badge threshold changes the badge key and
+  awarded badges stay.
 - **Totals** are fully recomputed every run (set-based) and history was backfilled once
   (meta `totals_backfilled`); `total_no_bots` uses today's bot flags for all history.
 - **Performance gotcha:** without `ANALYZE` SQLite picks the `(server_key, at)` indexes
