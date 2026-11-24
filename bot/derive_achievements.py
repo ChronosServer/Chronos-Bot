@@ -204,11 +204,14 @@ def derive_badges(conn, run_at):
             f" FROM stat_current s WHERE {fs} AND s.value > 0) WHERE rk = 1 GROUP BY uuid",
             "'top1:' || t.value"), [*ps, json.dumps(BADGE_TOP1_TIERS)])
 
-        # Big numbers: a milestone row at 1M / 10M, either earliest_known flag.
+        # Big numbers: a milestone row at 1M / 10M, either earliest_known flag,
+        # from count rules only (cat:*) -- unit-bearing rules (play time,
+        # distance, deaths) never read as "Ten-Millionaire".
         marks = ",".join("?" * len(BADGE_MILESTONE_THRESHOLDS))
         _award(conn, key, run_at,
                f"SELECT DISTINCT m.uuid, 'milestone:' || m.threshold AS badge_key FROM milestones m "
-               f"WHERE {fm} AND m.threshold IN ({marks})", [*pm, *BADGE_MILESTONE_THRESHOLDS])
+               f"WHERE {fm} AND m.rule_key LIKE 'cat:%' AND m.threshold IN ({marks})",
+               [*pm, *BADGE_MILESTONE_THRESHOLDS])
 
         # Category tiers: sum over all keys in the category.
         cats = ",".join("?" * len(COUNT_CATEGORIES))

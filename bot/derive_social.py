@@ -139,7 +139,8 @@ def derive_spotlight(conn, run_at):
         fm, pm = counted_stats(key, "m")
         ff, pf = counted_stats(key, "f")
 
-        # outlier: value >= 10x the median of non-zero holders, >= 10 holders.
+        # outlier: the top counted holder (one per key), if their value is
+        # >= 10x the median of non-zero holders, with >= 10 holders.
         # rn is descending, so the median sits at rn (n+1)/2 and (n+2)/2.
         _spot(conn, "outlier", key, run_at,
               f"WITH h AS ({_holders(fs)}),"
@@ -148,7 +149,7 @@ def derive_spotlight(conn, run_at):
               " SELECT h.uuid, h.category, h.stat_key, h.value,"
               "  json_object('median', med.m, 'ratio', ROUND(h.value / med.m, 1), 'holders', med.n)"
               "  AS detail FROM h JOIN med ON med.category = h.category AND med.stat_key = h.stat_key"
-              "  WHERE h.value >= ? * med.m",
+              "  WHERE h.rn = 1 AND h.value >= ? * med.m",
               [*ps, OUTLIER_MIN_HOLDERS, OUTLIER_FACTOR])
 
         # rare: held by <= 3 counted players (value > 0); the top holder.

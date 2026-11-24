@@ -245,6 +245,13 @@ def test_badge_big_numbers_and_veteran(world, run_snapshot, db):
     assert "veteran" not in {k for k, _ in badges(db, P2)}
 
 
+def test_big_numbers_only_from_count_rules(world, run_snapshot, db):
+    world.add_stats("cmp", P, {"minecraft:custom": {"minecraft:walk_one_cm": 10000000}})
+    run_snapshot(1000)
+    assert q(db, "SELECT threshold FROM milestones WHERE uuid=?", P) == [(10000000,)]
+    assert "milestone:10000000" not in {k for k, _ in badges(db, P)}
+
+
 def test_badge_top1_counts_simultaneous_keys(run_snapshot, db):
     fresh(run_snapshot, db)
     add_run(db, "cmp", 1000)
@@ -467,10 +474,15 @@ def test_spotlight_outlier_needs_10_holders(run_snapshot, db):
         put(db, "cmp", uid(i), "minecraft:mined", "nine", 10, T0)
     put(db, "cmp", P, "minecraft:mined", "nine", 1000, T0)  # only 9 holders
     put(db, "cmp", uid(50), "minecraft:mined", "ten", 0, T0)  # zero holder ignored
+    # 'two': 10 holders, median 10; two holders >= 100 -> only the top one
+    for i in range(8):
+        put(db, "cmp", uid(i), "minecraft:mined", "two", 10, T0)
+    put(db, "cmp", P, "minecraft:mined", "two", 500, T0)
+    put(db, "cmp", P2, "minecraft:mined", "two", 200, T0)
     db.commit()
     derive.derive_spotlight(db, RUN)
     rows = spot(db, "outlier")
-    assert [(r[1], r[3], r[4]) for r in rows] == [(P, "ten", 100)]
+    assert [(r[1], r[3], r[4]) for r in rows] == [(P, "ten", 100), (P, "two", 500)]
     d = json.loads(rows[0][5])
     assert d["median"] == 10 and d["holders"] == 10
 
