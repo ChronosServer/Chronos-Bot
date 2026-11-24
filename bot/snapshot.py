@@ -122,6 +122,16 @@ def sync_servers_table(conn, cfg, now=None):
                 provisioned,
             ),
         )
+    # Pseudo row so run-wide records (kind='derive') satisfy the FK on
+    # snapshot_runs.server_key. provisioned=0 keeps it out of every scope.
+    conn.execute(
+        """
+        INSERT INTO servers (key, label, group_key, filters_bots,
+                              track_stats, track_scoreboards, provisioned)
+        VALUES ('all', 'All', 'all', 0, 0, 0, 0)
+        ON CONFLICT(key) DO UPDATE SET label='All', group_key='all',
+            filters_bots=0, track_stats=0, track_scoreboards=0, provisioned=0
+        """)
     conn.commit()
 
 
@@ -523,7 +533,10 @@ def run_once(config=None, now_fn=time.time, dictionary=None, mojang_fetch=None):
 
     conn = connect_db(db_path)
     sync_servers_table(conn, cfg, int(now_fn()))
-    mojang = MojangClient(mojang_fetch or default_fetch, conn, int(now_fn()))
+    # One run-wide timestamp: every row written this run shares `at`, so
+    # derive can find the whole run with `at = run_at`.
+    run_at = int(now_fn())
+    mojang = MojangClient(mojang_fetch or default_fetch, conn, run_at)
 
     if dictionary is None:
         try:
@@ -548,7 +561,7 @@ def run_once(config=None, now_fn=time.time, dictionary=None, mojang_fetch=None):
         server_root = cfg.get("server", {}).get(f"{key}_path")
         usercache = load_usercache(server_root) if server_root else {}
 
-        now = int(now_fn())
+        now = run_at
 
         if s.get("track_stats", True):
             t0 = time.time()
@@ -587,6 +600,20 @@ def run_once(config=None, now_fn=time.time, dictionary=None, mojang_fetch=None):
                 record_run(conn, key, "team_check", False, str(e), None, None,
                            int((time.time() - t0) * 1000), now=now)
                 print(f"[{key}] team_check: ERROR {e}")
+
+    sys.path.insert(0, str(REPO_ROOT))
+    t0 = time.time()
+    try:
+        import derive
+        derive.run_derive(conn, run_at, mojang)
+        record_run(conn, "all", "derive", True, None, None, None,
+                   int((time.time() - t0) * 1000), now=run_at)
+        print("[all] derive: ok")
+    except Exception as e:
+        conn.rollback()
+        record_run(conn, "all", "derive", False, str(e), None, None,
+                   int((time.time() - t0) * 1000), now=run_at)
+        print(f"[all] derive: ERROR {e}")
 
     conn.close()
 
