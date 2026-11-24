@@ -1,7 +1,7 @@
 import sqlite3
 
 import pytest
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, Query, Request
 from fastapi.responses import JSONResponse
 from fastapi.testclient import TestClient
 
@@ -102,7 +102,7 @@ def test_cached_sync_handler_hits_cache_once(client):
     calls = []
 
     @cached
-    def h(request: Request, conn=Depends(db.get_db)):
+    def h(request: Request, conn=Depends(db.get_db), a: int = 0, b: int = 0):
         calls.append(1)
         return {"n": 1, 1: "x"}
 
@@ -147,3 +147,61 @@ def test_bad_scope_400(client):
     app.include_router(router, prefix="/api/stats")
     r = TestClient(app).get("/api/stats/_boom")
     assert r.status_code == 400 and "nope" in r.json()["error"]
+
+
+def test_cache_key_ignores_undeclared_params(client):
+    calls = []
+
+    @cached
+    def h(request: Request, conn=Depends(db.get_db), a: int = 0,
+          from_: int = Query(None, alias="from")):
+        calls.append(1)
+        return {"a": a}
+
+    c = _app_with(h)
+    e = [c.get(f"/api/stats/_t?a=1&_={i}").headers["ETag"] for i in range(5)]
+    assert len(calls) == 1 and len(cache._lru) == 1
+    assert len(set(e)) == 1
+    c.get("/api/stats/_t?a=1&from=5")  # alias is a declared parameter
+    assert len(calls) == 2
+    c.get("/api/stats/_t?from=5&a=1&junk=x")
+    assert len(calls) == 2
+
+
+def test_cache_bounded_by_bytes(client, monkeypatch):
+    monkeypatch.setattr(cache, "MAX_BYTES", 2500)
+    calls = []
+
+    @cached
+    def h(request: Request, conn=Depends(db.get_db), a: int = 0):
+        calls.append(a)
+        return {"pad": "x" * 1000}
+
+    c = _app_with(h)
+    for a in (1, 2, 3):
+        assert c.get(f"/api/stats/_t?a={a}").status_code == 200
+    assert len(cache._lru) == 2 and cache._bytes <= 2500
+    c.get("/api/stats/_t?a=1")  # evicted (oldest) -> recomputed
+    assert calls == [1, 2, 3, 1]
+    c.get("/api/stats/_t?a=3")  # still cached
+    assert calls == [1, 2, 3, 1]
+
+
+def test_oversized_body_served_not_cached(client, monkeypatch):
+    monkeypatch.setattr(cache, "MAX_BODY", 500)
+    calls = []
+
+    @cached
+    def h(request: Request, conn=Depends(db.get_db)):
+        calls.append(1)
+        return {"pad": "x" * 1000}
+
+    c = _app_with(h)
+    r1 = c.get("/api/stats/_t")
+    assert r1.status_code == 200 and r1.json()["pad"] == "x" * 1000
+    assert len(cache._lru) == 0 and cache._bytes == 0
+    r2 = c.get("/api/stats/_t", headers={"If-None-Match": r1.headers["ETag"]})
+    assert r2.status_code == 304
+    r3 = c.get("/api/stats/_t")
+    assert r3.status_code == 200 and r3.headers["ETag"] == r1.headers["ETag"]
+    assert len(calls) == 2
