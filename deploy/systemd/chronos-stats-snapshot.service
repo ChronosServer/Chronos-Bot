@@ -1,7 +1,8 @@
 [Unit]
 Description=Chronos stats snapshot (player stat files + scoreboards -> SQLite)
-# Purely local file reads; no network dependency beyond the one-off dictionary
-# fetch, which snapshot.py already tolerates failing.
+# Mostly local file reads. Network use: the one-off dictionary fetch and Mojang
+# name lookups (3 s per call, at most 60 calls and ~60 s per run); both are
+# allowed to fail without failing the run.
 After=local-fs.target
 
 [Service]

@@ -2,9 +2,14 @@
 
 Results (including not-found and failed lookups) are cached in `name_lookups`
 and not retried for CACHE_SECONDS. Never raises on network trouble.
+
+Time bound per run: each HTTP call times out after TIMEOUT seconds, and the
+client stops calling once WALL_SECONDS have passed since its first call
+(treated like budget exhaustion: names not yet looked up stay uncached).
 """
 import json
 import re
+import time
 import urllib.error
 import urllib.request
 import uuid as uuidlib
@@ -14,6 +19,8 @@ PROFILE_URL = "https://sessionserver.mojang.com/session/minecraft/profile/"
 CACHE_SECONDS = 7 * 86400
 CHUNK = 10
 VALID_NAME = re.compile(r"^[A-Za-z0-9_]{1,16}$")
+TIMEOUT = 3
+WALL_SECONDS = 60
 
 
 def default_fetch(method, url, body=None):
@@ -22,7 +29,7 @@ def default_fetch(method, url, body=None):
         req = urllib.request.Request(
             url, data=body, method=method,
             headers={"Content-Type": "application/json", "User-Agent": "chronos-stats"})
-        with urllib.request.urlopen(req, timeout=10) as r:
+        with urllib.request.urlopen(req, timeout=TIMEOUT) as r:
             return r.status, r.read()
     except urllib.error.HTTPError as e:
         return e.code, b""
@@ -38,15 +45,31 @@ def _dash(hex_id):
 
 
 class MojangClient:
-    def __init__(self, fetch, conn, now, budget=60):
+    def __init__(self, fetch, conn, now, budget=60, clock=time.monotonic,
+                 wall_seconds=WALL_SECONDS):
         self.fetch = fetch
         self.conn = conn
         self.now = int(now)
         self.budget = budget
         self.calls = 0
+        self.clock = clock
+        self.wall_seconds = wall_seconds
+        self._started = None
+        self._timed_out = False
+
+    @property
+    def exhausted(self):
+        """No more calls this run: budget spent or wall-clock cap reached."""
+        return self.calls >= self.budget or self._timed_out
 
     def _spend(self):
-        if self.calls >= self.budget:
+        if self.exhausted:
+            return False
+        t = self.clock()
+        if self._started is None:
+            self._started = t
+        elif t - self._started >= self.wall_seconds:
+            self._timed_out = True
             return False
         self.calls += 1
         return True

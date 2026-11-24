@@ -136,3 +136,52 @@ def test_uuid_key_normalised(conn):
     c.uuid_to_name("12345678123412341234123456789ABC")
     assert conn.execute("SELECT lookup_key FROM name_lookups").fetchone() == (
         "uuid:12345678-1234-1234-1234-123456789abc",)
+
+
+def test_wall_clock_cap_stops_calls(conn):
+    calls = []
+    t = [100.0]
+
+    def fetch(method, url, body):
+        calls.append(1)
+        t[0] += 25  # each call "takes" 25 s
+        return 404, b""
+    c = MojangClient(fetch, conn, NOW, clock=lambda: t[0])
+    c.names_to_uuids([f"n{i}" for i in range(50)])  # 5 chunks wanted
+    # calls start at t=100, 125, 150; at t=175 >= 100+60 the client stops
+    assert len(calls) == 3 and c.exhausted
+    keys = {r[0] for r in conn.execute("SELECT lookup_key FROM name_lookups")}
+    assert len(keys) == 30 and "name:n35" not in keys  # the rest left uncached
+    assert c.uuid_to_name("12345678-1234-1234-1234-123456789abc") is None
+    assert len(calls) == 3
+    assert conn.execute("SELECT COUNT(*) FROM name_lookups WHERE lookup_key LIKE 'uuid:%'"
+                        ).fetchone()[0] == 0
+
+
+def test_default_fetch_timeout_is_3s(monkeypatch):
+    import mojang
+    seen = {}
+
+    def fake_urlopen(req, timeout=None):
+        seen["timeout"] = timeout
+        raise OSError("no network in tests")
+    monkeypatch.setattr(mojang.urllib.request, "urlopen", fake_urlopen)
+    assert mojang.default_fetch("GET", "http://x") == (0, b"")
+    assert seen["timeout"] == 3
+
+
+def test_resolve_names_stops_when_wall_clock_exhausted(conn):
+    import derive
+    t = [0.0]
+    calls = []
+
+    def fetch(method, url, body):
+        calls.append(1)
+        t[0] += 61
+        return 404, b""
+    for i in range(3):
+        conn.execute("INSERT INTO players (uuid, name, name_resolved, first_seen, last_observed) "
+                     f"VALUES ('12345678-1234-1234-1234-12345678900{i}', NULL, 0, 1, {i})")
+    conn.commit()
+    derive.resolve_names(conn, NOW, MojangClient(fetch, conn, NOW, clock=lambda: t[0]))
+    assert len(calls) == 1

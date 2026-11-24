@@ -232,7 +232,7 @@ def resolve_names(conn, run_at, mojang):
         "SELECT uuid FROM players WHERE name_resolved = 0 "
         "ORDER BY last_observed DESC, uuid").fetchall()]
     for uuid in pending:
-        if mojang.calls >= mojang.budget:
+        if mojang.exhausted:
             break
         name = mojang.uuid_to_name(uuid)
         if name:
