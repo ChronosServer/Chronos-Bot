@@ -26,9 +26,9 @@ def _servers(conn):
 
 
 def tracking_start(conn, server_key):
-    """MIN(at) of stats runs that actually read something."""
+    """MIN(at) of stats/import runs that actually read something."""
     return conn.execute(
-        "SELECT MIN(at) FROM snapshot_runs WHERE server_key=? AND kind='stats' "
+        "SELECT MIN(at) FROM snapshot_runs WHERE server_key=? AND kind IN ('stats','import') "
         "AND ok=1 AND entries_read > 0", (server_key,)).fetchone()[0]
 
 

@@ -33,7 +33,7 @@ def milestones_sql(frag, cur_sql=""):
     # instead of sorting every milestone row in a temp b-tree per page.
     return (
         f"SELECT m.id, m.at, m.server_key, m.uuid, p.name, m.category, m.stat_key, "
-        f"m.threshold, m.earliest_known FROM milestones m INDEXED BY idx_milestones_feed "
+        f"m.threshold, m.earliest_known, m.approximate FROM milestones m INDEXED BY idx_milestones_feed "
         f"LEFT JOIN players p ON p.uuid = m.uuid WHERE {frag}{cur_sql} "
         f"ORDER BY m.earliest_known ASC, m.at DESC, m.id DESC LIMIT ?")
 
@@ -56,7 +56,7 @@ def milestones(request: Request, conn=Depends(db.get_db), scope: str = "all",
     more = len(rows) > limit
     rows = rows[:limit]
     cols = ("id", "at", "server_key", "uuid", "name", "category", "key", "threshold",
-            "earliest_known")
+            "earliest_known", "approximate")
     out = [dict(zip(cols, r)) for r in rows]
     nxt = None
     if more and out:
@@ -73,9 +73,10 @@ def firsts(request: Request, conn=Depends(db.get_db), scope: str = "all",
     frag, params = stat_filter_sql(sc, include_bots, "f")
     rows = conn.execute(
         f"SELECT f.server_key, f.category, f.stat_key, f.uuid, p.name, f.at, "
-        f"f.earliest_known FROM firsts f LEFT JOIN players p ON p.uuid = f.uuid "
+        f"f.earliest_known, f.approximate FROM firsts f LEFT JOIN players p ON p.uuid = f.uuid "
         f"WHERE {frag} ORDER BY f.at, f.id", params).fetchall()
-    cols = ("server_key", "category", "key", "uuid", "name", "at", "earliest_known")
+    cols = ("server_key", "category", "key", "uuid", "name", "at", "earliest_known",
+            "approximate")
     return {"rows": [dict(zip(cols, r)) for r in rows]}
 
 

@@ -177,9 +177,9 @@ The player profile ("dossier"). Params: `scope`, `include_bots`.
  "badges": [{"badge_key":"firsts:1","server_key":"smp","awarded_at":…}, …],
  "milestones": [{"at":…,"server_key":"smp","rule_key":"cat:minecraft:mined",
                  "category":"minecraft:mined","stat_key":"minecraft:stone",
-                 "threshold":100000,"value_at":100342,"earliest_known":0}, …],
+                 "threshold":100000,"value_at":100342,"earliest_known":0,"approximate":0}, …],
  "firsts": [{"at":…,"server_key":"smp","category":"minecraft:crafted",
-             "stat_key":"minecraft:crafter","earliest_known":0}, …],
+             "stat_key":"minecraft:crafter","earliest_known":0,"approximate":0}, …],
  "rivals": [{"server_key":"smp","category":"minecraft:crafted","stat_key":"minecraft:crafting_table",
              "uuid_a":"…","uuid_b":"…","other_uuid":"…","other_name":"PapiChase",
              "gap":339,"gap_7d_ago":800,"computed_at":…,
@@ -212,7 +212,7 @@ The milestones feed. `limit` max `settings.limits.feed` (200).
 ```json
 {"rows": [{"id":…,"at":…,"server_key":"smp","uuid":"…","name":"…",
            "category":"minecraft:mined","key":"minecraft:stone",
-           "threshold":1000000,"earliest_known":0}, …],
+           "threshold":1000000,"earliest_known":0,"approximate":0}, …],
  "next": "0:1795599000:812"}
 ```
 - Pass `next` back as `before` for the next page; `null` means the end.
@@ -221,9 +221,11 @@ The milestones feed. `limit` max `settings.limits.feed` (200).
   heading such as "Already reached before tracking began", without a date.
 
 ### `GET /firsts?scope=all`
-`{"rows": [{"server_key","category","key","uuid","name","at","earliest_known"}, …]}`
+`{"rows": [{"server_key","category","key","uuid","name","at","earliest_known","approximate"}, …]}`
 - `earliest_known: 1` → label it **"earliest known holder"**, not "first ever".
 - `earliest_known: 0` → a real, observed first, so show the date.
+- `approximate: 1` (on firsts and milestones, in `/firsts`, `/milestones` and `/player`) → the date comes
+  from an imported backup, so it is only known to lie before that backup: show "by <date>", not an exact date.
 
 ### `GET /rivalries?scope=all&uuid=<optional>&limit=50`
 `limit` max `settings.limits.feed` (200).

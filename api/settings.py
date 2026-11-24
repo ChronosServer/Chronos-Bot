@@ -394,6 +394,11 @@ def _str_list(v, path, distinct=True):
     return tuple(v)
 
 
+def _no_comments(d):
+    """A whole-replaced map without its "_"-prefixed (comment) keys."""
+    return {k: v for k, v in d.items() if not (isinstance(k, str) and k.startswith("_"))}
+
+
 def _known_keys(d, allowed, path):
     for k in d:
         if isinstance(k, str) and k.startswith("_"):
@@ -407,7 +412,7 @@ def _known_keys(d, allowed, path):
 def _servers(raw, path):
     _obj(raw, path)
     out = {}
-    for key, entry in raw.items():
+    for key, entry in _no_comments(raw).items():
         p = f"{path}.{key}"
         if key == "all":
             raise ValueError(f"{p}: the server key 'all' is reserved")
@@ -428,7 +433,7 @@ def _servers(raw, path):
 def _scope_groups(raw, path, servers):
     _obj(raw, path)
     out = {}
-    for name, group in raw.items():
+    for name, group in _no_comments(raw).items():
         p = f"{path}.{name}"
         if not name or name == "all" or name in servers:
             raise ValueError(f"{p}: a scope name must not be empty, 'all' or a server key")
@@ -505,7 +510,7 @@ def _spotlight(raw, path):
 
 
 def _api(raw, path):
-    presets = _obj(raw["range_presets"], f"{path}.range_presets")
+    presets = _no_comments(_obj(raw["range_presets"], f"{path}.range_presets"))
     if not presets:
         raise ValueError(f"{path}.range_presets must not be empty")
     for name, secs in presets.items():

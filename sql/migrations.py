@@ -27,7 +27,18 @@ def _v2(conn):
                  "ON milestones(earliest_known, at DESC, id DESC)")
 
 
-MIGRATIONS = [_v1, _v2]
+def _v3(conn):
+    # approximate=1: dated by an imported backup, so "by <date>", not exact.
+    _add_column(conn, "firsts", "approximate", "INTEGER NOT NULL DEFAULT 0")
+    _add_column(conn, "milestones", "approximate", "INTEGER NOT NULL DEFAULT 0")
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS imports ("
+        "world_path TEXT, level_name TEXT, server_key TEXT, last_played INTEGER, "
+        "data_version INTEGER, imported_at INTEGER, rows_written INTEGER, "
+        "PRIMARY KEY(server_key, last_played))")
+
+
+MIGRATIONS = [_v1, _v2, _v3]
 
 
 def migrate(conn: sqlite3.Connection) -> None:

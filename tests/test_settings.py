@@ -174,3 +174,18 @@ def test_api_settings_read_from_config_json_once(api_config, tmp_path):
 def test_api_settings_default_without_config_file():
     from api.settings import api_settings
     assert api_settings() == DEFAULTS
+
+
+def test_underscore_keys_ignored_in_servers_map():
+    s = load_settings({"servers": {"_c": "note", "smp": {"label": "SMP", "group": "smp"}}})
+    assert list(s.servers) == ["smp"]
+
+
+def test_underscore_keys_ignored_in_scope_groups_map():
+    s = load_settings({"scope_groups": {"_c": "note", "cmps": "cmp"}})
+    assert dict(s.scope_groups) == {"cmps": "cmp"}
+
+
+def test_underscore_keys_ignored_in_range_presets_map():
+    s = load_settings({"api": {"range_presets": {"_c": "note", "1d": 86400}}})
+    assert dict(s.api.range_presets) == {"1d": 86400}

@@ -148,12 +148,12 @@ def player(ident: str, request: Request, conn=Depends(db.get_db),
         f"(server_key IS NULL OR server_key IN ({marks})) ORDER BY awarded_at, badge_key",
         sp)]
     mcols = ("at", "server_key", "rule_key", "category", "stat_key", "threshold",
-             "value_at", "earliest_known")
+             "value_at", "earliest_known", "approximate")
     milestones = [dict(zip(mcols, r)) for r in conn.execute(
         f"SELECT {', '.join(mcols)} FROM milestones WHERE uuid=? AND server_key IN ({marks}) "
         f"ORDER BY at DESC, id DESC LIMIT ?",
         [*sp, api_settings().api.player_milestones_limit])]
-    fcols = ("at", "server_key", "category", "stat_key", "earliest_known")
+    fcols = ("at", "server_key", "category", "stat_key", "earliest_known", "approximate")
     firsts = [dict(zip(fcols, r)) for r in conn.execute(
         f"SELECT {', '.join(fcols)} FROM firsts WHERE uuid=? AND server_key IN ({marks}) "
         f"ORDER BY at, id", sp)]
