@@ -4,7 +4,7 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import JSONResponse
 
-from api.routes import leaderboard, meta
+from api.routes import leaderboard, meta, series
 
 
 class ORJSONResponse(JSONResponse):
@@ -23,4 +23,5 @@ def create_app() -> FastAPI:
 
     app.include_router(meta.router, prefix="/api/stats")
     app.include_router(leaderboard.router, prefix="/api/stats")
+    app.include_router(series.router, prefix="/api/stats")
     return app
