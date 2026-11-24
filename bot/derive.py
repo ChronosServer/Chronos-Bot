@@ -8,26 +8,16 @@ Only provisioned=1 servers are iterated (the 'all' pseudo row is 0).
 import sys
 from pathlib import Path
 
-REPO_ROOT = Path(__file__).resolve().parent.parent
-if str(REPO_ROOT) not in sys.path:
-    sys.path.insert(0, str(REPO_ROOT))
+BOT_DIR = Path(__file__).resolve().parent
+if str(BOT_DIR) not in sys.path:
+    sys.path.insert(0, str(BOT_DIR))
 
-from api.scope import Scope, scoreboard_filter_sql, stat_filter_sql  # noqa: E402
-
-ACTIVITY_CATEGORY = "minecraft:custom"
-ACTIVITY_STAT = "minecraft:play_time"
-
-
-def _servers(conn):
-    return [r[0] for r in conn.execute(
-        "SELECT key FROM servers WHERE provisioned=1 ORDER BY key")]
-
-
-def tracking_start(conn, server_key):
-    """MIN(at) of stats runs that actually read something."""
-    return conn.execute(
-        "SELECT MIN(at) FROM snapshot_runs WHERE server_key=? AND kind='stats' "
-        "AND ok=1 AND entries_read > 0", (server_key,)).fetchone()[0]
+from derive_common import (  # noqa: E402,F401  (re-exported for callers/tests)
+    ACTIVITY_CATEGORY, ACTIVITY_STAT, Scope, _servers, scoreboard_filter_sql,
+    stat_filter_sql, tracking_start,
+)
+from derive_achievements import derive_badges, derive_firsts, derive_milestones  # noqa: E402
+from derive_social import derive_rivalries, derive_spotlight  # noqa: E402
 
 
 def derive_activity(conn, run_at):
@@ -111,29 +101,24 @@ def derive_totals(conn, run_at):
     conn.commit()
 
 
-# Stubs for later tasks; orchestration order is final.
-def derive_firsts(conn, run_at):
-    pass
-
-
-def derive_milestones(conn, run_at):
-    pass
-
-
-def derive_rivalries(conn, run_at):
-    pass
-
-
-def derive_badges(conn, run_at):
-    pass
-
-
-def derive_spotlight(conn, run_at):
-    pass
-
-
 def resolve_names(conn, run_at, mojang):
-    pass
+    """Spend whatever is left of the run's shared Mojang budget resolving
+    names of players we only know by uuid, most recently observed first."""
+    if mojang is None:
+        return
+    pending = [r[0] for r in conn.execute(
+        "SELECT uuid FROM players WHERE name_resolved = 0 "
+        "ORDER BY last_observed DESC, uuid").fetchall()]
+    for uuid in pending:
+        if mojang.calls >= mojang.budget:
+            break
+        name = mojang.uuid_to_name(uuid)
+        if name:
+            # same effect as snapshot.upsert_player(..., name_resolved=True)
+            # minus touching last_observed (a lookup is not an observation)
+            conn.execute("UPDATE players SET name = ?, name_resolved = 1 WHERE uuid = ?",
+                         (name, uuid))
+    conn.commit()
 
 
 def write_meta(conn, run_at):
