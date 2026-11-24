@@ -131,7 +131,7 @@ def test_totals_backfill_for_untouched_key(world, run_snapshot, db):
     db.execute("DELETE FROM stat_totals")
     db.commit()
     run_snapshot(1900)  # nothing changed in-game: key not touched this run
-    assert totals(db) == [("minecraft:custom", "minecraft:play_time", 10, 0)] or         totals(db)[0][2] == 10
+    assert totals(db)[0][2] == 10
     assert q(db, "SELECT COUNT(*) FROM stat_totals")[0][0] == 1
 
 
