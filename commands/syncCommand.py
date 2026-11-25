@@ -398,7 +398,7 @@ async def sync_archive(bot, full=False):
 
     state = load_state()
     existing = {p['id']: p for p in state.get('archive', [])}
-    failed = set(state.get('archive_media_failed', []))
+    media_failed = set(state.get('archive_media_failed', []))
     now = datetime.now(timezone.utc)
 
     threads = list(channel.threads)
@@ -416,9 +416,12 @@ async def sync_archive(bot, full=False):
         # unchanged thread (no new messages) whose files are all cached locally:
         # reuse the saved copy instead of refetching it
         if (cached and not full and cached.get('last_message_id') == last_id
-                and not needs_media_refresh(cached, failed)):
+                and not needs_media_refresh(cached, media_failed)):
             cached['title'] = thread.name
             cached['tags'] = tags
+            # its remote links are all cached (maybe by another thread) or given
+            # up on: point them at the local copies; nothing is downloaded here
+            localize_post(cached, media_failed)
             posts.append(cached)
             continue
 
@@ -447,13 +450,13 @@ async def sync_archive(bot, full=False):
             'embeds': first.get('embeds', []),
             'messages': messages[1:],
         }
-        await asyncio.to_thread(localize_post, post, failed)  # downloads: off the event loop
+        await asyncio.to_thread(localize_post, post, media_failed)  # downloads: off the event loop
         posts.append(post)
         await asyncio.sleep(0.25)
 
     posts.sort(key=lambda x: x['timestamp'], reverse=True)
     state['archive'] = posts
-    state['archive_media_failed'] = sorted(failed)
+    state['archive_media_failed'] = sorted(media_failed)
     save_state(state)
     write_json_atomic(os.path.join(DATA_DIR, 'archive.json'), posts)
     log(f"archive: {len(posts)} posts written ({fetched} fetched, {failed} failed and kept old copy)")
