@@ -176,13 +176,31 @@ scoreboards 7,697 — the ~126k skipped are vanilla mirrors, 9,223 of 9,346 obje
 run 2 with no in-game change wrote 0 everywhere, run 3 after real play wrote smp 61 /
 13, cmp 30, others 0. Then put on a 15-min systemd timer
 (`deploy/systemd/chronos-stats-snapshot.{service,timer}`, installed + enabled on the
-server, currently running the OLD `snapshot.py` until the branch is deployed). Live DB:
-~3.3k players, ~263k stat_current rows, ~10k scoreboard rows, history since 2026-11-24.
-It also has early `ok=1` stats runs with `entries_read=0` (from before the path fixes)
-— tracking start must ignore them (see below). The API, derive step and import tool are
-verified by tests (358) only; they have not run on the live server yet.
+server). Live DB: ~3.3k players, ~263k stat_current rows, ~10k scoreboard rows, history
+since 2026-11-24. It also has early `ok=1` stats runs with `entries_read=0` (from before
+the path fixes) — tracking start must ignore them (see below).
 
-### What the backend is (branch `stats-api`, not merged/pushed yet)
+### Deployed (live server, 2026-11-25)
+The whole backend runs live (runbook: `TEMP_INFO.md`, untracked):
+- First new-code snapshot by hand: every server `ok`, derive `ok`, 26.5 s (incl. totals
+  backfill + seeding); steady-state derive ≈ 21 s per 15-min run. Schema v3.
+- `chronos-stats-api.service` (uvicorn, 2 workers, `127.0.0.1:8765`) behind the nginx
+  `location /api/stats/` block in `/etc/nginx/sites-enabled/default` (one `server {}`,
+  port 80, next to `/api/status`). **Cloudflare is in front** (TLS, `server: cloudflare`):
+  public URL `https://www.chronosmc.com/api/stats/*`, uncached by Cloudflare (DYNAMIC);
+  weak `W/` ETags from Cloudflare are accepted. A Cloudflare rate-limit rule on
+  `/api/stats/` (60 req / 10 s per IP) was requested (instructions in `TEMP_INFO.md`).
+- curl through nginx: everything 200; uncached ≤ 60 ms except `/player` (~0.46 s, ranks
+  every key) and `/search` (~0.23 s); cached 1–7 ms.
+- SMP bot rule on live data: 120 counted of 2,687 flagged uuids (2,567 bots).
+- Backup import done: 5 SMP backups (1.16.5 2021-10-28, 1.17.1 2023-12-16, 1.18.2
+  2024-01-26, 1.20.2 2024-08-25, 1.21 2026-07-15; dates owner-confirmed), 210,505 stat +
+  8,000 scoreboard rows, rebuild 5.8 s; undo copy `pre-import-20261125-074152.db`.
+  `tracking_started_at:smp` = 2021-10-28; 2,897 approximate firsts, 28,866 approximate
+  milestones, 122 Firsts badges. 16b (extra rebuild) not needed.
+- Tests: 358, all passing locally.
+
+### What the backend is (merged to `master` 2026-11-25)
 Pipeline: timer → `bot/snapshot.py` (history, change-only) → `bot/derive.py` (derived
 tables) → SQLite → `api/` (FastAPI, read-only) → nginx `/api/stats/*` → website.
 
@@ -294,7 +312,7 @@ tables) → SQLite → `api/` (FastAPI, read-only) → nginx `/api/stats/*` → 
   (backup-only) counts 0 from then on, so backfilled totals match the live recompute. This
   is a no-op without imports. Per-player history is untouched.
 
-### Deploy (not done yet — step-by-step runbook for the live server is in `TEMP_INFO.md`)
+### Deploy / redeploy (done 2026-11-25 — runbook in `TEMP_INFO.md`; this is the order for any redeploy)
 Order, on the live server (Debian, root, repo `/opt/chronos/Chronos-Bot`, Python
 `/opt/python/bin/python3`):
 1. Get the code there: the owner normally copies the changed files with WinSCP (never
@@ -312,7 +330,9 @@ Order, on the live server (Debian, root, repo `/opt/chronos/Chronos-Bot`, Python
 6. Backup import: stop timer + service, `tools/import_backups.py --server smp --dry-run`
    on the SMP backups (1.16/1.17/1.18/1.20/1.21), then the real run, then start the timer.
    The API can keep running. Then check `/meta.tracking_started_at.smp` moved back.
-7. The `stats-api` branch is not pushed to origin yet — push before any `git pull` deploy.
+7. The code is on `master` (origin). A later update: stop the timer + service, copy the
+   changed files (or `git pull`), run `bot/snapshot.py` once if `sql/` changed, restart
+   `chronos-stats-api` if `api/` changed, start the timer.
 
 ### Working with the owner
 The owner can't copy/paste reliably from the server terminal: put server commands in

@@ -23,6 +23,19 @@ frontend only.
    must look and feel like the rest of the Chronos site, not like the WaveStats
    reference that inspired the feature list.
 
+**What the live data looks like today (2026-11-25), so you don't mistake it for bugs:**
+- SMP history starts **2021-10-28** (five imported backups: 2021-10, 2023-12, 2024-01,
+  2024-08, 2026-07), then dense 15-minute snapshots from 2026-11-24. The CMPs and
+  `building` start 2026-11-24. So SMP graphs are a few coarse steps over years, then
+  detailed.
+- **Rivalries are empty** and the activity heatmap / pulse clock are almost empty: both
+  need players active over the last days, and activity is only recorded since
+  2026-11-24. They fill in over the first week; show a friendly empty state.
+- Most firsts/milestones are `earliest_known: 1` or `approximate: 1` (from before live
+  tracking); new, exactly dated ones appear as people play.
+- ~1.6k old players still have `name: null`; names resolve gradually.
+- The site is behind Cloudflare (see Local development).
+
 **What to build (v1):**
 - **Navigation:** one new top-level **"Stats ▾"** dropdown with Overview / Explorer /
   Scoreboards / Player / Compare / Milestones. Not six top-level items. Bolt map and

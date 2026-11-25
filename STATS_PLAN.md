@@ -109,7 +109,7 @@ aren't part of the same subsystem the way the six stats views are.
 3. ~~Wire `snapshot.py` into a scheduler~~ — systemd oneshot service + 15-min
    timer in `deploy/systemd/` (separate process, not a bot `tasks.loop`, to
    keep the heavy NBT/SQLite work out of the bot). Installed and running on the
-   server (still the old `snapshot.py` until step 7).
+   server.
 4. ~~Backend API layer (FastAPI) reading the stats SQLite DB: leaderboards,
    deltas over arbitrary timeframes, graph data, rankings, heatmap data,
    rivalry/catching-up detection, milestone/firsts derivation jobs.~~ — done
@@ -121,15 +121,14 @@ aren't part of the same subsystem the way the six stats views are.
    (1.16 - 1.21) into history as earlier points; `dictionaries/` bundles the
    every-scoreboard dictionaries; firsts and milestones between points are
    marked `approximate`.~~ — done (guide: `tools/README.md`).
-7. Deployment and backup import on the server (PENDING): copy/pull the branch,
-   merge the `stats_tracking` block into the server's config.json, install the
-   3 API pins, run `snapshot.py` once by hand, start the API + nginx block, then
-   run the backup import (dry run first). Steps: `docs/STATS_DATABASE.md`,
-   `tools/README.md`.
+7. ~~Deployment and backup import on the server~~ — done 2026-11-25: the API is
+   live at `https://www.chronosmc.com/api/stats/*` (nginx → uvicorn, Cloudflare in
+   front), the snapshot + derive run every 15 min, and 5 SMP backups are imported,
+   so **SMP history starts 2021-10-28** (CMPs and `building`: 2026-11-24).
 8. Website (NEXT): Stats frontend: the six pages listed above, in the established
    Chronos design system (dark panels, teal accent, Syncopate/IBM Plex,
    scroll-reveal — see website's CLAUDE.md), built from the Design/
    Engineering/Impeccable/taste/Emil-Kowalski skill set now installed in
    Claude Code for this. The kickoff prompt is `STATS_FRONTEND_PROMPT.md`; the
-   data contract is `STATS_API.md`. History may start years before 2026-11-24
-   once the backups are imported, so the UI reads dates and presets from the API.
+   data contract is `STATS_API.md`. History starts years before 2026-11-24 on SMP
+   (backups imported), so the UI reads dates and presets from the API.

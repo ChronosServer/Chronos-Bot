@@ -1,8 +1,8 @@
 # Chronos Stats API: contract for the website
 
 Copy this file into the website repo next to `STATS_PLAN.md`. It describes every
-endpoint the Stats pages can use, exactly as the backend (Chronos-Bot, branch
-`stats-api`) implements it. `STATS_PLAN.md` is the scope and feature list; this file is
+endpoint the Stats pages can use, exactly as the backend (Chronos-Bot, `master`)
+implements it; it is live at `https://www.chronosmc.com/api/stats/`. `STATS_PLAN.md` is the scope and feature list; this file is
 the data contract.
 
 ## Basics
@@ -41,9 +41,11 @@ are backend config: build the range picker from `/meta.settings.range_presets`
 - No `range`/`from` → **current totals** (`mode: "total"`). With `to` only → totals as of `to`.
 - With `range` or `from` → **the gain over that window** (`mode: "delta"`).
 - History starts at the server's **tracking start**, `/meta.tracking_started_at[server]`.
-  Live tracking began on 2026-11-24, but once old world backups are imported
-  (`tools/import_backups.py`) the tracking start moves back to the oldest backup, so
-  `tracking_started_at` and `effective_from` can be **years earlier** (for example 2021). Never hardcode the 24 Nov 2026 date.
+  Live tracking began on 2026-11-24, but old world backups are imported
+  (`tools/import_backups.py`), which moves the tracking start back to the oldest backup, so
+  `tracking_started_at` and `effective_from` can be **years earlier**. Today SMP starts
+  2021-10-28 and the CMPs 2026-11-24; more backups may be imported later, so never
+  hardcode either date.
 - Windows that reach further back than the tracking start are clamped, and the response's
   **`effective_from`** says the real start. Show "since tracking began (<date>)", with
   the date formatted from `effective_from` (or `tracking_started_at`), whenever
