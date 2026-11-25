@@ -97,6 +97,8 @@ def test_history_and_current_summed_under_target(merged, run_snapshot):
                 "ORDER BY at") == [(B, 13)]
     assert q(w, "SELECT uuid FROM firsts WHERE stat_key='minecraft:gold_ore'") == [(B,)]
     assert q(w, "SELECT value FROM meta WHERE key=?", "merged:" + A) == [(B,)]
+    # never active on either account: stays unknown (NULL), not 0 = 1970
+    assert q(w, "SELECT last_activity FROM players WHERE uuid=?", B) == [(None,)]
     assert list(Path(w.db_path).parent.glob("pre-merge-*.db"))
 
 

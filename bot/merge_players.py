@@ -166,7 +166,9 @@ def _merge_derived(conn, a, b):
             "INSERT INTO players (uuid, name, name_resolved, first_seen, last_activity, "
             "last_observed) VALUES (?, NULL, 0, ?, ?, ?) ON CONFLICT(uuid) DO UPDATE SET "
             "first_seen=MIN(first_seen, excluded.first_seen), "
-            "last_activity=MAX(COALESCE(last_activity, 0), COALESCE(excluded.last_activity, 0))",
+            # the later of the two; NULL (never active) only if both are NULL
+            "last_activity=COALESCE(MAX(last_activity, excluded.last_activity), "
+            "last_activity, excluded.last_activity)",
             (b, pa[0], pa[1], pa[2]))
 
 
