@@ -364,11 +364,27 @@ then `python -m pytest tests -q` (Windows, Python 3.13 locally; server is 3.14).
    affected (the live usercache has only the current name; the old one stays
    `unresolved:`). Seen on the live DB after the 2026-11-25 import: 20 (at, objective)
    groups, all one player (`NotQuiteRat` 7 vs `NotQuiteRat_` 179 on `Levels`); it also
-   made the real import write 16 fewer scoreboard rows than the dry run. Fix: in
-   `_scoreboard_rows`, when several raw names resolve to one uuid in one backup, keep one
-   entry (the name that is that uuid's name in that backup's own usercache, else the
-   largest value). Repair the live DB: delete the losing rows at import points, then
-   `import_backups.py --server smp --rebuild-only` (timer stopped). Add a test.
+   made the real import write 16 fewer scoreboard rows than the dry run. Renames are
+   handled in-game by `commands/statTransferCommand.py` (admin `stattransfer <from> <to>`:
+   `scoreboard players operation <to> <obj> += <from> <obj>` for every objective, then
+   `scoreboard players reset <from>`); `NotQuiteRat` was never transferred at those points.
+   Fix (mirror what the live snapshot does): in `_scoreboard_rows`, a raw name counts as
+   the uuid only if it is that uuid's name in **that backup's own** usercache; other names
+   for the same uuid become `unresolved:` rows, as live does. A later live transfer then
+   shows as the same jump it would have live. Repair the live DB: rewrite those rows at
+   import points (uuid NULL, kind unresolved), then `import_backups.py --server smp
+   --rebuild-only` (timer stopped). Add a test.
+3. **Live snapshot never records a reset score.** `run_scoreboard_snapshot`
+   (`bot/snapshot.py`) only writes entries present in `PlayerScores`; an entry that
+   disappears (`scoreboard players reset`, e.g. the `<from>` side of `stattransfer`) keeps
+   its last value in `scoreboard_current` forever. Harmless for a normal rename transfer
+   (the old name is `unresolved:`, never shown), wrong when `<from>` is a real current
+   player (an alt merged into a main, or an admin reset): their old scores stay on the
+   API, and after a transfer they're counted twice. Fix: when the `PlayerScores` tag is
+   present, every `(participant_key, objective)` in `scoreboard_current` whose objective
+   still exists but whose entry is gone this run gets a value-0 history row and current
+   0. A missing `PlayerScores` tag still means nothing (Paper omission, see the NBT quirk
+   above), and a removed objective stays `scoreboard_meta.removed`'s job. Test both.
 
 ## Website nav plan (for when Stats ships)
 Top-level nav gets one new "Stats ▾" dropdown (Overview / Explorer / Scoreboards /
