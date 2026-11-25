@@ -334,6 +334,27 @@ then `python -m pytest tests -q` (Windows, Python 3.13 locally; server is 3.14).
    applies: bundle the new version's dictionary (every-scoreboard `create.py`) before
    bumping `server.minecraft_version`.
 
+## Known follow-ups (open)
+1. **Hide a server's data when its tracking toggle is off (decided, not implemented yet).**
+   `track_stats` / `track_scoreboards` only stop the snapshot reading that server
+   (`bot/snapshot.py run_once`); rows already collected stay, and nothing in `api/` or derive
+   checks the flags (only `/meta` reports them). Live case: the owner turned
+   `track_scoreboards` off on every CMP and `building` (2026-11-25, at deploy), after they
+   had been collected since 2026-11-24 — so their scoreboard values sit frozen at the last
+   reading but still show in `cmps`/`all` (summed with live SMP values for same-named
+   objectives), in `/search` objectives, `/leaderboard`, `/series`, `/totals`, `/player`,
+   and their scoreboard firsts/milestones stay in the feeds.
+   Agreed fix: **hide at read time, never delete** (turning a toggle back on brings the data
+   back), the same pattern as the mirror filter. Add a servers-flag clause in `api/scope.py`
+   (`EXISTS (SELECT 1 FROM servers WHERE key=<a>.server_key AND track_scoreboards=1)`, and
+   the `track_stats` equivalent) to `scoreboard_filter_sql` / `stat_filter_sql`, to
+   `achievement_not_mirror_sql` (by category: `scoreboard` rows → `track_scoreboards`, others
+   → `track_stats`) and `objective_not_mirror_sql`; filter `api/routes/search.py`'s objective
+   and stat lists; and decide whether derive (totals, rivalries, badges, spotlight) should
+   skip untracked data too (it reads the same fragments via `derive_common`, so it would by
+   default — check badge/total side effects). Keep pinned-index `EXPLAIN QUERY PLAN` tests
+   passing.
+
 ## Website nav plan (for when Stats ships)
 Top-level nav gets one new "Stats ▾" dropdown (Overview / Explorer / Scoreboards /
 Player / Compare / Milestones) — NOT six new top-level items, and Bolt map / World
