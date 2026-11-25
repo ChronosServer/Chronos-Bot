@@ -104,16 +104,23 @@ main() {
   fi
 
   # Tracked files that differ on the server (config.json is expected to).
-  # One already identical to the incoming version (copied with WinSCP) is fine.
-  local DIRTY="" SAME_TRACKED="" f
+  # Harmless, so git's version is used without asking (nothing is lost):
+  # a file already identical to the incoming version (copied with WinSCP),
+  # one that differs from git only in line endings (Windows CRLF from a
+  # WinSCP copy) from the current or the incoming version, or a deleted one.
+  local DIRTY="" SAME_TRACKED="" f n_same=0
   while IFS= read -r f; do
     [ -z "$f" ] || [ "$f" = config.json ] && continue
-    if [ -e "$f" ] && [ "$(git hash-object "$f")" = "$(git rev-parse "$NEW:$f" 2>/dev/null)" ]; then
-      SAME_TRACKED+="$f"$'\n'
+    if [ ! -e "$f" ] \
+        || [ "$(git hash-object "$f")" = "$(git rev-parse "$NEW:$f" 2>/dev/null)" ] \
+        || git diff --quiet --ignore-cr-at-eol HEAD -- "$f" 2>/dev/null \
+        || git diff --quiet --ignore-cr-at-eol "$NEW" -- "$f" 2>/dev/null; then
+      SAME_TRACKED+="$f"$'\n'; n_same=$((n_same + 1))
     else
       DIRTY+="$f"$'\n'
     fi
   done < <(git status --porcelain --untracked-files=no | awk '{print $NF}')
+  [ $n_same -gt 0 ] && echo "$n_same file(s) differ from git only in line endings, are missing, or already match the new version: git's version is used"
   # Untracked files where an incoming commit adds a file: the pull would refuse.
   # One already identical to the incoming file (e.g. copied by hand) is just removed.
   local BLOCKING="" SAME=""
