@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends, Request
 
 from api import db, timeq
 from api.cache import cached
+from api.merges import api_merges
 from api.scope import resolve_scope
 from api.settings import api_settings
 
@@ -16,7 +17,8 @@ def leaderboard(request: Request, conn=Depends(db.get_db), kind: str = "stat",
                 category: str = "", key: str = "", scope: str = "all",
                 range: str = None, from_: int = timeq.ts_param("from"),
                 to: int = timeq.ts_param(),
-                include_bots: bool = False, limit: int = 50, offset: int = 0):
+                include_bots: bool = False, limit: int = 50, offset: int = 0,
+                q: str = ""):
     if kind not in ("stat", "scoreboard"):
         raise ValueError(f"bad kind: {kind!r}")
     if not key or (kind == "stat" and not category):
@@ -50,7 +52,7 @@ def leaderboard(request: Request, conn=Depends(db.get_db), kind: str = "stat",
         # total mode: values at `to` when given, else current; a 0 is no
         # standing (unused stat, reset score) and is left out like a 0 gain
         vals = {u: v for u, v in values_at(None if r.is_now else r.to_ts).items() if v != 0}
-    ranked = rank_rows(vals)
+    ranked = name_filter(conn, rank_rows(vals), q)
     return {
         "effective_from": r.effective_from,
         "to": r.to_ts,
@@ -71,6 +73,21 @@ def rank_rows(vals: dict) -> list:
             rank, prev = i + 1, v
         out.append((u, v, rank))
     return out
+
+
+def name_filter(conn, ranked, q) -> list:
+    """Rows whose player name or a former name (aka) contains q,
+    case-insensitively, spaces read as '_'. Ranks stay those of the
+    unfiltered board. Blank q: no filter."""
+    needle = (q or "").strip().lower().replace(" ", "_")
+    if not needle or not ranked:
+        return ranked
+    names = dict(conn.execute("SELECT uuid, name FROM players"))
+    m = api_merges()
+
+    def hit(u):
+        return any(needle in n.lower() for n in [names.get(u) or "", *m.former_names(u)])
+    return [row for row in ranked if hit(row[0])]
 
 
 def page_rows(conn, ranked, limit, offset) -> list:
