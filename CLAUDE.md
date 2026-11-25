@@ -355,6 +355,20 @@ then `python -m pytest tests -q` (Windows, Python 3.13 locally; server is 3.14).
    skip untracked data too (it reads the same fragments via `derive_common`, so it would by
    default — check badge/total side effects). Keep pinned-index `EXPLAIN QUERY PLAN` tests
    passing.
+2. **Import: a renamed player's old-name scoreboard entries collide with the new name's.**
+   Scoreboards key by name, so after a rename the old name's entries stay on the board,
+   frozen. `tools/import_backups.py` resolves names through every backup's usercache merged
+   (`_resolve_names`), so both names map to the same uuid and both rows are written at the
+   same `at`. History reads (`MAX(at) ... GROUP BY server_key, uuid`) then pick one of the
+   two arbitrarily, so the value at that import point may be the stale one. Live is not
+   affected (the live usercache has only the current name; the old one stays
+   `unresolved:`). Seen on the live DB after the 2026-11-25 import: 20 (at, objective)
+   groups, all one player (`NotQuiteRat` 7 vs `NotQuiteRat_` 179 on `Levels`); it also
+   made the real import write 16 fewer scoreboard rows than the dry run. Fix: in
+   `_scoreboard_rows`, when several raw names resolve to one uuid in one backup, keep one
+   entry (the name that is that uuid's name in that backup's own usercache, else the
+   largest value). Repair the live DB: delete the losing rows at import points, then
+   `import_backups.py --server smp --rebuild-only` (timer stopped). Add a test.
 
 ## Website nav plan (for when Stats ships)
 Top-level nav gets one new "Stats ▾" dropdown (Overview / Explorer / Scoreboards /
