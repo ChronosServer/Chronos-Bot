@@ -107,6 +107,7 @@ DRY RUN, nothing written - server smp
   probable mirrors skipped: 3 (first 20: kb-old_mob, m-grass_path, u-scute)
   renamed keys: minecraft:custom/minecraft:play_one_minute x812, minecraft:mined/minecraft:grass_path x95
   unknown keys (2): minecraft:mined/minecraft:weird_block, ...
+  old names summed into the current name (2): LordHamster42 -> hampter42, Obi81 -> ObiWan8_
 total: 1 to import, 0 skipped, 0 refused; rows 401233 stats, 2210 scoreboard
 ```
 
@@ -128,6 +129,12 @@ What to check:
 - **unknown keys:** Keys that are neither in the rename table nor anywhere in the live DB.
   These are often renamed keys missing from `stat_renames.json` (add them; see below), or
   removed blocks and items. They are imported unchanged unless you pass `--skip-unknown`.
+- **old names summed into the current name:** Renamed players. Scoreboards key by name, so
+  a renamed player's old name can still be on the board. Every name that maps to the same
+  uuid (through any backup's `usercache.json` or the live player names) is added up under
+  the player's current name, like the in-game `stattransfer`. A rename you know of that's
+  missing here means its old name is in no usercache: it is imported as an unknown
+  participant (not shown on the website).
 - **skipped / refused:** Each skipped or refused backup has its reason printed under it.
 
 ## Flags

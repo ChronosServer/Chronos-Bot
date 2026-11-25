@@ -60,7 +60,13 @@ bot. Only `db_path` and `servers` are needed; this is the live server's block:
   them would double-count everything.
 - **Worlds not created yet:** a configured server whose world folder doesn't exist yet
   (e.g. snapshot, building2) is skipped as "not provisioned", not treated as an error.
-- **`track_stats` / `track_scoreboards`:** turn tracking on or off per server.
+- **`track_stats` / `track_scoreboards`:** turn tracking on or off per server. Off means
+  the snapshot stops reading it **and** the API hides that server's already collected
+  stats / scoreboards everywhere (leaderboards, series, totals, player, search, keys,
+  feeds). Nothing is deleted: turning it back on shows the old data again. The change
+  takes effect at the next snapshot run (no restart).
+- **Order:** the order of the `servers` entries is the order the website lists servers
+  and scopes in. Reorder the entries to reorder the site (next snapshot run).
 
 ### Tuning (all optional)
 
@@ -227,13 +233,27 @@ What the first run does:
 
 ## 3. Upgrading an existing database
 
-Pull the new code, then run the snapshot once by hand **before** restarting the API.
-The run applies the new migrations and indexes, and the API checks for those indexes
-when it starts.
+Use the update script. It does everything below in the right order and keeps
+`config.json` untouched:
 
 ```bash
-cd /opt/chronos/Chronos-Bot && git pull
+cd /opt/chronos/Chronos-Bot
+bash deploy/update.sh --check   # what would change + config check; changes nothing
+bash deploy/update.sh
+```
+
+When stats code changed, it stops the timer, waits for a running snapshot, updates the
+code, runs the snapshot once by hand (this applies new migrations and indexes; the API
+checks for those indexes when it starts), restarts the API if `api/` or `sql/` changed,
+checks that the API answers, and starts the timer again. The log goes to
+`/opt/chronos/update-logs/`. The current schema version is 4 (`PRAGMA user_version`).
+
+The manual equivalent, if you ever need it:
+
+```bash
+cd /opt/chronos/Chronos-Bot
 systemctl stop chronos-stats-snapshot.timer chronos-stats-snapshot.service
+git pull   # config.json is tracked and modified here: set it aside first, put it back after
 /opt/python/bin/python3 bot/snapshot.py; systemctl start chronos-stats-snapshot.timer
 systemctl restart chronos-stats-api
 ```

@@ -352,7 +352,10 @@ Order, on the live server (Debian, root, repo `/opt/chronos/Chronos-Bot`, Python
      changing anything).
    - Server checkout is sparse (`SPARSE_PATTERNS` in the script: no tests/, docs/,
      examples/, planning .md files); classic `.git/info/sparse-checkout` + `read-tree`
-     because the server's git is 2.30.
+     (works on every git version; `sparse-checkout set --no-cone` differs between them).
+     Server git is 2.55. The repo files there aren't owned by root, so root needs
+     `git config --global --add safe.directory /opt/chronos/Chronos-Bot` once (git's
+     "dubious ownership" refusal).
    - Stats paths changed (bot/ sql/ api/ dictionaries/): stop timer, wait for a running
      snapshot, update, one snapshot by hand (migrations), restart the API if api/ or sql/
      changed and curl it, start the timer. requirements.txt: pip dry-run, then asks.
