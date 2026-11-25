@@ -1,19 +1,22 @@
-"""The first live run is a full observation: write the 0 rows it implies.
+"""History must agree with the live data: write the 0 rows it implies.
 
-A server's first live snapshot L (per table) wrote a row for EVERY key a
-player had then (current tables were empty). Backups are imported later,
-as change-only rows before L. A key a backup has but the live files don't
-(a stat reset, a removed objective, a reset score) therefore has no row at
-L, and "latest row <= T" kept returning the stale backup value for every
-T >= L, while the current tables have nothing for it (= 0). That made
-delta leaderboards negative (0 - backup value) and /series flat at the old
-value. Writing (L, 0) for exactly those keys makes every history read agree
-with the live data; the totals backfill already counts them as 0 from L on.
+Backups are imported as change-only rows before a server's first live run L.
+A key a backup has but the live files don't (a stat reset, a removed
+objective, a reset score) is absent from stat_current / scoreboard_current,
+yet "latest row <= T" kept returning the stale backup value for every
+T >= L. That made delta leaderboards negative (0 - backup value) and
+/series flat at the old value. Writing (L, 0) for exactly those keys makes
+every history read agree with the live data (the totals backfill already
+counts them as 0 from L on).
 
-Idempotent: keys that already have a row at L, or whose last value before L
-is 0, get nothing. Run once on an existing DB (snapshot, meta
-`live_start_filled`) and after every backup import (they add rows before L).
-No commit.
+A key gets a 0 row only if ALL hold: it is absent from the current table,
+its latest history row is non-zero, and that row is before L. A key present
+in the current table is never touched: it was observed live, and its
+unchanged value may well live in a row older than L (on the live DB some
+servers got full rows from runs before the first counted one).
+
+Idempotent. Run once on an existing DB (snapshot, meta `live_start_filled`)
+and after every backup import (they add rows before L). No commit.
 """
 META = "live_start_filled"
 
@@ -33,12 +36,12 @@ def fill_server(conn, server_key):
             "INSERT INTO stat_snapshots (at, server_key, uuid, category, stat_key, value) "
             "SELECT ?, p.server_key, p.uuid, p.category, p.stat_key, 0 FROM ("
             "  SELECT server_key, uuid, category, stat_key, value, MAX(at) AS at "
-            "  FROM stat_snapshots INDEXED BY idx_stat_point WHERE server_key=? AND at<? "
+            "  FROM stat_snapshots INDEXED BY idx_stat_point WHERE server_key=? "
             "  GROUP BY category, stat_key, uuid) p "
-            "WHERE p.value != 0 AND NOT EXISTS (SELECT 1 FROM stat_snapshots t "
-            "  INDEXED BY idx_stat_point WHERE t.server_key=p.server_key "
-            "  AND t.category=p.category AND t.stat_key=p.stat_key AND t.uuid=p.uuid AND t.at=?)",
-            (L, server_key, L, L)).rowcount
+            "WHERE p.value != 0 AND p.at < ? AND NOT EXISTS (SELECT 1 FROM stat_current c "
+            "  WHERE c.server_key=p.server_key AND c.uuid=p.uuid "
+            "  AND c.category=p.category AND c.stat_key=p.stat_key)",
+            (L, server_key, L)).rowcount
     L = live_start(conn, server_key, "scoreboards")
     if L is not None:
         n_board = conn.execute(
@@ -46,14 +49,12 @@ def fill_server(conn, server_key):
             "objective, value) "
             "SELECT ?, p.server_key, p.participant_kind, p.uuid, p.raw_name, p.objective, 0 FROM ("
             "  SELECT server_key, participant_kind, uuid, raw_name, objective, value, MAX(at) AS at "
-            "  FROM scoreboard_snapshots INDEXED BY idx_scoreboard_point "
-            "  WHERE server_key=? AND at<? "
+            "  FROM scoreboard_snapshots INDEXED BY idx_scoreboard_point WHERE server_key=? "
             "  GROUP BY objective, uuid, CASE WHEN uuid IS NULL THEN raw_name END) p "
-            "WHERE p.value != 0 AND NOT EXISTS (SELECT 1 FROM scoreboard_snapshots t "
-            "  WHERE t.server_key=p.server_key AND t.objective=p.objective AND t.at=? "
-            "  AND (t.uuid=p.uuid OR (t.uuid IS NULL AND p.uuid IS NULL "
-            "       AND t.raw_name=p.raw_name)))",
-            (L, server_key, L, L)).rowcount
+            "WHERE p.value != 0 AND p.at < ? AND NOT EXISTS (SELECT 1 FROM scoreboard_current c "
+            "  WHERE c.server_key=p.server_key AND c.objective=p.objective "
+            "  AND c.participant_key = COALESCE(p.uuid, 'unresolved:' || p.raw_name))",
+            (L, server_key, L)).rowcount
     return n_stat, n_board
 
 

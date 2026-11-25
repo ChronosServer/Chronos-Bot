@@ -342,9 +342,13 @@ tables) → SQLite → `api/` (FastAPI, read-only) → nginx `/api/stats/*` → 
   (participant, key) with history but absent from `stat_current`/`scoreboard_current`
   (backup-only) counts 0 from then on, so backfilled totals match the live recompute. This
   is a no-op without imports. **Per-player history matches it** (`bot/history_fill.py`,
-  fixed 2026-11-25 after the website found negative delta leaderboards): such a key gets
-  a real `(L, 0)` row at the server's first live run L (per table), so "latest row ≤ T"
-  never carries a stale backup value past L. Written once for an existing DB by the
+  fixed 2026-11-25 after the website found negative delta leaderboards): a key that is
+  **absent from the current table** and whose latest (non-zero) row is before the server's
+  first live run L (per table) gets a real `(L, 0)` row, so "latest row ≤ T" never
+  carries a stale backup value past L. Never key it on "no row at L": on the live DB some
+  servers (cmp, partly smp) got full rows from runs before the first counted one, so
+  unchanged keys have no row at L and must not be zeroed (the first version did that;
+  repaired by restoring `pre-merge-20261125-164507.db` and deleting those rows). Written once for an existing DB by the
   snapshot (meta `live_start_filled`), and by every import / `--reimport-scoreboards`
   for its server. Plus: delta leaderboards and `/compare` clamp **stat** deltas at 0
   (vanilla stats only count up; a drop = a reset or lost file); scoreboard deltas keep

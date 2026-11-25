@@ -105,6 +105,30 @@ def test_scoreboard_drop_keeps_sign(env):
     assert lb(env, "kind=scoreboard&key=Deaths&scope=smp&range=1w") == {Q: -1}
 
 
+def test_fill_leaves_keys_present_live_alone(tmp_path, world, run_snapshot):
+    """Live DB case: a run before the counted first live run already wrote a
+    full set of rows (it isn't counted, e.g. recorded with entries_read 0),
+    and the counted run then wrote nothing for unchanged keys. Their values
+    live in rows older than L; they are in the current tables and must not
+    get a 0 at L."""
+    import history_fill
+    world.set_usercache("cmp", {P: "Diggus"})
+    world.add_stats("cmp", P, {"minecraft:mined": {"minecraft:stone": 7}})
+    world.set_scoreboard("cmp", ["digs"], [("Diggus", "digs", 4)], {})
+    run_snapshot(L - DAY)
+    run_snapshot(L)  # unchanged: writes nothing
+    c = sqlite3.connect(world.db_path)
+    c.execute("UPDATE snapshot_runs SET entries_read=0 WHERE at=?", (L - DAY,))
+    assert history_fill.live_start(c, "cmp", "stats") == L
+    assert history_fill.fill_server(c, "cmp") == (0, 0)
+    # a key missing live does get its 0
+    c.execute("INSERT INTO stat_snapshots (at, server_key, uuid, category, stat_key, value) "
+              "VALUES (?, 'cmp', ?, 'minecraft:mined', 'minecraft:dirt', 5)", (L - DAY, P))
+    assert history_fill.fill_server(c, "cmp") == (1, 0)
+    assert history_fill.fill_server(c, "cmp") == (0, 0)  # idempotent
+    c.close()
+
+
 def test_existing_db_filled_once_by_snapshot(env):
     w = env.world
     c = sqlite3.connect(w.db_path)
