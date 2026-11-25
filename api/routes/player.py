@@ -7,7 +7,7 @@ from api import db, timeq
 from api.cache import cached
 from api.rivals import closing_stats, window_floor
 from api.routes.series import build_series
-from api.scope import (achievement_not_mirror_sql, order_servers, resolve_scope,
+from api.scope import (achievement_not_mirror_sql, is_fake_uuid, order_servers, resolve_scope,
                        scoreboard_filter_sql, stat_filter_sql, tracked_sql)
 from api.merges import api_merges
 from api.settings import api_settings
@@ -134,6 +134,12 @@ def _is_bot_on_smp(conn, uuid):
     return False
 
 
+def bot_flags(conn, uuid) -> dict:
+    """is_bot_on_smp (team rule), is_fake (version-3 uuid), is_bot (either)."""
+    smp, fake = _is_bot_on_smp(conn, uuid), is_fake_uuid(uuid)
+    return {"is_bot_on_smp": smp, "is_fake": fake, "is_bot": smp or fake}
+
+
 @router.get("/player/{ident}")
 @cached
 def player(ident: str, request: Request, conn=Depends(db.get_db),
@@ -171,7 +177,7 @@ def player(ident: str, request: Request, conn=Depends(db.get_db),
         f"AND {achievement_not_mirror_sql('firsts')}{tracked_sql('firsts', 'category')} "
         f"ORDER BY at, id", sp)]
     return {"uuid": uuid, "name": name, "name_resolved": resolved,
-            "last_activity": last, "is_bot_on_smp": _is_bot_on_smp(conn, uuid),
+            "last_activity": last, **bot_flags(conn, uuid),
             "servers": servers, "stats": stats, "scoreboards": boards,
             "badges": badges, "milestones": milestones, "firsts": firsts,
             "rivals": _rivals(conn, sc, include_bots, uuid)}
@@ -237,7 +243,7 @@ def compare(request: Request, conn=Depends(db.get_db), uuids: str = "",
             cur = at(None if r.is_now else r.to_ts)
             values[label] = {u: cur.get(u, 0) for u in ulist}
         series[label] = build_series(conn, sc, include_bots, kind, cat, key, ulist, r)
-    return {"players": [{"uuid": u, "name": names.get(u),
-                         "is_bot_on_smp": _is_bot_on_smp(conn, u)} for u in ulist],
+    return {"players": [{"uuid": u, "name": names.get(u), **bot_flags(conn, u)}
+                        for u in ulist],
             "effective_from": r.effective_from, "to": r.to_ts,
             "values": values, "series": series}

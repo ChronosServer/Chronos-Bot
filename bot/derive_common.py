@@ -10,7 +10,7 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from api.scope import (  # noqa: E402,F401
-    SERVER_ORDER_SQL, Scope, achievement_not_mirror_sql, counted_uuids, is_fake_uuid,
+    SERVER_ORDER_SQL, Scope, achievement_not_mirror_sql, counted_uuids, fake_sql, is_fake_uuid,
     scoreboard_filter_sql,
     stat_filter_sql,
 )

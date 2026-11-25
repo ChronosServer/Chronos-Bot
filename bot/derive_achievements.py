@@ -153,6 +153,14 @@ def derive_firsts(conn, run_at):
     conn.commit()
 
 
+def reseed_firsts(conn, run_at):
+    """Every key on every server with no firsts row gets its current top
+    counted holder as earliest_known=1 (after rows were deleted because their
+    holder no longer counts, e.g. a fake player). No commit."""
+    for key in _servers(conn):
+        _insert_firsts(conn, _sources(key, run_at)["current"], run_at, 1)
+
+
 def _insert_firsts(conn, sources, at, ek, approximate=0):
     """Top holder of every key in `sources` that has no firsts row yet."""
     for src, params, _ in sources:

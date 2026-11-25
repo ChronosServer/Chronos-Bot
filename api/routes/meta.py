@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, Request
 
 from api import db
 from api.cache import cached
-from api.scope import SERVER_ORDER_SQL, list_scopes, scope_group_servers
+from api.scope import SERVER_ORDER_SQL, fake_sql, list_scopes, scope_group_servers
 from api.settings import api_settings
 
 router = APIRouter()
@@ -17,6 +17,13 @@ def get_meta(request: Request, conn=Depends(db.get_db)):
     for s in servers:
         for f in ("filters_bots", "track_stats", "track_scoreboards"):
             s[f] = bool(s[f])
+        # where the site shows the "Include bots" toggle: the team rule, or
+        # any fake player (version-3 uuid) on the server
+        s["has_bots"] = s["filters_bots"] or conn.execute(
+            f"SELECT EXISTS (SELECT 1 FROM stat_current WHERE server_key=? AND "
+            f"{fake_sql('uuid')}) OR EXISTS (SELECT 1 FROM scoreboard_current WHERE "
+            f"server_key=? AND {fake_sql('participant_key')})",
+            (s["key"], s["key"])).fetchone()[0] == 1
     scopes = list_scopes(conn)
     m = dict(conn.execute("SELECT key, value FROM meta").fetchall())
     def per_server(prefix):  # servers without the meta key are left out

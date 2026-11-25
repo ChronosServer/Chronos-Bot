@@ -130,3 +130,8 @@ def test_keys_scoreboard_marks_removed(env):
 def test_keys_bad_args(env):
     assert env.get("/api/stats/keys?kind=nope").status_code == 400
     assert env.get("/api/stats/keys?scope=nope").status_code == 400
+
+
+def test_search_include_bots_shows_smp_bots(env):
+    j = env.get(S, params={"q": "botty", "include_bots": "true"}).json()
+    assert j["players"] == [{"uuid": U3, "name": "Botty"}]

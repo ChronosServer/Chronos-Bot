@@ -165,8 +165,10 @@ def test_compare_limits(env):
 
 def test_compare_values(env):
     j = env.get(C + f"uuids={U1},bob&keys={STONE},scoreboard|kills&scope=smp").json()
-    assert j["players"] == [{"uuid": U1, "name": "Alice", "is_bot_on_smp": False},
-                            {"uuid": U2, "name": "Bob", "is_bot_on_smp": False}]
+    assert j["players"] == [{"uuid": U1, "name": "Alice", "is_bot_on_smp": False,
+                             "is_fake": False, "is_bot": False},
+                            {"uuid": U2, "name": "Bob", "is_bot_on_smp": False,
+                             "is_fake": False, "is_bot": False}]
     assert j["values"][STONE] == {U1: 9, U2: 20}
     assert j["values"]["scoreboard|kills"] == {U1: 3, U2: 7}
     assert j["series"][STONE][U1][-1] == [1_000_600, 9]

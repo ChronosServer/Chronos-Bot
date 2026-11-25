@@ -61,5 +61,7 @@ def test_zero_only_keys_not_offered(env):
 def test_compare_players_carry_bot_flag(env):
     j = env.get(f"{A}/compare?uuids={U1},{BOT}&keys=minecraft:mined|minecraft:stone"
                 f"&scope=smp").json()
-    assert j["players"] == [{"uuid": U1, "name": "Alice", "is_bot_on_smp": False},
-                            {"uuid": BOT, "name": "Botty", "is_bot_on_smp": True}]
+    assert j["players"] == [{"uuid": U1, "name": "Alice", "is_bot_on_smp": False,
+                             "is_fake": False, "is_bot": False},
+                            {"uuid": BOT, "name": "Botty", "is_bot_on_smp": True,
+                             "is_fake": False, "is_bot": True}]

@@ -15,10 +15,12 @@ if str(BOT_DIR) not in sys.path:
     sys.path.insert(0, str(BOT_DIR))
 
 from derive_common import (  # noqa: E402,F401  (re-exported for callers/tests)
-    DEFAULTS, Scope, _servers, counted_uuids, is_fake_uuid, history_points,
+    DEFAULTS, Scope, _servers, counted_uuids, fake_sql, is_fake_uuid, history_points,
     scoreboard_filter_sql, stat_filter_sql, tracking_start,
 )
-from derive_achievements import derive_badges, derive_firsts, derive_milestones  # noqa: E402
+from derive_achievements import (  # noqa: E402
+    derive_badges, derive_firsts, derive_milestones, reseed_firsts,
+)
 from derive_social import derive_rivalries, derive_spotlight  # noqa: E402
 
 
@@ -353,6 +355,25 @@ def derive_totals(conn, run_at):
     conn.commit()
 
 
+FAKE_RULE_MARKER = "fake_rule_applied"
+
+
+def apply_fake_rule(conn, run_at):
+    """Once (meta fake_rule_applied): fake players (version-3 uuids) stopped
+    counting on every server. Rebuild every server's totals history
+    (total_no_bots changes on servers without the team rule), and hand
+    firsts held by a fake player to the current top counted holder
+    (earliest_known=1; the firsts table holds one row per key)."""
+    if conn.execute("SELECT 1 FROM meta WHERE key=?", (FAKE_RULE_MARKER,)).fetchone():
+        return
+    rebuild_totals(conn, run_at, _servers(conn))
+    conn.execute(f"DELETE FROM firsts WHERE {fake_sql('uuid')}")
+    reseed_firsts(conn, run_at)
+    conn.execute("INSERT INTO meta (key, value) VALUES (?, '1') ON CONFLICT(key) "
+                 "DO UPDATE SET value=excluded.value", (FAKE_RULE_MARKER,))
+    conn.commit()
+
+
 def resolve_names(conn, run_at, mojang, live_named=None):
     """Spend whatever is left of the run's shared Mojang budget: first on
     names of players we only know by uuid, then (when live_named is given)
@@ -422,6 +443,7 @@ def run_derive(conn, run_at, mojang=None, settings=None, live_named=None):
     settings = settings or DEFAULTS
     try:
         derive_activity(conn, run_at, settings)
+        apply_fake_rule(conn, run_at)
         derive_totals(conn, run_at)
         derive_firsts(conn, run_at)
         derive_milestones(conn, run_at, settings)

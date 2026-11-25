@@ -39,7 +39,7 @@ def test_meta_shape(client):
     assert j["scope_groups"] == {"cmps": ["cmp", "cmp2"]}
     assert j["live_started_at"] == {"smp": 1_000_000, "cmp": 1_000_000}
     assert [s["key"] for s in j["servers"]] == ["smp", "cmp", "cmp2"]  # config order
-    assert set(j["servers"][0]) == {"key", "label", "group", "filters_bots",
+    assert set(j["servers"][0]) == {"key", "label", "group", "filters_bots", "has_bots",
                                     "track_stats", "track_scoreboards"}
     assert j["scopes"][:3] == ["all", "smp", "cmps"]
     assert "cmp2" in j["scopes"] and len(set(j["scopes"])) == len(j["scopes"])

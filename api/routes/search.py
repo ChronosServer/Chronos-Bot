@@ -21,14 +21,20 @@ def _build_index(conn):
     sc = resolve_scope(conn, "all")
     f_stat, p_stat = stat_filter_sql(sc, False, "sc")
     f_sb, p_sb = scoreboard_filter_sql(sc, False, "cur", is_current=True)
-    counted = {r[0] for r in conn.execute(
-        f"SELECT DISTINCT sc.uuid FROM stat_current sc WHERE {f_stat}", p_stat)}
-    counted |= {r[0] for r in conn.execute(
-        f"SELECT DISTINCT cur.participant_key FROM scoreboard_current cur WHERE {f_sb}", p_sb)}
+    def holders(f_stat, p_stat, f_sb, p_sb):
+        out = {r[0] for r in conn.execute(
+            f"SELECT DISTINCT sc.uuid FROM stat_current sc WHERE {f_stat}", p_stat)}
+        return out | {r[0] for r in conn.execute(
+            f"SELECT DISTINCT cur.participant_key FROM scoreboard_current cur WHERE {f_sb}",
+            p_sb)}
+    counted = holders(f_stat, p_stat, f_sb, p_sb)
+    everyone = holders(*stat_filter_sql(sc, True, "sc"),
+                       *scoreboard_filter_sql(sc, True, "cur", is_current=True))
+    # (uuid, name, lowercased name, bot): bot = only shown with include_bots
     players = []
     for uuid, name in conn.execute("SELECT uuid, name FROM players"):
-        if uuid in counted:
-            players.append((uuid, name, (name or "").lower()))
+        if uuid in everyone:
+            players.append((uuid, name, (name or "").lower(), uuid not in counted))
     # keys nobody has a non-zero value for (junk like crafted/minecraft:air) aren't offered
     stats = [(c, k, k.lower()) for c, k in conn.execute(
         f"SELECT DISTINCT sc.category, sc.stat_key FROM stat_current sc WHERE {f_stat} "
@@ -81,7 +87,8 @@ def _top(items, texts_of, q, limit, tiebreak):
 
 
 @router.get("/search")
-def search(request: Request, conn=Depends(db.get_db), q: str = "", limit: int = 10):
+def search(request: Request, conn=Depends(db.get_db), q: str = "", limit: int = 10,
+           include_bots: bool = False):
     limit = max(1, min(limit, api_settings().api.search_max_limit))
     q = q.strip().lower()
     if not q:
@@ -92,7 +99,8 @@ def search(request: Request, conn=Depends(db.get_db), q: str = "", limit: int = 
     def ptexts(p):
         t = [p[2]] if p[1] is not None else []
         return t + ([p[0]] if by_uuid else [])
-    players = _top(idx["players"], ptexts, q, limit, lambda p: (p[2], p[0]))
+    pool = idx["players"] if include_bots else [p for p in idx["players"] if not p[3]]
+    players = _top(pool, ptexts, q, limit, lambda p: (p[2], p[0]))
     stats = _top(idx["stats"],
                  lambda s: (s[2], s[2].removeprefix("minecraft:")), q, limit,
                  lambda s: (s[2], s[0]))
