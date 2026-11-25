@@ -79,6 +79,34 @@ frontend only.
 - **Accessibility:** keyboard-accessible controls and readable contrast in the existing
   dark theme.
 
+**Local development (do this first, before any page):**
+I build on my Windows PC; the API runs only on the live server, public at
+`https://www.chronosmc.com/api/stats/*`. The API sends no CORS headers (on purpose; don't
+ask for them), so a page on `localhost` can't call it directly. Set up a local dev server
+that serves this site's files **and forwards `/api/stats/*` to the live site**, so the
+browser sees one origin and the pages use the same relative `/api/stats/...` URLs as in
+production (never hardcode the domain in page code).
+- If this repo already has a dev server or bundler, use its proxy setting. Otherwise
+  write a small dependency-free script (Python standard library, e.g.
+  `tools/dev_server.py`; I have Python) that I start with one command and that prints the
+  `http://localhost:<port>` URL to open.
+- Forwarding must pass the path + query string, method GET, and the `If-None-Match`
+  request header; and return the status (including `304`), body and the `Content-Type`,
+  `ETag` and `Cache-Control` response headers unchanged. Send `Host:
+  www.chronosmc.com` upstream. Make the upstream origin one setting (default
+  `https://www.chronosmc.com`, overridable by an env var such as `STATS_API_ORIGIN`), so
+  it can also point at a locally run API (`http://localhost:8765`, see below).
+- Keep the dev server out of the deployed files: check `deploy.sh` and exclude it if
+  needed. It must not change how the site is served in production.
+- Before building pages, prove it works: `curl https://www.chronosmc.com/api/stats/meta`
+  directly, then the same path through the dev server, and show me both status codes.
+- To check response shapes against `STATS_API.md`, fetch the live endpoints directly
+  (curl/PowerShell) — that needs no proxy.
+- Fallback if the live API is down: I can copy the database to my PC and run the API
+  from the Chronos-Bot repo (`$env:CHRONOS_STATS_DB="C:\path\chronos-stats.db"; python
+  -m uvicorn api.main:create_app --factory --port 8765`), then set the upstream to
+  `http://localhost:8765`.
+
 **How I want you to work:**
 - Use the brainstorming skill first. Look at the existing site, then show me layout
   options for the Overview and Player pages as mockups before building.
