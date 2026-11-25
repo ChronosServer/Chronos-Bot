@@ -40,6 +40,11 @@ def leaderboard(request: Request, conn=Depends(db.get_db), kind: str = "stat",
         end = values_at(None if r.is_now else r.to_ts)
         start = values_at(r.effective_from)
         vals = {u: end.get(u, 0) - start.get(u, 0) for u in set(end) | set(start)}
+        if kind == "stat":
+            # Vanilla stats only count up; a drop means the stat file was reset
+            # or lost (no gain to rank), so it clamps to 0 and is left out.
+            # Scoreboards can legitimately go down and keep their sign.
+            vals = {u: max(v, 0) for u, v in vals.items()}
         vals = {u: v for u, v in vals.items() if v != 0}
     else:
         # total mode: values at `to` when given, else current

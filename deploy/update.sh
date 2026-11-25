@@ -43,9 +43,6 @@ SPARSE_PATTERNS=(
   '!/tests/'
   '!/docs/'
   '!/examples/'
-  '!/STATS_PLAN.md'
-  '!/STATS_FRONTEND_PROMPT.md'
-  '!/STATS_API.md'
   '!/pytest.ini'
   '!/requirements-dev.txt'
   '!/start.bat'
@@ -165,8 +162,8 @@ main() {
 
   has() { echo "$CHANGED" | grep -Eq "$1"; }
   local STATS=0 API=0 SQL=0 BOT=0 REQ=0
-  has '^(bot|sql|api|dictionaries)/' && STATS=1
-  has '^(api|sql)/' && API=1
+  has '^(bot|sql|api|dictionaries)/|^player_merges\.json$' && STATS=1
+  has '^(api|sql)/|^player_merges\.json$' && API=1
   has '^sql/' && SQL=1
   has '^(main\.py|commands/|Chronos-Library/)' && BOT=1
   has '^requirements\.txt$' && REQ=1

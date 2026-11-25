@@ -129,6 +129,6 @@ aren't part of the same subsystem the way the six stats views are.
    Chronos design system (dark panels, teal accent, Syncopate/IBM Plex,
    scroll-reveal — see website's CLAUDE.md), built from the Design/
    Engineering/Impeccable/taste/Emil-Kowalski skill set now installed in
-   Claude Code for this. The kickoff prompt is `STATS_FRONTEND_PROMPT.md`; the
-   data contract is `STATS_API.md`. History starts years before 2026-11-24 on SMP
+   Claude Code for this (kicked off 2026-11-25; the one-time kickoff prompt is gone,
+   see git history). The data contract is `docs/STATS_API.md`. History starts years before 2026-11-24 on SMP
    (backups imported), so the UI reads dates and presets from the API.

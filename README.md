@@ -60,8 +60,8 @@ section:
   version count, not only the current one). The snapshot reads `dictionaries/` first and
   only fetches from GitHub when a version is missing.
 * Docs: [docs/STATS_DATABASE.md](docs/STATS_DATABASE.md) (operator guide),
-  [tools/README.md](tools/README.md) (backup import), [STATS_API.md](STATS_API.md) (the
-  HTTP contract the website builds against), `STATS_PLAN.md` (feature scope) and
+  [tools/README.md](tools/README.md) (backup import), [docs/STATS_API.md](docs/STATS_API.md) (the
+  HTTP contract the website builds against), [docs/STATS_PLAN.md](docs/STATS_PLAN.md) (feature scope) and
   `CLAUDE.md` (full technical notes: rules, deploy order).
 
 Run the tests with (Python 3.12 or newer):

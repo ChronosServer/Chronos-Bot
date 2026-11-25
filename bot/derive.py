@@ -353,9 +353,16 @@ def derive_totals(conn, run_at):
     conn.commit()
 
 
-def resolve_names(conn, run_at, mojang):
-    """Spend whatever is left of the run's shared Mojang budget resolving
-    names of players we only know by uuid, most recently observed first."""
+def resolve_names(conn, run_at, mojang, live_named=None):
+    """Spend whatever is left of the run's shared Mojang budget: first on
+    names of players we only know by uuid, then (when live_named is given)
+    on refreshing the names of real players (a stat file somewhere) that no
+    live usercache names this run -- their stored name may be an old one
+    from a backup or an outdated usercache, and a rename is otherwise never
+    seen. Most recently observed first. Mojang results (failures too) are
+    cached in name_lookups for mojang.retry_after_days, so each uuid costs
+    at most one call per period and cached answers are applied for free.
+    live_named: uuids whose name came from a live usercache this run."""
     if mojang is None:
         return
     pending = [r[0] for r in conn.execute(
@@ -370,6 +377,16 @@ def resolve_names(conn, run_at, mojang):
             # minus touching last_observed (a lookup is not an observation)
             conn.execute("UPDATE players SET name = ?, name_resolved = 1 WHERE uuid = ?",
                          (name, uuid))
+    if live_named is not None:
+        real = {r[0] for r in conn.execute("SELECT DISTINCT uuid FROM stat_current")}
+        for uuid, old in conn.execute(
+                "SELECT uuid, name FROM players WHERE name_resolved = 1 "
+                "ORDER BY last_observed DESC, uuid").fetchall():
+            if uuid in live_named or uuid not in real:
+                continue
+            name = mojang.uuid_to_name(uuid)  # cached answers work past the budget
+            if name and name != old:
+                conn.execute("UPDATE players SET name = ? WHERE uuid = ?", (name, uuid))
     conn.commit()
 
 
@@ -399,9 +416,9 @@ def _write_meta(conn, run_at):
         "ON CONFLICT(key) DO UPDATE SET value=excluded.value", list(meta.items()))
 
 
-def run_derive(conn, run_at, mojang=None, settings=None):
+def run_derive(conn, run_at, mojang=None, settings=None, live_named=None):
     """settings: api.settings.Settings built by snapshot.py from config.json
-    (DEFAULTS if None)."""
+    (DEFAULTS if None). live_named: see resolve_names."""
     settings = settings or DEFAULTS
     try:
         derive_activity(conn, run_at, settings)
@@ -411,7 +428,7 @@ def run_derive(conn, run_at, mojang=None, settings=None):
         derive_rivalries(conn, run_at, settings)
         derive_badges(conn, run_at, settings)
         derive_spotlight(conn, run_at, settings)
-        resolve_names(conn, run_at, mojang)
+        resolve_names(conn, run_at, mojang, live_named)
     finally:
         conn.rollback()
         write_meta(conn, run_at)

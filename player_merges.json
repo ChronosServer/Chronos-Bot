@@ -1,0 +1,19 @@
+{
+  "_comment": [
+    "Separate Minecraft accounts whose stats count as ONE player (an alt, or a new account).",
+    "Everything of 'from' is added into 'to': live stats and scoreboards, history (backup imports included),",
+    "firsts, milestones, badges and activity; looking 'from' up on the website shows 'to'.",
+    "Use uuids (names change). 'names' = the from-account's scoreboard names (scoreboards key by name).",
+    "Adding an entry: the next snapshot run backs up the DB and folds the existing data in, once.",
+    "Removing an entry does NOT split the data again: restore the pre-merge-*.db backup for that.",
+    "Renames of ONE account need nothing here: they are handled by uuid automatically."
+  ],
+  "merges": [
+    {
+      "from": "8d5af53c-11a5-4ea5-aa38-1cea7b746ad8",
+      "to": "b1ac344e-4a2d-4202-ac2d-58d44e167df8",
+      "names": ["LordHamster42"],
+      "note": "LordHamster42 -> hampter42 (owner, 2026-11-25)"
+    }
+  ]
+}

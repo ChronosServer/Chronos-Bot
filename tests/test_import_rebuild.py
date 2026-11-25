@@ -404,9 +404,11 @@ def test_backup_only_player_drops_out_at_first_live_run(tmp_path, world, run_sna
     live_run(world, run_snapshot, LIVE + 3600, {U1: mined(stone=2000)})
     conn = snapshot.connect_db(world.db_path)
     assert conn.execute("SELECT COUNT(*) FROM stat_totals").fetchone()[0] == before
-    # per-player history is untouched: U2 keeps its backup row, no fake 0
-    assert conn.execute("SELECT at, value FROM stat_snapshots WHERE uuid=?",
-                        (U2,)).fetchall() == [(T1, 300)]
+    # per-player history agrees with the totals: the first live run saw U2
+    # without the key, so U2 gets a 0 there (bot/history_fill.py); before,
+    # the stale 300 carried forward and made delta leaderboards negative
+    assert conn.execute("SELECT at, value FROM stat_snapshots WHERE uuid=? ORDER BY at",
+                        (U2,)).fetchall() == [(T1, 300), (LIVE, 0)]
     conn.close()
 
 

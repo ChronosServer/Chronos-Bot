@@ -231,6 +231,37 @@ What the first run does:
 - **Name lookups:** starts filling in missing player names from Mojang, up to
   `mojang.max_calls` (60) lookups per run.
 
+### Player names
+- A player's name is the **newest** one across every tracked server's `usercache.json`
+  (by `expiresOn`). A renamed player can still be listed under the old name on a server
+  they haven't joined since; that never wins.
+- Players no live usercache knows (e.g. only known from a backup) get their current name
+  from Mojang with whatever is left of the per-run Mojang budget; answers are cached for
+  `mojang.retry_after_days`, so names catch up over a few runs.
+- A rename needs nothing: everything is keyed by uuid. In imported backups, a renamed
+  player's old scoreboard names are summed under the current name.
+
+### Merging two accounts (`player_merges.json`)
+For separate accounts that should count as one player (an alt or a new account; not for a
+rename). The file sits at the repo root, so it is deployed with the code:
+```json
+{"merges": [{"from": "<alt uuid>", "to": "<main uuid>", "names": ["AltScoreboardName"],
+             "note": "Alt -> Main"}]}
+```
+`names` are the alt's scoreboard names (scoreboards key by name). Commit, push and run
+`bash deploy/update.sh`. The next snapshot run backs up the DB (`pre-merge-<stamp>.db`
+next to it) and then, once per new entry, adds the alt's history, current values, firsts,
+milestones, badges and activity into the main account and rebuilds totals (meta
+`merged:<alt uuid>`). From then on the live snapshot and the backup import sum them, and
+the website shows the main player for the alt's name. Removing an entry does not split the
+data again: restore that backup instead.
+
+### First live run = a full observation
+A key a backup has but the live files didn't have at the first live snapshot (a reset
+stat, a removed objective) gets a 0 row at that first live snapshot, so history never
+carries a stale backup value forward. The snapshot writes these once for an existing DB
+(meta `live_start_filled`), and every backup import writes them for its server.
+
 ## 3. Upgrading an existing database
 
 Use the update script. It does everything below in the right order and keeps

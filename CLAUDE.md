@@ -220,11 +220,12 @@ tables) → SQLite → `api/` (FastAPI, read-only) → nginx `/api/stats/*` → 
 | `tools/` | `import_backups.py` (old world backups into history), `stat_renames.json` (old->new stat keys, editable), `README.md` (operator guide) |
 | `dictionaries/` | bundled every-scoreboard `dictionary-<version>.json`, 1.16-26.2 (34 files; 1.19.1/.3/.4 missing); mirror-objective lists for the snapshot and the import |
 | `deploy/` | systemd units (snapshot, timer, api) + nginx snippet; `update.sh` (git-pull updater, see Deploy) + `check_config.py` |
-| `tests/` | pytest, 358 tests, synthetic worlds built through the real snapshot write path, no network; tests never read the repo's config.json (autouse fixture; `api_config` writes one) |
-| `STATS_PLAN.md` | agreed scope, hard rules, build order/status |
-| `STATS_API.md` | the HTTP contract for the website (copy into the website repo) |
+| `bot/merge_players.py`, `api/merges.py`, `player_merges.json` | account merges (alt → main): the one-time fold, the parser, the owner's list |
+| `bot/history_fill.py` | the 0 rows a server's first live run implies (keys only in backups) |
+| `tests/` | pytest, 404 tests, synthetic worlds built through the real snapshot write path, no network; tests never read the repo's config.json or player_merges.json (autouse fixtures; `api_config` writes a config) |
+| `docs/STATS_PLAN.md` | agreed scope, hard rules, build order/status |
+| `docs/STATS_API.md` | the HTTP contract for the website (copy into the website repo) |
 | `docs/STATS_DATABASE.md` | operator guide: config, first setup, upgrade, health checks, backup, reset |
-| `STATS_FRONTEND_PROMPT.md` | the kickoff prompt for Claude Code in the website repo |
 | `docs/superpowers/specs/2026-11-24-stats-api-design.md` | approved backend design incl. Addendum A (badges/rivalries/spotlight rules) |
 
 ### Rules and decisions that bind future work (don't relitigate)
@@ -248,6 +249,21 @@ tables) → SQLite → `api/` (FastAPI, read-only) → nginx `/api/stats/*` → 
   stays per server (newest name only). The SMP team check counts a uuid as teamed if
   **any** of its usercache names is in a team (team lists hold names). The backup import
   learns every entry's name (old ones too) for merging.
+- **Account merges (`player_merges.json`, repo root; owner's list).** Separate accounts
+  counted as one player (first entry: LordHamster42 → hampter42, different uuids). Not
+  for renames: a rename is the same uuid and needs nothing. Entries by uuid + the
+  from-account's scoreboard `names` (scoreboards key by name; SMP's usercache may not know
+  the alt). `api/merges.py` parses it (chains resolve, bad file raises). The snapshot's
+  first step (`bot/merge_players.apply_pending_merges`, before any server is read) folds a
+  NEW entry's existing data in once: `pre-merge-<stamp>.db` backup, then per (server, key)
+  A's and B's change-only timelines → one timeline of their sum under B; current B += A;
+  firsts/milestones (earlier kept)/badges/activity → B; totals rebuilt; meta
+  `merged:<A>`. It must run before the first live run that sums them (else A counted
+  twice), hence inside the snapshot. From then on the live snapshot and the import sum a
+  merge group's stat files / scoreboard entries under B; the API's `resolve_player` maps A
+  (uuid or listed name) to B. Removing an entry doesn't split data (restore the backup).
+  Not backfilled: milestones only the sum crossed before the merge. `update.sh` treats a
+  `player_merges.json` change as a stats + API change.
 - **Server order = config order.** `sync_servers_table` (`bot/snapshot.py`, every run)
   writes `servers.position` = index in `stats_tracking.servers`; servers no longer in
   config get NULL (last, by key). Everything that lists servers sorts by
@@ -325,7 +341,14 @@ tables) → SQLite → `api/` (FastAPI, read-only) → nginx `/api/stats/*` → 
 - Totals backfill treats the first live run (per table) as a full observation: a
   (participant, key) with history but absent from `stat_current`/`scoreboard_current`
   (backup-only) counts 0 from then on, so backfilled totals match the live recompute. This
-  is a no-op without imports. Per-player history is untouched.
+  is a no-op without imports. **Per-player history matches it** (`bot/history_fill.py`,
+  fixed 2026-11-25 after the website found negative delta leaderboards): such a key gets
+  a real `(L, 0)` row at the server's first live run L (per table), so "latest row ≤ T"
+  never carries a stale backup value past L. Written once for an existing DB by the
+  snapshot (meta `live_start_filled`), and by every import / `--reimport-scoreboards`
+  for its server. Plus: delta leaderboards and `/compare` clamp **stat** deltas at 0
+  (vanilla stats only count up; a drop = a reset or lost file); scoreboard deltas keep
+  their sign (objectives can legitimately go down).
 
 ### Deploy / redeploy (done 2026-11-25 — runbook in `TEMP_INFO.md`; this is the order for any redeploy)
 Order, on the live server (Debian, root, repo `/opt/chronos/Chronos-Bot`, Python

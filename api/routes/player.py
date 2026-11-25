@@ -9,19 +9,25 @@ from api.rivals import closing_stats, window_floor
 from api.routes.series import build_series
 from api.scope import (achievement_not_mirror_sql, order_servers, resolve_scope,
                        scoreboard_filter_sql, stat_filter_sql, tracked_sql)
+from api.merges import api_merges
 from api.settings import api_settings
 
 router = APIRouter()
 
 
 def resolve_player(conn, ident: str):
+    """uuid or name -> uuid; a merged-away account (player_merges.json)
+    resolves to the player it was merged into."""
     ident = (ident or "").strip()
+    m = api_merges()
     if conn.execute("SELECT 1 FROM players WHERE uuid=?", (ident,)).fetchone():
-        return ident
+        return m.target(ident)
+    if ident.lower() in m.by_name:
+        return m.by_name[ident.lower()]
     row = conn.execute(
         "SELECT uuid FROM players WHERE name=? COLLATE NOCASE "
         "ORDER BY last_observed DESC LIMIT 1", (ident,)).fetchone()
-    return row[0] if row else None
+    return m.target(row[0]) if row else None
 
 
 def _not_found():
@@ -223,6 +229,8 @@ def compare(request: Request, conn=Depends(db.get_db), uuids: str = "",
         elif delta:
             end, start = at(None if r.is_now else r.to_ts), at(r.effective_from)
             values[label] = {u: end.get(u, 0) - start.get(u, 0) for u in ulist}
+            if kind == "stat":  # stats only count up: a drop is a reset (see /leaderboard)
+                values[label] = {u: max(v, 0) for u, v in values[label].items()}
         else:
             cur = at(None if r.is_now else r.to_ts)
             values[label] = {u: cur.get(u, 0) for u in ulist}

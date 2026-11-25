@@ -162,6 +162,16 @@ def _isolated_api_settings(tmp_path, monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _no_repo_merges(tmp_path, monkeypatch):
+    """Tests never read the repo's player_merges.json (real accounts)."""
+    from api import merges
+    monkeypatch.setattr(merges, "MERGES_PATH", tmp_path / "no-merges.json")
+    merges.reset_api_merges()
+    yield
+    merges.reset_api_merges()
+
+
+@pytest.fixture(autouse=True)
 def _fresh_search_index(monkeypatch):
     """/search's in-memory index is keyed by data_version only; two test DBs
     with the same run count would otherwise share one."""

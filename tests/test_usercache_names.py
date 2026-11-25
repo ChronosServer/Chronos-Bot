@@ -52,6 +52,32 @@ def test_team_check_matches_any_name_of_the_uuid(world, run_snapshot):
         U1: 0, U2: 1}
 
 
+def test_mojang_refreshes_names_no_live_usercache_knows(world, run_snapshot):
+    # U1: renamed Obi81 -> ObiWan8_, in no live usercache (name from an old
+    # backup). U2: named by the live usercache: never looked up.
+    write_entries(world, "cmp", [(U2, "Bob", NEW)])
+    for u in (U1, U2):
+        world.add_stats("cmp", u, {"minecraft:mined": {"minecraft:stone": 1}})
+    run_snapshot(1000)
+    c = sqlite3.connect(world.db_path)
+    c.execute("UPDATE players SET name='Obi81', name_resolved=1 WHERE uuid=?", (U1,))
+    c.execute("DELETE FROM name_lookups")  # run 1's stub Mojang answered nothing (cached)
+    c.commit()
+    c.close()
+    calls = []
+
+    def fetch(method, url, body):
+        calls.append(url)
+        if url.endswith(U1.replace("-", "")):
+            return 200, json.dumps({"id": U1.replace("-", ""), "name": "ObiWan81_"}).encode()
+        return 404, b""
+    run_snapshot(2000, mojang_fetch=fetch)
+    assert dict(q(world, "SELECT uuid, name FROM players")) == {U1: "ObiWan81_", U2: "Bob"}
+    assert not any(u.endswith(U2.replace("-", "")) for u in calls)
+    run_snapshot(3000, mojang_fetch=fetch)  # cached for retry_after_days: no new call
+    assert len([u for u in calls if u.endswith(U1.replace("-", ""))]) == 1
+
+
 def test_import_learns_old_name_entries(tmp_path, world):
     from conftest import make_backup
     from tools import import_backups as ib

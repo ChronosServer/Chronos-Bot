@@ -1,6 +1,6 @@
 # Chronos Stats API: contract for the website
 
-Copy this file into the website repo next to `STATS_PLAN.md`. It describes every
+Lives in Chronos-Bot at `docs/STATS_API.md`; copy it into the website repo next to `STATS_PLAN.md`. It describes every
 endpoint the Stats pages can use, exactly as the backend (Chronos-Bot, `master`)
 implements it; it is live at `https://www.chronosmc.com/api/stats/`. `STATS_PLAN.md` is the scope and feature list; this file is
 the data contract.
@@ -196,6 +196,9 @@ Params:
 ```
 - Ties share a rank (1, 1, 3).
 - In delta mode, players with a gain of 0 are left out.
+- Stat gains are never negative (vanilla stats only count up; a drop means the stat was
+  reset, which counts as no gain). Scoreboard gains **can** be negative: an objective may
+  go down. The same holds for `/compare` values in delta mode.
 
 ### `GET /series`
 Graph lines for 1–6 players (`settings.limits.series_players`). Params: `kind`, `category`, `key`, `uuids=a,b,c`,
@@ -237,6 +240,10 @@ The player profile ("dossier"). Params: `scope`, `include_bots`.
              "closing_per_day":65.8,"overtake_days":5.2}, …]}
 ```
 - A name lookup is case-insensitive.
+- Merged accounts: separate accounts the server counts as one player (e.g. an alt) resolve
+  to the main one. `/player/<alt name or uuid>` returns the main player, so the response
+  `uuid`/`name` can differ from what was asked; use them for links. The alt never appears
+  in search or leaderboards. `/compare` resolves the same way.
 - `milestones` holds the latest 50 entries (`settings.limits.player_milestones`).
 - "Best ranks" = sort `stats` by `rank / of`.
 - If `is_bot_on_smp` is true, the player's own numbers still show. Label them as a bot

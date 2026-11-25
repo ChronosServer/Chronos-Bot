@@ -35,7 +35,9 @@ for _p in (str(REPO_ROOT), str(REPO_ROOT / "bot")):
 
 import nbt.nbt as nbt  # noqa: E402
 
+import history_fill  # noqa: E402
 import snapshot  # noqa: E402
+from api.merges import load_merges  # noqa: E402
 from api.settings import load_settings  # noqa: E402
 from derive_common import (  # noqa: E402,F401  (re-exported for callers/tests)
     BUSY_MESSAGE, BUSY_TIMEOUT_S, DatabaseBusy, begin_immediate,
@@ -389,6 +391,7 @@ def _import(conn, server_key, backups, renames, dictionary, dry_run, skip_unknow
 
     winner = {b.at: i for i, b, *_ in steps}  # steps are (date, argument) ordered
     live_backups = [b for i, b, *_ in steps if winner[b.at] == i]
+    merges = load_merges()  # player_merges.json
     name_to_uuid = _resolve_names(conn, live_backups)
     fallback = _fallback_names(conn, live_backups)
     names = {}
@@ -412,13 +415,13 @@ def _import(conn, server_key, backups, renames, dictionary, dry_run, skip_unknow
         if track_stats:
             stat_rows, uuids = _stat_rows(conn, server_key, b, renames, known_keys,
                                           targets, skip_unknown, r,
-                                          carried_stats if dry_run else None)
+                                          carried_stats if dry_run else None, merges)
             r.players = len(uuids)
         sb_rows = []
         if track_scoreboards:
             sb_rows = _scoreboard_rows(conn, server_key, b, mirrors, keep_prefixed,
                                        name_to_uuid, fallback, r,
-                                       carried_sb if dry_run else None)
+                                       carried_sb if dry_run else None, merges)
         r.rows_stats, r.rows_scoreboard = len(stat_rows), len(sb_rows)
         if dry_run:
             continue
@@ -440,6 +443,9 @@ def _import(conn, server_key, backups, renames, dictionary, dry_run, skip_unknow
             "data_version, imported_at, rows_written) VALUES (?, ?, ?, ?, ?, ?, ?)",
             (str(Path(b.path).resolve()), b.level_name, server_key, b.at, b.data_version,
              int(time.time()), written))
+    if not dry_run:
+        # rows were added before the first live run: write the 0 rows it implies
+        history_fill.fill_server(conn, server_key)
     return results
 
 
@@ -460,6 +466,7 @@ def reimport_scoreboards(conn, server_key, backups, mirrors, dry_run, *,
     acquire_write_lock(conn, lock_timeout_s)
     out = []
     try:
+        merges = load_merges()  # player_merges.json
         name_to_uuid = _resolve_names(conn, backups)
         fallback = _fallback_names(conn, backups)
         for b in backups:
@@ -472,7 +479,7 @@ def reimport_scoreboards(conn, server_key, backups, mirrors, dry_run, *,
             b = item[0]
             r = ImportResult(path=b.path, at=b.at, backup=b)
             rows = _scoreboard_rows(conn, server_key, b, mirrors, keep_prefixed,
-                                    name_to_uuid, fallback, r, None)
+                                    name_to_uuid, fallback, r, None, merges)
             conn.executemany(
                 "INSERT INTO scoreboard_snapshots (at, server_key, participant_kind, uuid, "
                 "raw_name, objective, value) VALUES (?, ?, ?, ?, ?, ?, ?)", rows)
@@ -482,6 +489,7 @@ def reimport_scoreboards(conn, server_key, backups, mirrors, dry_run, *,
                          "WHERE server_key=? AND kind='import' AND at=?", (diff, server_key, b.at))
             conn.execute("UPDATE imports SET rows_written = rows_written + ? "
                          "WHERE server_key=? AND last_played=?", (diff, server_key, b.at))
+        history_fill.fill_server(conn, server_key)  # see bot/history_fill.py
     except BaseException:
         conn.rollback()
         raise
@@ -507,18 +515,24 @@ def imported_backups(conn, server_key):
 
 
 def _stat_rows(conn, server_key, b, renames, known_keys, targets, skip_unknown, r,
-               carried):
+               carried, merges=None):
     prev = {(c, k, u): v for c, k, u, v, _ in
             conn.execute(PREV_STATS_SQL, (server_key, b.at))}
     if carried is not None:
         prev.update(carried)
-    rows, uuids = [], []
+    # player_merges.json: a merged account's file is summed into the target's
+    per = {}
     for u, content in snapshot.iter_stat_files(b.stats_dir):
         if not is_modern(content):
             continue  # pre-1.13 flat file (counted in b.flat_files)
-        uuids.append(u)
-        for (cat, key), value in _map_stats(content, renames, known_keys, targets,
-                                            skip_unknown, r).items():
+        t = merges.target(u) if merges else u
+        acc = per.setdefault(t, {})
+        for k, value in _map_stats(content, renames, known_keys, targets,
+                                   skip_unknown, r).items():
+            acc[k] = acc.get(k, 0) + value
+    rows, uuids = [], list(per)
+    for u, acc in per.items():
+        for (cat, key), value in acc.items():
             if prev.get((cat, key, u), 0) == value:
                 continue  # unchanged since the previous point (or 0 and never seen)
             rows.append((b.at, server_key, u, cat, key, value))
@@ -528,7 +542,7 @@ def _stat_rows(conn, server_key, b, renames, known_keys, targets, skip_unknown, 
 
 
 def _scoreboard_rows(conn, server_key, b, mirrors, keep_prefixed, name_to_uuid,
-                     fallback_names, r, carried):
+                     fallback_names, r, carried, merges=None):
     data = snapshot.read_scoreboard_nbt(b.scoreboard_path) if b.scoreboard_path else None
     objectives = {snapshot.nbt_val(o, "Name") for o in snapshot.nbt_list(data, "Objectives")}
     objectives.discard(None)
@@ -560,6 +574,11 @@ def _scoreboard_rows(conn, server_key, b, mirrors, keep_prefixed, name_to_uuid,
         if obj in skip:
             continue
         u, kind = snapshot._resolve_participant(raw, name_to_uuid, stat_uuids)
+        if merges:  # player_merges.json: by uuid, or by a listed name
+            if u:
+                u = merges.target(u)
+            elif raw.lower() in merges.by_name:
+                u, kind = merges.by_name[raw.lower()], "player"
         key = (obj, u or f"unresolved:{raw}")
         if key in merged:
             merged[key][3] += value

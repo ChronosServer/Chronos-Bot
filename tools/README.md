@@ -134,7 +134,11 @@ What to check:
   uuid (through any backup's `usercache.json` or the live player names) is added up under
   the player's current name, like the in-game `stattransfer`. A rename you know of that's
   missing here means its old name is in no usercache: it is imported as an unknown
-  participant (not shown on the website).
+  participant (not shown on the website). Accounts merged in `player_merges.json` (an alt
+  counted as its main account) are summed the same way and appear in this list too, e.g.
+  `LordHamster42 -> hampter42`.
+- After writing, the import adds the 0 rows the first live snapshot implies for its server
+  (a key in a backup but not in the live files), so delta leaderboards stay correct.
 - **skipped / refused:** Each skipped or refused backup has its reason printed under it.
 
 ## Flags

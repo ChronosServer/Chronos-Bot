@@ -36,6 +36,9 @@ if str(REPO_ROOT) not in sys.path:
 from sql.migrations import migrate  # noqa: E402
 from api.settings import DEFAULTS, load_settings  # noqa: E402
 from mojang import MojangClient, default_fetch  # noqa: E402
+from api.merges import load_merges  # noqa: E402
+from merge_players import apply_pending_merges  # noqa: E402
+from history_fill import ensure_filled  # noqa: E402
 SCHEMA_PATH = REPO_ROOT / "sql" / "schema.sql"
 CONFIG_PATH = REPO_ROOT / "config.json"
 DICTIONARY_DIR = REPO_ROOT / "dictionaries"
@@ -354,9 +357,11 @@ def iter_stat_files(stats_dir):
         yield player_uuid, data
 
 
-def run_stats_snapshot(conn, server_key, world_path, usercache, now, names=None):
+def run_stats_snapshot(conn, server_key, world_path, usercache, now, names=None,
+                       merges=None):
     """names: {uuid: display name} (run_once: newest across every server's
-    usercache); defaults to this server's usercache."""
+    usercache); defaults to this server's usercache. merges: api.merges.Merges
+    (player_merges.json)."""
     names = usercache if names is None else names
     stats_dir = stat_files_dir(world_path)
     if not stats_dir.is_dir():
@@ -373,27 +378,45 @@ def run_stats_snapshot(conn, server_key, world_path, usercache, now, names=None)
     ).fetchall()
     current = {(u, c, k): v for (u, c, k, v) in cur_rows}
 
-    for player_uuid, data in iter_stat_files(stats_dir):
-        entries_read += 1
+    def stat_items(data):
+        for category, stat_map in data.get("stats", {}).items():
+            if not isinstance(stat_map, dict):
+                continue
+            for stat_key, value in stat_map.items():
+                if isinstance(value, int) and not isinstance(value, bool):
+                    yield (category, stat_key), value
+
+    def record(player_uuid, items):
+        nonlocal rows_written
         name = names.get(player_uuid) or usercache.get(player_uuid)
         upsert_player(conn, player_uuid, name, now, name_resolved=bool(name))
+        for (category, stat_key), value in items:
+            key = (player_uuid, category, stat_key)
+            if current.get(key) == value:
+                continue  # unchanged -- no history row
+            pending_snapshot_rows.append(
+                (now, server_key, player_uuid, category, stat_key, value)
+            )
+            pending_current_updates.append(
+                (server_key, player_uuid, category, stat_key, value, now, now)
+            )
+            current[key] = value
+            rows_written += 1
 
-        stats_block = data.get("stats", {})
-        for category, stat_map in stats_block.items():
-            for stat_key, value in stat_map.items():
-                if not isinstance(value, int):
-                    continue
-                key = (player_uuid, category, stat_key)
-                if current.get(key) == value:
-                    continue  # unchanged -- no history row
-                pending_snapshot_rows.append(
-                    (now, server_key, player_uuid, category, stat_key, value)
-                )
-                pending_current_updates.append(
-                    (server_key, player_uuid, category, stat_key, value, now, now)
-                )
-                current[key] = value
-                rows_written += 1
+    # Accounts in player_merges.json: every stat file of a merge group is
+    # summed per key under the target uuid before the change-only diff.
+    grouped = set(merges.to_of) | set(merges.to_of.values()) if merges else set()
+    groups = {}
+    for player_uuid, data in iter_stat_files(stats_dir):
+        entries_read += 1
+        if player_uuid in grouped:
+            acc = groups.setdefault(merges.target(player_uuid), {})
+            for k, v in stat_items(data):
+                acc[k] = acc.get(k, 0) + v
+            continue
+        record(player_uuid, stat_items(data))
+    for target, acc in groups.items():
+        record(target, acc.items())
 
     if pending_snapshot_rows:
         conn.executemany(
@@ -454,7 +477,8 @@ def read_scoreboard_nbt(path):
         return None
 
 
-def run_scoreboard_snapshot(conn, server_key, world_path, usercache, dictionary, now):
+def run_scoreboard_snapshot(conn, server_key, world_path, usercache, dictionary, now,
+                            merges=None):
     data = load_scoreboard_dat(world_path)
     objectives_tag = nbt_list(data, "Objectives")
     scores_tag = nbt_list(data, "PlayerScores")
@@ -508,6 +532,7 @@ def run_scoreboard_snapshot(conn, server_key, world_path, usercache, dictionary,
     pending_snapshot_rows = []
     pending_current_updates = []
     seen = set()
+    agg = {}  # (participant_key, objective) -> [kind, uuid, raw_name, value]
 
     for entry in scores_tag:
         raw_name = nbt_val(entry, "Name")
@@ -525,9 +550,23 @@ def run_scoreboard_snapshot(conn, server_key, world_path, usercache, dictionary,
             continue
 
         player_uuid, kind = _resolve_participant(raw_name, name_to_uuid, known_stat_uuids)
+        # player_merges.json: a merged account's entries (by uuid, or by one
+        # of its listed names) are summed into the target player.
+        if merges:
+            if player_uuid:
+                player_uuid = merges.target(player_uuid)
+            elif raw_name.lower() in merges.by_name:
+                player_uuid, kind = merges.by_name[raw_name.lower()], "player"
         participant_key = player_uuid if player_uuid else f"unresolved:{raw_name}"
-
         key = (participant_key, obj_name)
+        if key in agg:
+            agg[key][3] += value
+        else:
+            label = (usercache.get(player_uuid) or raw_name) if player_uuid else raw_name
+            agg[key] = [kind, player_uuid, label, value]
+
+    for key, (kind, player_uuid, raw_name, value) in agg.items():
+        participant_key, obj_name = key
         seen.add(key)
         if current.get(key) == value:
             continue
@@ -658,7 +697,8 @@ def record_run(conn, server_key, kind, ok, error, entries_read, rows_written, du
     conn.commit()
 
 
-def run_once(config=None, now_fn=time.time, dictionary=None, mojang_fetch=None):
+def run_once(config=None, now_fn=time.time, dictionary=None, mojang_fetch=None, merges=None):
+    """merges: api.merges.Merges (default: player_merges.json)."""
     cfg = config if config is not None else load_config()
     # Validated before anything is touched: a bad stats_tracking raises here.
     settings = load_settings(cfg["stats_tracking"])
@@ -666,12 +706,22 @@ def run_once(config=None, now_fn=time.time, dictionary=None, mojang_fetch=None):
         raise ValueError("stats_tracking.db_path is required")
     excluded = set(settings.excluded_servers)
     version = cfg.get("server", {}).get("minecraft_version", "unknown")
+    merges = load_merges() if merges is None else merges  # a bad file raises here
 
     conn = connect_db(settings.db_path)
     sync_servers_table(conn, cfg, int(now_fn()), settings)
     # One run-wide timestamp: every row written this run shares `at`, so
     # derive can find the whole run with `at = run_at`.
     run_at = int(now_fn())
+    # Once per DB: the 0 rows the first live run implies (bot/history_fill.py;
+    # imports refill their server). Before merges, which sum timelines.
+    filled = ensure_filled(conn)
+    if filled:
+        print("[fill] zero rows at first live run: " + ", ".join(
+            f"{k} {s}+{b}" for k, (s, b) in sorted(filled.items())))
+    # New player_merges.json entries fold the existing data together first,
+    # so this run's summed values build on merged history.
+    apply_pending_merges(conn, merges, run_at, settings.db_path)
     if mojang_fetch is None:
         timeout = settings.mojang.timeout_s
 
@@ -718,7 +768,7 @@ def run_once(config=None, now_fn=time.time, dictionary=None, mojang_fetch=None):
             t0 = time.time()
             try:
                 result = run_stats_snapshot(conn, key, world_path, usercache, now,
-                                            names=display)
+                                            names=display, merges=merges)
                 record_run(conn, key, "stats", True, None,
                            result["entries_read"], result["rows_written"],
                            int((time.time() - t0) * 1000), now=now)
@@ -734,7 +784,8 @@ def run_once(config=None, now_fn=time.time, dictionary=None, mojang_fetch=None):
         elif s.track_scoreboards:
             t0 = time.time()
             try:
-                result = run_scoreboard_snapshot(conn, key, world_path, usercache, mirrors, now)
+                result = run_scoreboard_snapshot(conn, key, world_path, usercache, mirrors, now,
+                                                 merges=merges)
                 record_run(conn, key, "scoreboards", True, None,
                            result["entries_read"], result["rows_written"],
                            int((time.time() - t0) * 1000), now=now)
@@ -760,7 +811,7 @@ def run_once(config=None, now_fn=time.time, dictionary=None, mojang_fetch=None):
     t0 = time.time()
     try:
         import derive
-        derive.run_derive(conn, run_at, mojang, settings)
+        derive.run_derive(conn, run_at, mojang, settings, live_named=set(display))
         record_run(conn, "all", "derive", True, None, None, None,
                    int((time.time() - t0) * 1000), now=run_at)
         print("[all] derive: ok")
