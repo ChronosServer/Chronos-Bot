@@ -18,7 +18,7 @@ def cols(conn, table):
 
 def test_migrate_v3_columns_and_imports_table(tmp_path):
     conn = snapshot.connect_db(str(tmp_path / "a.db"))
-    assert conn.execute("PRAGMA user_version").fetchone()[0] == 4
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == 5
     assert "approximate" in cols(conn, "firsts")
     assert "approximate" in cols(conn, "milestones")
     assert cols(conn, "imports") == [
@@ -40,7 +40,7 @@ def test_migrate_v2_db_to_v3(tmp_path):
                  (U1,))
     conn.commit()
     migrate(conn)
-    assert conn.execute("PRAGMA user_version").fetchone()[0] == 4
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == 5
     assert conn.execute("SELECT approximate FROM firsts").fetchall() == [(0,)]
     assert conn.execute("SELECT approximate FROM milestones").fetchall() == [(0,)]
     assert conn.execute("SELECT 1 FROM sqlite_master WHERE name='imports'").fetchone()

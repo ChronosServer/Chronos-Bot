@@ -22,6 +22,7 @@ from derive_achievements import (  # noqa: E402
     derive_badges, derive_firsts, derive_milestones, reseed_firsts,
 )
 from derive_social import derive_rivalries, derive_spotlight  # noqa: E402
+from derive_blocked import update_blocked  # noqa: E402
 
 
 def derive_activity(conn, run_at, settings=None):
@@ -50,7 +51,7 @@ def derive_activity(conn, run_at, settings=None):
 def _derive_stat_totals(conn, key, run_at):
     # Full recompute every run: classification (bot flags) can change with no
     # stat change, and a previously failed derive must self-heal.
-    sql, params = stat_filter_sql(Scope(key, (key,)), False, "s", track=None)
+    sql, params = stat_filter_sql(Scope(key, (key,)), False, "s", track=None, blocked=False)
     totals = {(c, k): t for c, k, t in conn.execute(
         "SELECT category, stat_key, SUM(value) FROM stat_current "
         "WHERE server_key=? GROUP BY category, stat_key", (key,))}
@@ -76,8 +77,11 @@ def _derive_stat_totals(conn, key, run_at):
 
 def _derive_scoreboard_totals(conn, key, run_at):
     scope = Scope(key, (key,))
-    sql_all, p_all = scoreboard_filter_sql(scope, True, "sc", is_current=True, track=None)
-    sql_nb, p_nb = scoreboard_filter_sql(scope, False, "sc", is_current=True, track=None)
+    # blocked players (slur names) stay in whole-server totals (no name shown)
+    sql_all, p_all = scoreboard_filter_sql(scope, True, "sc", is_current=True, track=None,
+                                           blocked=False)
+    sql_nb, p_nb = scoreboard_filter_sql(scope, False, "sc", is_current=True, track=None,
+                                         blocked=False)
     totals = dict(conn.execute(
         f"SELECT objective, SUM(value) FROM scoreboard_current sc WHERE {sql_all} "
         "GROUP BY objective", p_all).fetchall())
@@ -437,11 +441,15 @@ def _write_meta(conn, run_at):
         "ON CONFLICT(key) DO UPDATE SET value=excluded.value", list(meta.items()))
 
 
-def run_derive(conn, run_at, mojang=None, settings=None, live_named=None):
+def run_derive(conn, run_at, mojang=None, settings=None, live_named=None, merges=None):
     """settings: api.settings.Settings built by snapshot.py from config.json
-    (DEFAULTS if None). live_named: see resolve_names."""
+    (DEFAULTS if None). live_named: see resolve_names. merges: api.merges.Merges
+    (former names for the slur filter)."""
     settings = settings or DEFAULTS
     try:
+        # first: every later stage (firsts, badges, rivals, ...) skips blocked names
+        update_blocked(conn, merges)
+        conn.commit()
         derive_activity(conn, run_at, settings)
         apply_fake_rule(conn, run_at)
         derive_totals(conn, run_at)

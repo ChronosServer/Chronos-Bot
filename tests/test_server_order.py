@@ -116,7 +116,7 @@ def test_migrate_v3_db_adds_position_then_snapshot_fills_it(world, run_snapshot)
         c.execute("PRAGMA user_version = 3")
         c.commit()
         migrate(c)
-        assert c.execute("PRAGMA user_version").fetchone()[0] == 4
+        assert c.execute("PRAGMA user_version").fetchone()[0] == 5
         # Before the next snapshot every position is NULL: alphabetical, still valid.
         assert resolve_scope(c, "all").servers == ("cmp", "cmp2", "smp")
         snapshot.sync_servers_table(c, world.config)

@@ -23,7 +23,7 @@ def test_migrate_adds_earliest_known(tmp_path):
     conn = snapshot.connect_db(str(tmp_path / "a.db"))
     assert "earliest_known" in cols(conn, "firsts")
     assert "earliest_known" in cols(conn, "milestones")
-    assert conn.execute("PRAGMA user_version").fetchone()[0] == 4
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == 5
     assert conn.execute("SELECT 1 FROM sqlite_master WHERE name="
                         "'idx_milestones_feed'").fetchone()
 
@@ -32,7 +32,7 @@ def test_migrate_idempotent(tmp_path):
     conn = snapshot.connect_db(str(tmp_path / "a.db"))
     migrate(conn)
     migrate(conn)
-    assert conn.execute("PRAGMA user_version").fetchone()[0] == 4
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == 5
 
 
 def test_migrate_existing_db(tmp_path):

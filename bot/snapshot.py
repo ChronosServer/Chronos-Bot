@@ -829,7 +829,8 @@ def run_once(config=None, now_fn=time.time, dictionary=None, mojang_fetch=None, 
     t0 = time.time()
     try:
         import derive
-        derive.run_derive(conn, run_at, mojang, settings, live_named=set(display))
+        derive.run_derive(conn, run_at, mojang, settings, live_named=set(display),
+                          merges=merges)
         record_run(conn, "all", "derive", True, None, None, None,
                    int((time.time() - t0) * 1000), now=run_at)
         print("[all] derive: ok")

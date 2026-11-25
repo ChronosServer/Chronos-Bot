@@ -17,7 +17,7 @@ from dataclasses import dataclass
 
 from api.settings import api_settings
 
-_RESERVED = {"_scope_pf", "_scope_m", "_trk", "_mir_m"}
+_RESERVED = {"_scope_pf", "_scope_m", "_trk", "_mir_m", "_blk"}
 _IDENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 
@@ -106,10 +106,13 @@ def _alias(alias):
     return alias
 
 
-def _scope_sql(scope, include_bots, a, uuid_col):
+def _scope_sql(scope, include_bots, a, uuid_col, blocked=True):
     marks = ",".join("?" * len(scope.servers)) or "NULL"
     sql = f"{a}.server_key IN ({marks})"
     params = list(scope.servers)
+    if blocked:  # slur names: hidden always, bots on or off
+        sql += (f" AND NOT EXISTS (SELECT 1 FROM blocked_players _blk "
+                f"WHERE _blk.uuid={a}.{uuid_col})")
     if not include_bots:
         sql += f" AND NOT {fake_sql(f'{a}.{uuid_col}')}"
         sql += (
@@ -144,22 +147,24 @@ def tracked_sql(alias: str, track) -> str:
     return f" AND EXISTS (SELECT 1 FROM servers _trk WHERE _trk.key={a}.server_key AND {col}=1)"
 
 
-def stat_filter_sql(scope: Scope, include_bots: bool, alias: str, track="stats"):
+def stat_filter_sql(scope: Scope, include_bots: bool, alias: str, track="stats",
+                    blocked=True):
     """track: see tracked_sql ("category" for firsts/milestones/rivalries/
-    spotlight rows; None in derive)."""
+    spotlight rows; None in derive). blocked=False keeps blocked players
+    (slur names): only derive's whole-server totals."""
     a = _alias(alias)
-    sql, params = _scope_sql(scope, include_bots, a, "uuid")
+    sql, params = _scope_sql(scope, include_bots, a, "uuid", blocked)
     return f"({sql}{tracked_sql(a, track)})", params
 
 
 def scoreboard_filter_sql(scope: Scope, include_bots: bool, alias: str,
-                          is_current: bool = False, track="scoreboards"):
+                          is_current: bool = False, track="scoreboards", blocked=True):
     a = _alias(alias)
     if is_current:
-        sql, params = _scope_sql(scope, include_bots, a, "participant_key")
+        sql, params = _scope_sql(scope, include_bots, a, "participant_key", blocked)
         unresolved = f"{a}.participant_key NOT LIKE 'unresolved:%'"
     else:
-        sql, params = _scope_sql(scope, include_bots, a, "uuid")
+        sql, params = _scope_sql(scope, include_bots, a, "uuid", blocked)
         unresolved = f"{a}.participant_kind != 'unresolved'"
     mirror = (f"NOT EXISTS (SELECT 1 FROM scoreboard_meta _scope_m WHERE _scope_m.server_key={a}.server_key"
               f" AND _scope_m.objective={a}.objective AND _scope_m.is_vanilla_mirror=1)")
@@ -185,6 +190,12 @@ def objective_not_mirror_sql(alias: str) -> str:
     a = _alias(alias)
     return (f"NOT EXISTS (SELECT 1 FROM scoreboard_meta _mir_m WHERE _mir_m.server_key="
             f"{a}.server_key AND _mir_m.objective={a}.objective AND _mir_m.is_vanilla_mirror=1)")
+
+
+def is_blocked(conn, uuid) -> bool:
+    """A slur name (blocked_players): hidden from the whole API."""
+    return conn.execute("SELECT 1 FROM blocked_players WHERE uuid=?",
+                        (uuid,)).fetchone() is not None
 
 
 def is_counted(conn, server_key: str, uuid: str, include_bots: bool = False) -> bool:

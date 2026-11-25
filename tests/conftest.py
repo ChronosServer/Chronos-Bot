@@ -172,6 +172,15 @@ def _no_repo_merges(tmp_path, monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _no_repo_name_lists(tmp_path, monkeypatch):
+    """Tests never read the repo's name_blocklist.txt / name_allowlist.txt;
+    a test writes tmp_path/name_blocklist.txt (or the allowlist) itself."""
+    from api import names
+    monkeypatch.setattr(names, "BLOCKLIST_PATH", tmp_path / "name_blocklist.txt")
+    monkeypatch.setattr(names, "ALLOWLIST_PATH", tmp_path / "name_allowlist.txt")
+
+
+@pytest.fixture(autouse=True)
 def _fresh_search_index(monkeypatch):
     """/search's in-memory index is keyed by data_version only; two test DBs
     with the same run count would otherwise share one."""

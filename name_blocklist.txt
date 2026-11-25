@@ -1,0 +1,52 @@
+# Slur filter for player names (Stats API). One term per line; lines starting with # are comments.
+#
+# A player is hidden from the whole Stats API (search, leaderboards, feeds, /player = 404),
+# even with "Include bots" on, when a term appears anywhere in their name or a former name.
+# Matching ignores case and "_", reads leetspeak (0=o 1=i 3=e 4=a 5=s 7=t) and collapses
+# doubled letters, so "N_1gg3r" matches "nigger". Write terms plainly; no need for variants.
+#
+# Innocent names that get caught (e.g. "Nigeria"): add the name or uuid to name_allowlist.txt.
+# Check what a list catches: python3 tools/check_blocklist.py
+# Changes apply at the next snapshot run (every 15 min); no restart needed.
+#
+# Scope: racial/ethnic, homophobic/transphobic and ableist slurs. Plain swearing is not listed.
+# Left out on purpose (too many innocent names): coon (raccoon), spic (spicy), homo (homestead),
+# gook (collapses to "gok": Goku), nig (knight, night), tard (custard), negro (Spanish "black"), sambo (martial art).
+
+# racial / ethnic
+nigger
+nigga
+niggah
+nigguh
+niglet
+nignog
+jigaboo
+junglebunny
+porchmonkey
+wetback
+beaner
+chink
+zipperhead
+kike
+kyke
+raghead
+towelhead
+paki
+redskin
+squaw
+gypo
+gyppo
+
+# homophobic / transphobic
+faggot
+fag
+dyke
+lesbo
+tranny
+trannie
+shemale
+
+# ableist
+retard
+spaz
+mongoloid

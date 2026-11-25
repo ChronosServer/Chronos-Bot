@@ -44,7 +44,14 @@ def _v4(conn):
     _add_column(conn, "servers", "position", "INTEGER")
 
 
-MIGRATIONS = [_v1, _v2, _v3, _v4]
+def _v5(conn):
+    # Slur filter: rewritten every derive run (bot/derive_blocked.py) from
+    # name_blocklist.txt; the API hides these uuids everywhere (api.scope).
+    conn.execute("CREATE TABLE IF NOT EXISTS blocked_players ("
+                 "uuid TEXT PRIMARY KEY, name TEXT, term TEXT)")
+
+
+MIGRATIONS = [_v1, _v2, _v3, _v4, _v5]
 
 
 def migrate(conn: sqlite3.Connection) -> None:

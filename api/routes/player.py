@@ -7,7 +7,8 @@ from api import db, timeq
 from api.cache import cached
 from api.rivals import closing_stats, window_floor
 from api.routes.series import build_series
-from api.scope import (achievement_not_mirror_sql, is_fake_uuid, order_servers, resolve_scope,
+from api.scope import (achievement_not_mirror_sql, is_blocked, is_fake_uuid, order_servers,
+                       resolve_scope,
                        scoreboard_filter_sql, stat_filter_sql, tracked_sql)
 from api.merges import api_merges
 from api.settings import api_settings
@@ -146,7 +147,7 @@ def player(ident: str, request: Request, conn=Depends(db.get_db),
            scope: str = "all", include_bots: bool = False):
     sc = resolve_scope(conn, scope)
     uuid = resolve_player(conn, ident)
-    if uuid is None or not _has_rows(conn, uuid):
+    if uuid is None or is_blocked(conn, uuid) or not _has_rows(conn, uuid):
         return _not_found()
     name, resolved, last = conn.execute(
         "SELECT name, name_resolved, last_activity FROM players WHERE uuid=?",
@@ -216,7 +217,7 @@ def compare(request: Request, conn=Depends(db.get_db), uuids: str = "",
         raise ValueError(f"at most {api.compare_max_keys} keys")
     sc = resolve_scope(conn, scope)
     resolved = [resolve_player(conn, i) for i in idents]
-    if None in resolved:
+    if None in resolved or any(is_blocked(conn, u) for u in resolved):
         return _not_found()
     ulist = list(dict.fromkeys(resolved))
     if len(ulist) < lo:

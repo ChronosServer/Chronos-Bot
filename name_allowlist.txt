@@ -1,0 +1,2 @@
+# Names or uuids exempt from name_blocklist.txt (one per line, # comments).
+# Use it for innocent names the slur filter catches (see tools/check_blocklist.py).
