@@ -47,8 +47,9 @@ def leaderboard(request: Request, conn=Depends(db.get_db), kind: str = "stat",
             vals = {u: max(v, 0) for u, v in vals.items()}
         vals = {u: v for u, v in vals.items() if v != 0}
     else:
-        # total mode: values at `to` when given, else current
-        vals = values_at(None if r.is_now else r.to_ts)
+        # total mode: values at `to` when given, else current; a 0 is no
+        # standing (unused stat, reset score) and is left out like a 0 gain
+        vals = {u: v for u, v in values_at(None if r.is_now else r.to_ts).items() if v != 0}
     ordered = sorted(vals.items(), key=lambda kv: (-kv[1], kv[0]))
     ranks, prev, rank = [], None, 0
     for i, (_, v) in enumerate(ordered):

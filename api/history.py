@@ -48,5 +48,15 @@ def meta_points(conn, server):
 
 
 def snap_scope(conn, servers, from_ts):
-    """Max over the servers of each one's snapped start (from_ts if none)."""
-    return max([from_ts] + [snap_from(from_ts, *meta_points(conn, s)) for s in servers])
+    """Start of a range over these servers: the latest of each server's own
+    start, where a server's start is from_ts clamped to ITS first history
+    point (its tracking start) and then snapped. A server whose tracking
+    began after from_ts has no value there; reading it as 0 would count its
+    whole total as gain (scope=all: the CMPs' live start is a few seconds
+    after SMP's). Servers with no history at all are ignored."""
+    starts = [from_ts]
+    for s in servers:
+        points, live = meta_points(conn, s)
+        if points:
+            starts.append(snap_from(max(from_ts, points[0]), points, live))
+    return max(starts)

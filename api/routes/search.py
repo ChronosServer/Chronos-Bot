@@ -29,8 +29,10 @@ def _build_index(conn):
     for uuid, name in conn.execute("SELECT uuid, name FROM players"):
         if uuid in counted:
             players.append((uuid, name, (name or "").lower()))
+    # keys nobody has a non-zero value for (junk like crafted/minecraft:air) aren't offered
     stats = [(c, k, k.lower()) for c, k in conn.execute(
-        f"SELECT DISTINCT sc.category, sc.stat_key FROM stat_current sc WHERE {f_stat}", p_stat)]
+        f"SELECT DISTINCT sc.category, sc.stat_key FROM stat_current sc WHERE {f_stat} "
+        f"AND sc.value != 0", p_stat)]
     servers = defaultdict(list)
     for obj, srv in conn.execute(
             "SELECT m.objective, m.server_key FROM scoreboard_meta m "
@@ -114,7 +116,7 @@ def keys(request: Request, conn=Depends(db.get_db), scope: str = "all",
         out = defaultdict(list)
         for c, k in conn.execute(
                 f"SELECT DISTINCT sc.category, sc.stat_key FROM stat_current sc "
-                f"WHERE {f} ORDER BY 1, 2", p):
+                f"WHERE {f} AND sc.value != 0 ORDER BY 1, 2", p):
             out[c].append(k)
         return {"stats": dict(out)}
     marks = ",".join("?" * len(sc.servers))

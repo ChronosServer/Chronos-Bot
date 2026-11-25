@@ -127,7 +127,8 @@ The full block with every key at its default:
     "mover": {"top": 20, "min_growth": 0.5, "min_delta": 1000, "window_days": 7}
   },
   "mojang": {"max_calls": 60, "timeout_s": 3, "max_seconds": 60, "retry_after_days": 7},
-  "snapshot": {"dictionary_cache_hours": 24, "dictionary_timeout_s": 15},
+  "snapshot": {"dictionary_cache_hours": 24, "dictionary_timeout_s": 15,
+               "mirror_prefix": "^(m|u|c|b|p|d|k|kb|z)-"},
   "api": {
     "range_presets": {"1d": 86400, "1w": 604800, "1m": 2592000, "6m": 15724800,
                       "1y": 31536000},
@@ -166,7 +167,7 @@ entries above show the per-server defaults, not a server list you get for free.)
 | `rivalries` | Leader value ≥ `min_value`, gap ≤ `max_gap_ratio` × leader, both active within `active_days`, at most `per_player` per player and `per_key` per stat. The gap comparison window stays 7 days (it is what `gap_7d_ago` means). |
 | `spotlight` | Outlier (≥ `ratio` × median with ≥ `min_holders` holders), rare (≤ `max_holders` holders), how recent a milestone/first must be, and movers (top `top` gains over `window_days`, gain ≥ `min_delta` and ≥ `min_growth` × the start value). |
 | `mojang` | Name lookups per run: at most `max_calls` calls, `timeout_s` per call, `max_seconds` in total; every result (also failures) is cached for `retry_after_days`. |
-| `snapshot` | How long the scoreboard dictionary from GitHub is cached, and its fetch timeout. |
+| `snapshot` | How long the scoreboard dictionary from GitHub is cached, and its fetch timeout. `mirror_prefix`: a regular expression; objectives whose name matches it are every-scoreboard copies of vanilla stats (`m-stone`, `z-play_one_m+748`, `u-moss`) even when no bundled dictionary lists them, so their scores aren't stored and their firsts/milestones are hidden. `""` turns it off (dictionary only). |
 | `api` | Range presets, activity bucket size, the hard caps on `limit`, compare and series sizes, the `/player` milestone count, series points, the response cache (size, entries, `Cache-Control` max-age / stale-while-revalidate), gzip threshold and SQLite read pragmas. |
 
 **When changes take effect:**

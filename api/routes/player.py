@@ -37,15 +37,17 @@ def _not_found():
 # Rank = 1 + other counted players with a strictly greater scope-summed value
 # (competition ranking); `of` = other counted players + the player. Only the
 # player's own keys are ranked, seeking idx_*_current_* once per key.
+# A scope-summed value of 0 is no standing (an unused stat, junk keys such as
+# crafted/minecraft:air, a reset score): it is neither listed nor counted in `of`.
 _RANK = """
 WITH mine AS (
   SELECT s.{kc} AS c, {ks} AS k, SUM(s.value) AS v FROM {tbl} s
-  WHERE s.{uc}=? AND {own} GROUP BY 1, 2),
+  WHERE s.{uc}=? AND {own} GROUP BY 1, 2 HAVING SUM(s.value) != 0),
 per AS (
   SELECT s.{kc} AS c, {ks} AS k, s.{uc} AS u, SUM(s.value) AS v
   FROM mine m CROSS JOIN {tbl} s INDEXED BY {idx}
   WHERE s.{kc}=m.c{kjoin} AND s.{uc}!=? AND {frag}
-  GROUP BY 1, 2, 3)
+  GROUP BY 1, 2, 3 HAVING SUM(s.value) != 0)
 SELECT m.c, m.k, m.v, 1 + COALESCE(SUM(per.v > m.v), 0), 1 + COUNT(per.u)
 FROM mine m LEFT JOIN per ON per.c=m.c AND per.k=m.k
 GROUP BY m.c, m.k ORDER BY m.c, m.k
@@ -235,6 +237,7 @@ def compare(request: Request, conn=Depends(db.get_db), uuids: str = "",
             cur = at(None if r.is_now else r.to_ts)
             values[label] = {u: cur.get(u, 0) for u in ulist}
         series[label] = build_series(conn, sc, include_bots, kind, cat, key, ulist, r)
-    return {"players": [{"uuid": u, "name": names.get(u)} for u in ulist],
+    return {"players": [{"uuid": u, "name": names.get(u),
+                         "is_bot_on_smp": _is_bot_on_smp(conn, u)} for u in ulist],
             "effective_from": r.effective_from, "to": r.to_ts,
             "values": values, "series": series}

@@ -109,6 +109,11 @@ The mirror set (live snapshot and import alike) is the **union of every bundled
 the live board (`m-grass_path`) are mirrors too. Current dictionary missing → the bundled
 union alone (warn); no dictionary at all → the scoreboard step is skipped with `ok=0`,
 never run with an empty mirror set (that would store mirror scores and reset the flags).
+Plus a **name pattern** (`stats_tracking.snapshot.mirror_prefix`, default
+`^(m|u|c|b|p|d|k|kb|z)-`; owner-confirmed 2026-11-25 that these are mirrors): live objectives
+the dictionaries miss (older datapack names like `z-play_one_m+748` = pre-1.17
+play_one_minute, `u-moss`) are mirrors too. Real objectives (`dig-all`, `Levels`, `Deaths`)
+don't match (one prefix letter + dash). The import has the same rule (`MIRROR_PREFIX`).
 
 NBT quirk: Paper omits `Objectives`/`PlayerScores`/`Teams` tags entirely when they'd
 be empty (confirmed on the `building` world — has Teams, no Objectives at all).

@@ -49,9 +49,11 @@ def test_series_starts_at_effective_from(env):
 
 
 def test_series_multi_server_sum_steps(env):
+    # a multi-server window starts where every server has data: cmp's first
+    # observation (1000900), so cmp's existing total is not drawn as a jump
     j = env.get(S + f"&uuids={U1}&scope=all&from=1000000&to=1001500").json()
-    assert j["series"][U1] == [[1_000_000, 5], [1_000_600, 9], [1_000_900, 11],
-                               [1_001_200, 16]]
+    assert j["effective_from"] == 1_000_900
+    assert j["series"][U1] == [[1_000_900, 11], [1_001_200, 16]]
 
 
 def test_series_rejects_7_uuids(env):
@@ -108,14 +110,18 @@ def totals_env(env, world):
 
 
 def test_totals_server_vs_server(totals_env):
+    # the common start is where every requested server has data (cmp: 1000900)
     j = totals_env.get(T + "&scopes=smp,cmps&from=1000000&to=1001500").json()
+    assert j["effective_from"] == 1_000_900
+    assert j["series"]["smp"] == [[1_000_900, 9], [1_001_200, 12]]
+    assert j["series"]["cmps"] == [[1_000_900, 2], [1_001_200, 4]]
+    j = totals_env.get(T + "&scopes=smp&from=1000000&to=1001500").json()
     assert j["series"]["smp"] == [[1_000_000, 5], [1_000_600, 9], [1_001_200, 12]]
-    assert j["series"]["cmps"] == [[1_000_000, 0], [1_000_900, 2], [1_001_200, 4]]
 
 
 def test_totals_multi_server_scope_sums_steps(totals_env):
     j = totals_env.get(T + "&scopes=all&from=1000700&to=1001500").json()
-    assert j["series"]["all"] == [[1_000_700, 9], [1_000_900, 11], [1_001_200, 16]]
+    assert j["series"]["all"] == [[1_000_900, 11], [1_001_200, 16]]
 
 
 def test_totals_respects_include_bots(totals_env):

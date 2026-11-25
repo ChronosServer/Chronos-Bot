@@ -39,7 +39,10 @@ the data contract.
 are backend config: build the range picker from `/meta.settings.range_presets`
 (name → seconds) plus `all`, which is always valid.
 - No `range`/`from` → **current totals** (`mode: "total"`). With `to` only → totals as of `to`.
-- With `range` or `from` → **the gain over that window** (`mode: "delta"`).
+- With `range` or `from` → **the gain over that window** (`mode: "delta"`). That includes
+  `range=all`: it is the gain since tracking began, not the current total (`mode: "delta"`).
+  `/series` and `/totals` are the exception: they always return cumulative values (step
+  lines) over the window, never gains.
 - History starts at the server's **tracking start**, `/meta.tracking_started_at[server]`.
   Live tracking began on 2026-11-24, but old world backups are imported
   (`tools/import_backups.py`), which moves the tracking start back to the oldest backup, so
@@ -57,9 +60,14 @@ are backend config: build the range picker from `/meta.settings.range_presets`
   backup, so "last week" right after the import is the gain since the first live
   snapshot, not years of play. Example: backups 2021-02 and 2021-09, live since
   2026-11-24; `range=1w` on 2026-11-28 gives `effective_from` = 2026-11-24, and
-  `from=2021-05-01` gives `effective_from` = the 2021-09 backup. A multi-server scope
-  uses the latest of its servers' snapped starts. Windows starting after the first live
-  snapshot are never moved. Show the same "since <date>" note whenever
+  `from=2021-05-01` gives `effective_from` = the 2021-09 backup. Windows starting after
+  the first live snapshot are never moved.
+- **A multi-server scope starts where all of its servers have data**: `effective_from` is
+  the latest of its servers' starts, each server's start being the window start clamped to
+  that server's own tracking start and then snapped as above. Otherwise a server whose
+  tracking began later would count its whole total as gain. So `scope=all&range=all`
+  starts when the last server began tracking (2026-11-24 today), even though SMP alone
+  goes back to 2021: use `scope=smp` for SMP's long history. Show the same "since <date>" note whenever
   `effective_from` > the requested start.
 - A window that ends before tracking began returns empty rows.
 - A custom window lying **entirely inside** that sparse span (`from` and `to` both
@@ -195,6 +203,8 @@ Params:
  "rows": [{"rank":1,"uuid":"…","name":"PapiChase","value":17327}, …]}
 ```
 - Ties share a rank (1, 1, 3).
+- In total mode, players with a value of 0 are left out too (an unused stat or a reset
+  score is no standing); `total_count` counts only the listed players.
 - In delta mode, players with a gain of 0 are left out.
 - Stat gains are never negative (vanilla stats only count up; a drop means the stat was
   reset, which counts as no gain). Scoreboard gains **can** be negative: an objective may
@@ -220,6 +230,10 @@ Server-vs-server comparison: whole-server total lines. Params: `kind`, `category
 {"effective_from": …, "to": …, "series": {"smp": [[ts,total],…], "cmps": [[ts,total],…]}}
 ```
 - Same step format as `/series`, and all lines share the same `effective_from`.
+- With a range the lines are **running totals** over the window (the whole-server total
+  at each point), not gains; the gain is last value minus first. The common
+  `effective_from` is computed over all requested scopes together (multi-server rule
+  above), so `scopes=smp,cmps` starts where both have data.
 
 ### `GET /player/{uuid-or-name}`
 The player profile ("dossier"). Params: `scope`, `include_bots`.
@@ -246,6 +260,11 @@ The player profile ("dossier"). Params: `scope`, `include_bots`.
   in search or leaderboards. `/compare` resolves the same way.
 - `milestones` holds the latest 50 entries (`settings.limits.player_milestones`).
 - "Best ranks" = sort `stats` by `rank / of`.
+- `stats` and `scoreboards` leave out values of 0 (summed over the scope): an unused
+  stat (or a junk key such as `crafted/minecraft:air`) or a reset score has no rank.
+  `of` counts only players with a non-zero value. The same 0 rule applies to `/keys` and
+  `/search` (a stat nobody has a non-zero value for is not offered). `top1:*` badges
+  never counted 0 values.
 - If `is_bot_on_smp` is true, the player's own numbers still show. Label them as a bot
   account.
 
@@ -258,12 +277,17 @@ N-way compare. Params:
 - `scope`, `range` or `from`/`to`, `include_bots`
 
 ```json
-{"players": [{"uuid":"…","name":"…"}, …], "effective_from": …, "to": …,
+{"players": [{"uuid":"…","name":"…","is_bot_on_smp":false}, …], "effective_from": …, "to": …,
  "values": {"minecraft:mined|minecraft:stone": {"<uuid>": 123, …}, …},
  "series": {"minecraft:mined|minecraft:stone": {"<uuid>": [[ts,v],…]}, …}}
 ```
 - An SMP bot shows 0 unless `include_bots=true`. If a compared player has
-  `is_bot_on_smp`, turn the bot toggle on for the comparison.
+  `is_bot_on_smp: true` (in `players`, same meaning as on `/player`), turn the bot toggle
+  on for the comparison.
+- `players` holds each **distinct** player once, in request order. Names/uuids that
+  resolve to the same player (a merged alt and its main account, or a name and its uuid)
+  collapse into one entry, so `players` can be shorter than `uuids=`. If fewer than
+  `settings.compare.min_players` distinct players remain, it's a 400.
 
 ### `GET /milestones?scope=all&limit=50&before=<cursor>`
 The milestones feed. `limit` max `settings.limits.feed` (200).
@@ -274,12 +298,18 @@ The milestones feed. `limit` max `settings.limits.feed` (200).
  "next": "0:1795599000:812"}
 ```
 - Pass `next` back as `before` for the next page; `null` means the end.
+- Rows can be for a **scoreboard objective**: `category: "scoreboard"`, `key` = the
+  objective name (e.g. `{"category":"scoreboard","key":"digs"}`). Show them as
+  "Scoreboard · digs". The same holds for `/firsts` rows and the `/player` milestones and
+  firsts (there the field is `stat_key`).
 - Real crossings (`earliest_known: 0`) come first, newest first. Then the "already had
   before tracking" ones (`earliest_known: 1`). Show those under a separate, quieter
   heading such as "Already reached before tracking began", without a date.
 
 ### `GET /firsts?scope=all&order=oldest|newest&limit=…&before=<cursor>`
 `{"rows": [{"server_key","category","key","uuid","name","at","earliest_known","approximate"}, …]}`
+- `category: "scoreboard"` rows are firsts on a scoreboard objective (`key` = objective
+  name), as in `/milestones`.
 - `order=oldest` (the default): **every** row, oldest first (`at`, then insert order). It
   is large on `all` (~17k rows, ~3.4 MB), so use it only for a full list. Optional `limit`
   (max `settings.limits.feed`, 200) keeps the oldest N. No `next` field.

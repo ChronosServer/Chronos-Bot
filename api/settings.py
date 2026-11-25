@@ -24,6 +24,7 @@ Pure stdlib on purpose: the snapshot imports it too.
 import copy
 import hashlib
 import math
+import re
 from dataclasses import dataclass
 from functools import lru_cache
 from types import MappingProxyType
@@ -76,7 +77,10 @@ DEFAULT_CONFIG = {
         "mover": {"top": 20, "min_growth": 0.5, "min_delta": 1000, "window_days": 7},
     },
     "mojang": {"max_calls": 60, "timeout_s": 3, "max_seconds": 60, "retry_after_days": 7},
-    "snapshot": {"dictionary_cache_hours": 24, "dictionary_timeout_s": 15},
+    # mirror_prefix: objective names matching it are every-scoreboard copies of
+    # vanilla stats even when no bundled dictionary lists them ("" = off)
+    "snapshot": {"dictionary_cache_hours": 24, "dictionary_timeout_s": 15,
+                 "mirror_prefix": "^(m|u|c|b|p|d|k|kb|z)-"},
     "api": {
         "range_presets": {"1d": 86400, "1w": 604800, "1m": 2592000, "6m": 15724800,
                           "1y": 31536000},
@@ -225,6 +229,7 @@ class Mojang:
 class Snapshot:
     dictionary_cache_hours: float
     dictionary_timeout_s: float
+    mirror_prefix: str
 
 
 @dataclass(frozen=True)
@@ -365,6 +370,17 @@ def _bool(v, path):
 def _str(v, path):
     if not isinstance(v, str) or not v:
         raise ValueError(f"{path} must be a non-empty string")
+    return v
+
+
+def _regex(v, path):
+    """A regular expression string ("" allowed = off)."""
+    if not isinstance(v, str):
+        raise ValueError(f"{path} must be a string (a regular expression, or \"\")")
+    try:
+        re.compile(v)
+    except re.error as e:
+        raise ValueError(f"{path} is not a valid regular expression: {e}")
     return v
 
 
@@ -566,7 +582,8 @@ def load_settings(stats_tracking_cfg: Optional[dict]) -> Settings:
             dictionary_cache_hours=_num(sn["dictionary_cache_hours"],
                                         f"{p}.snapshot.dictionary_cache_hours", ge=0),
             dictionary_timeout_s=_num(sn["dictionary_timeout_s"],
-                                      f"{p}.snapshot.dictionary_timeout_s", gt=0)),
+                                      f"{p}.snapshot.dictionary_timeout_s", gt=0),
+            mirror_prefix=_regex(sn["mirror_prefix"], f"{p}.snapshot.mirror_prefix")),
         api=_api(raw["api"], f"{p}.api"),
     )
 

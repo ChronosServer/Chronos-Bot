@@ -254,7 +254,8 @@
         },
         "snapshot": {
             "dictionary_cache_hours": 24,
-            "dictionary_timeout_s": 15
+            "dictionary_timeout_s": 15,
+            "mirror_prefix": "^(m|u|c|b|p|d|k|kb|z)-"
         },
         "api": {
             "range_presets": {

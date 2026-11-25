@@ -117,3 +117,31 @@ def test_no_dictionary_at_all_skips_scoreboard_step(world, run_snapshot, tmp_pat
 
 def test_bundled_mirror_names(dicts):
     assert snapshot.bundled_mirror_names() == {"m-grass_path", "m-dirt_path", "m-stone"}
+
+
+def test_prefixed_objectives_are_mirrors_without_a_dictionary_entry(world, run_snapshot, dicts):
+    """every-scoreboard copies no bundled dictionary lists (z-play_one_m+748 =
+    the pre-1.17 play_one_minute, u-moss) are mirrors by name pattern
+    (settings snapshot.mirror_prefix); real objectives like dig-all are not.
+    Already stored rows of a newly flagged objective are hidden, not deleted."""
+    world.add_stats("smp", U1, {})
+    world.set_usercache("smp", {U1: "Alice"})
+    objs = ["z-play_one_m+748", "u-moss", "dig-all", "Deaths"]
+    world.set_scoreboard("smp", objs, [("Alice", o, 3) for o in objs], {"t": ["Alice"]})
+    tracking = world.config["stats_tracking"]
+    tracking.setdefault("snapshot", {})["mirror_prefix"] = ""   # rule off: stored as real
+    run_snapshot(1000, dictionary={})
+    assert meta(world) == {o: 0 for o in objs}
+    tracking["snapshot"]["mirror_prefix"] = "^(m|u|c|b|p|d|k|kb|z)-"
+    world.set_scoreboard("smp", objs, [("Alice", o, 4) for o in objs], {"t": ["Alice"]})
+    run_snapshot(2000, dictionary={})
+    assert meta(world) == {"z-play_one_m+748": 1, "u-moss": 1, "dig-all": 0, "Deaths": 0}
+    c = sqlite3.connect(world.db_path)
+    try:
+        # no new score rows for the mirrors; the real ones change as usual
+        assert sorted(c.execute("SELECT objective FROM scoreboard_snapshots WHERE at=2000")) == [
+            ("Deaths",), ("dig-all",)]
+        # their earlier rows stay but the API hides them (firsts too)
+        assert c.execute("SELECT COUNT(*) FROM scoreboard_snapshots WHERE at=1000").fetchone()[0] == 4
+    finally:
+        c.close()

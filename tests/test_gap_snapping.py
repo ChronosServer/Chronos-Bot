@@ -123,14 +123,17 @@ def test_from_after_live_start_unchanged(imported):
 def test_range_all_and_before_tracking_unchanged(imported):
     assert rng(imported, "smp", range="all").effective_from == T1
     assert rng(imported, "smp", from_=T1 - 100 * DAY).effective_from == T1
-    # the all scope: tracking start is the min over servers (cmp starts at L)
-    assert rng(imported, "all", range="all").effective_from == T1
+    # the all scope starts where every server has data: cmp only from L
+    assert rng(imported, "all", range="all").effective_from == L
 
 
 def test_multi_server_scope_takes_max(imported):
-    # smp snaps to L; cmp (no imports, live since L) is unchanged
+    # each server's start = window start clamped to its own tracking start,
+    # snapped; the scope takes the latest. smp snaps to L or T2; cmp (no
+    # imports, live since L) starts at L, so the all scope starts at L.
     assert rng(imported, "all", from_=L - 4 * DAY).effective_from == L
-    assert rng(imported, "all", from_=T1 + DAY).effective_from == T2
+    assert rng(imported, "all", from_=T1 + DAY).effective_from == L
+    assert rng(imported, "smp", from_=T1 + DAY).effective_from == T2
 
 
 def test_server_without_imports_as_before(imported):

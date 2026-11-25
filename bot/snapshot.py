@@ -18,6 +18,7 @@ to near-zero (proof the diffing is actually working against live data).
 
 import json
 import os
+import re
 import sqlite3
 import sys
 import time
@@ -478,7 +479,8 @@ def read_scoreboard_nbt(path):
 
 
 def run_scoreboard_snapshot(conn, server_key, world_path, usercache, dictionary, now,
-                            merges=None):
+                            merges=None, mirror_re=None):
+    """mirror_re: compiled settings.snapshot.mirror_prefix (None: dictionary only)."""
     data = load_scoreboard_dat(world_path)
     objectives_tag = nbt_list(data, "Objectives")
     scores_tag = nbt_list(data, "PlayerScores")
@@ -490,9 +492,15 @@ def run_scoreboard_snapshot(conn, server_key, world_path, usercache, dictionary,
         mirror_full_names = set(dictionary.values())
     else:
         mirror_full_names = set(dictionary or ())
+    # Also a mirror: every-scoreboard's naming pattern (settings
+    # snapshot.mirror_prefix), for copies no bundled dictionary lists --
+    # objectives from older datapack versions (z-play_one_m+748 = the
+    # pre-1.17 play_one_minute) or odd names (u-moss).
+    def is_mirror_obj(name):
+        return name in mirror_full_names or bool(mirror_re and mirror_re.match(name))
 
     for obj_name in objective_names:
-        is_mirror = 1 if obj_name in mirror_full_names else 0
+        is_mirror = 1 if is_mirror_obj(obj_name) else 0
         conn.execute(
             """
             INSERT INTO scoreboard_meta (server_key, objective, is_vanilla_mirror,
@@ -546,7 +554,7 @@ def run_scoreboard_snapshot(conn, server_key, world_path, usercache, dictionary,
         # Scores already live in stat_snapshots via the stat-file path --
         # storing them again here would duplicate ~9,200 of SMP's 9,346
         # objectives for nothing.
-        if obj_name in mirror_full_names:
+        if is_mirror_obj(obj_name):
             continue
 
         player_uuid, kind = _resolve_participant(raw_name, name_to_uuid, known_stat_uuids)
@@ -587,7 +595,7 @@ def run_scoreboard_snapshot(conn, server_key, world_path, usercache, dictionary,
     if data is not None and "PlayerScores" in data:
         for (pk, obj), old in list(current.items()):
             if ((pk, obj) in seen or old == 0 or obj not in objective_names
-                    or obj in mirror_full_names):
+                    or is_mirror_obj(obj)):
                 continue
             if pk.startswith("unresolved:"):
                 kind, player_uuid, raw_name = "unresolved", None, pk[len("unresolved:"):]
@@ -732,6 +740,8 @@ def run_once(config=None, now_fn=time.time, dictionary=None, mojang_fetch=None, 
     # Every bundled version's mirror names plus the current dictionary's
     # (the same set the backup import uses). None: no dictionary at all.
     mirrors, mirror_error = mirror_names(conn, version, settings, dictionary)
+    mirror_re = (re.compile(settings.snapshot.mirror_prefix)
+                 if settings.snapshot.mirror_prefix else None)
 
     # usercache.json is per-server, sitting at the server's root directory
     # (sibling of the world folder) -- NOT shared across servers, and NOT
@@ -785,7 +795,7 @@ def run_once(config=None, now_fn=time.time, dictionary=None, mojang_fetch=None, 
             t0 = time.time()
             try:
                 result = run_scoreboard_snapshot(conn, key, world_path, usercache, mirrors, now,
-                                                 merges=merges)
+                                                 merges=merges, mirror_re=mirror_re)
                 record_run(conn, key, "scoreboards", True, None,
                            result["entries_read"], result["rows_written"],
                            int((time.time() - t0) * 1000), now=now)
