@@ -87,7 +87,8 @@ def _rivals(conn, sc, include_bots, uuid):
             m = conn.execute("SELECT value FROM meta WHERE key=?",
                              (f"tracking_started_at:{sk}",)).fetchone()
             starts[sk] = int(m[0]) if m and m[0] is not None else None
-        closing, overtake = closing_stats(gap, g7, at, window_floor(conn, sk, at, starts[sk], points))
+        floor = window_floor(conn, sk, at, starts[sk], points)
+        closing, overtake = closing_stats(gap, g7, at, floor)
         out.append({"server_key": sk, "category": cat, "stat_key": key,
                     "uuid_a": a, "uuid_b": b,
                     "other_uuid": b if a == uuid else a, "other_name": oname,

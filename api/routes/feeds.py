@@ -106,7 +106,8 @@ def rivalries(request: Request, conn=Depends(db.get_db), scope: str = "all",
             m = conn.execute("SELECT value FROM meta WHERE key=?",
                              (f"tracking_started_at:{sk}",)).fetchone()
             starts[sk] = int(m[0]) if m and m[0] is not None else None
-        closing, overtake = closing_stats(gap, g7, at, window_floor(conn, sk, at, starts[sk], points))
+        floor = window_floor(conn, sk, at, starts[sk], points)
+        closing, overtake = closing_stats(gap, g7, at, floor)
         out.append({"server_key": sk, "category": cat, "key": key,
                     "a": {"uuid": a, "name": an}, "b": {"uuid": b, "name": bn},
                     "gap": gap, "gap_7d_ago": g7, "closing_per_day": closing,
