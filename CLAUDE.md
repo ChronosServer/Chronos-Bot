@@ -93,7 +93,11 @@ What they write to `<website_path>/data/`:
   aren't all cached is fetched again (fresh links) instead of reused. Files over 50 MB or
   answering 403/404/410 keep their Discord link and are listed in `sync_state.json`
   `archive_media_failed` (not retried); other errors are retried next sync. The website's
-  archive page must accept same-site `/...` links, not only `http(s)://`.
+  archive page must accept same-site `/...` links, not only `http(s)://`. Discord links
+  typed into a message's text (and the embed click-through `url` of such a link), e.g. a
+  pasted `.litematic` from another channel, are **left as written** (owner's decision,
+  2026-11-25), even though they may expire; only `attachments`, embed `image`/`thumbnail`
+  and `author_avatar` are cached. Live result: 376 links cached (292 MB), 13 such text links.
 - `members.json` (membersExport): every 1 h. `name` = the member's own Discord name
   (`global_name`, else username), not their server nickname (owner's request, 2026-11-25).
 
