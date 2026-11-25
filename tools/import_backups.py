@@ -578,8 +578,12 @@ def _scoreboard_rows(conn, server_key, b, mirrors, keep_prefixed, name_to_uuid,
             continue
         if obj in skip:
             continue
-        u, kind = snapshot._resolve_participant(raw, name_to_uuid, stat_uuids)
-        if merges:  # player_merges.json: by uuid, or by a listed name
+        renamed = merges.rename_target(raw, b.at) if merges else None
+        if renamed:  # player_merges.json renames: a former name (date-bounded)
+            u, kind = renamed, "player"
+        else:
+            u, kind = snapshot._resolve_participant(raw, name_to_uuid, stat_uuids)
+        if merges and not renamed:  # player_merges.json: by uuid, or by a listed name
             if u:
                 u = merges.target(u)
             elif raw.lower() in merges.by_name:

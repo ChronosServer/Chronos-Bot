@@ -101,3 +101,84 @@ def test_blocked_former_name(world, run_snapshot):
     c = sqlite3.connect(world.db_path)
     assert c.execute("SELECT uuid, name FROM blocked_players").fetchall() == [(V, "NotQuite_")]
     c.close()
+
+
+# ------------------------------------------------------------- fold + resolution
+
+def rename(**kw):
+    return mg.parse_merges({"renames": [dict({"uuid": U, "names": ["NotQuiteRat_"]}, **kw)]})
+
+
+def q(world, sql, *a):
+    c = sqlite3.connect(world.db_path)
+    try:
+        return c.execute(sql, a).fetchall()
+    finally:
+        c.close()
+
+
+@pytest.fixture
+def renamed_history(world, run_snapshot):
+    """NotQuiteRat (U) and her old name's unresolved scores, as on the live DB."""
+    world.set_usercache("smp", {U: "NotQuiteRat"})
+    world.add_stats("smp", U, {"minecraft:mined": {"minecraft:stone": 1}})
+
+    def board(scores):
+        world.set_scoreboard("smp", ["digs"], scores, {"t": ["NotQuiteRat"]})
+    board([("NotQuiteRat", "digs", 13132), ("NotQuiteRat_", "digs", 1334970)])
+    run_snapshot(1000)
+    board([("NotQuiteRat", "digs", 13132), ("NotQuiteRat_", "digs", 9371069)])
+    run_snapshot(100_000)
+    board([("NotQuiteRat", "digs", 10304631)])  # stattransfer: old name reset
+    run_snapshot(200_000)
+    world.board = board
+    return world
+
+
+def test_rename_fold_sums_unresolved_rows(renamed_history, run_snapshot):
+    w = renamed_history
+    run_snapshot(300_000, merges=rename())
+    assert q(w, "SELECT at, value FROM scoreboard_snapshots WHERE uuid=? AND objective='digs' "
+                "ORDER BY at", U) == [(1000, 1348102), (100_000, 9384201), (200_000, 10304631)]
+    assert q(w, "SELECT COUNT(*) FROM scoreboard_snapshots WHERE uuid IS NULL") == [(0,)]
+    assert q(w, "SELECT participant_key, value FROM scoreboard_current") == [(U, 10304631)]
+    assert q(w, "SELECT value FROM meta WHERE key=?", f"renamed:{U}:notquiterat_") == [("1",)]
+    before = q(w, "SELECT * FROM scoreboard_snapshots ORDER BY id")
+    run_snapshot(400_000, merges=rename())
+    assert q(w, "SELECT * FROM scoreboard_snapshots ORDER BY id") == before
+
+
+def test_rename_date_bounds_leave_later_rows(renamed_history, run_snapshot):
+    w = renamed_history
+    run_snapshot(300_000, merges=rename(until="1970-01-01"))  # ends at 86399
+    assert q(w, "SELECT at, value FROM scoreboard_snapshots WHERE uuid=? AND objective='digs' "
+                "ORDER BY at", U) == [(1000, 1348102), (100_000, 13132), (200_000, 10304631)]
+    assert q(w, "SELECT at, value FROM scoreboard_snapshots WHERE uuid IS NULL ORDER BY at") == [
+        (100_000, 9371069), (200_000, 0)]
+
+
+def test_live_snapshot_resolves_rename(world, run_snapshot):
+    world.set_usercache("smp", {U: "NotQuiteRat"})
+    world.add_stats("smp", U, {"minecraft:mined": {"minecraft:stone": 1}})
+    world.set_scoreboard("smp", ["digs"], [("NotQuiteRat", "digs", 10), ("NotQuiteRat_", "digs", 5)],
+                         {"t": ["NotQuiteRat"]})
+    run_snapshot(1000, merges=rename())
+    assert q(world, "SELECT participant_key, value FROM scoreboard_current") == [(U, 15)]
+
+
+def test_import_resolves_rename(tmp_path, world, monkeypatch):
+    import snapshot
+    from conftest import make_backup
+    from tools import import_backups as ib
+    p = tmp_path / "m.json"
+    p.write_text(json.dumps({"renames": [{"uuid": V, "names": ["Q1306"]}]}), encoding="utf-8")
+    monkeypatch.setattr(mg, "MERGES_PATH", p)
+    conn = snapshot.connect_db(world.db_path)
+    snapshot.sync_servers_table(conn, world.config)
+    w = make_backup(tmp_path, name="b", last_played_ms=1_600_000_000_000,
+                    stats={V: {"minecraft:mined": {"minecraft:stone": 1}}},
+                    scoreboard=(["digs"], [("Q1306", "digs", 7)]), usercache={V: "Diggus"})
+    ib.import_backups(conn, "smp", [ib.read_backup(w, None)], {}, {}, False)
+    assert conn.execute("SELECT uuid, raw_name, value FROM scoreboard_snapshots").fetchall() == [
+        (V, "Diggus", 7)]
+    conn.close()

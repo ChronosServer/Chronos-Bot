@@ -19,12 +19,20 @@ What moves from A (from) into B (to):
   widened; totals history rebuilt for the servers touched.
 Milestones the SUM crossed before the merge but neither account did alone
 are not backfilled; later crossings are found as usual.
+
+Renames (player_merges.json `renames`, one account's former names) fold the
+same way, once per (uuid, name) (meta `renamed:<uuid>:<name>`): the name's
+unresolved scoreboard rows inside the entry's from/until are summed into the
+uuid's timeline; after `until` the name counts 0 for the uuid (from its first
+later row). Its `unresolved:<name>` current rows move to the uuid only when
+the entry covers now.
 """
 import sqlite3
 import time
 from pathlib import Path
 
 META = "merged:"
+RENAMED = "renamed:"
 
 
 def backup_db(conn, db_path, now=None):
@@ -103,16 +111,36 @@ def _merge_stats(conn, a, b):
     return servers, written
 
 
-def _merge_scoreboards(conn, a, b, names, b_name):
+def _merge_scoreboards(conn, a, b, names, b_name, from_ts=None, until_ts=None,
+                       move_current=True):
+    """a=None: a rename (only B's rows and the names' unresolved rows).
+    from_ts/until_ts bound which unresolved name rows are folded (rows
+    outside stay unresolved; after until_ts a name counts 0 from its first
+    later row). move_current: add the names' unresolved current rows."""
     names = sorted(names)
     marks = ",".join("?" * len(names))
-    name_sql = f" OR (uuid IS NULL AND lower(raw_name) IN ({marks}))" if names else ""
+    lo = -1 if from_ts is None else from_ts
+    hi = 2 ** 62 if until_ts is None else until_ts
+    name_sql = (f" OR (uuid IS NULL AND lower(raw_name) IN ({marks}) AND at BETWEEN ? AND ?)"
+                if names else "")
+    name_p = [*names, lo, hi] if names else []
     rows = {}
     for sk, o, at, v, u, raw in conn.execute(
             "SELECT server_key, objective, at, value, uuid, raw_name FROM scoreboard_snapshots "
-            f"WHERE uuid IN (?, ?){name_sql} ORDER BY at, id", (a, b, *names)):
+            f"WHERE uuid IN (?, ?){name_sql} ORDER BY at, id", (a, b, *name_p)):
         src = u if u else "name:" + raw.lower()
         rows.setdefault((sk, o), {}).setdefault(src, []).append((at, v))
+    if names and until_ts is not None:
+        # the name is someone else's after until_ts: it stops counting for B
+        for (sk, o), by in rows.items():
+            for src, series in by.items():
+                if src.startswith("name:") and series[-1][1]:
+                    nxt = conn.execute(
+                        "SELECT MIN(at) FROM scoreboard_snapshots WHERE server_key=? AND "
+                        "objective=? AND uuid IS NULL AND lower(raw_name)=? AND at>?",
+                        (sk, o, src[5:], until_ts)).fetchone()[0]
+                    if nxt is not None:
+                        series.append((nxt, 0))
     servers, written = set(), 0
     for (sk, o), by in rows.items():
         if set(by) == {b}:
@@ -120,16 +148,17 @@ def _merge_scoreboards(conn, a, b, names, b_name):
         merged = sum_timelines(list(by.values()))
         conn.execute(
             "DELETE FROM scoreboard_snapshots WHERE server_key=? AND objective=? AND "
-            f"(uuid IN (?, ?){name_sql})", (sk, o, a, b, *names))
+            f"(uuid IN (?, ?){name_sql})", (sk, o, a, b, *name_p))
         conn.executemany(
             "INSERT INTO scoreboard_snapshots (at, server_key, participant_kind, uuid, raw_name, "
             "objective, value) VALUES (?, ?, 'player', ?, ?, ?, ?)",
             [(at, sk, b, b_name, o, v) for at, v in merged])
         servers.add(sk)
         written += len(merged)
-    keys = [a] + [r[0] for r in conn.execute(
+    keys = ([a] if a else []) + ([r[0] for r in conn.execute(
         "SELECT DISTINCT participant_key FROM scoreboard_current WHERE participant_key LIKE "
         "'unresolved:%'") if r[0][len("unresolved:"):].lower() in set(names)]
+        if move_current else [])
     for pk in keys:
         for sk, o, v, upd, seen in conn.execute(
                 "SELECT server_key, objective, value, updated_at, seen_at FROM scoreboard_current "
@@ -172,11 +201,33 @@ def _merge_derived(conn, a, b):
             (b, pa[0], pa[1], pa[2]))
 
 
+def pending_renames(conn, merges):
+    """Rename entries (api.merges.Rename) not folded yet."""
+    done = {r[0] for r in conn.execute("SELECT key FROM meta WHERE key LIKE 'renamed:%'")}
+    return [r for r in merges.renames if f"{RENAMED}{r.uuid}:{r.name}" not in done]
+
+
+def _fold_rename(conn, r, run_at):
+    b = r.uuid
+    row = conn.execute("SELECT name FROM players WHERE uuid=?", (b,)).fetchone()
+    b_name = row[0] if row and row[0] else r.display
+    conn.execute("INSERT OR IGNORE INTO players (uuid, name, name_resolved, first_seen, "
+                 "last_observed) VALUES (?, NULL, 0, ?, ?)", (b, run_at, run_at))
+    servers, n = _merge_scoreboards(conn, None, b, {r.name}, b_name, r.from_ts, r.until_ts,
+                                    move_current=r.covers(run_at))
+    conn.execute("INSERT INTO meta (key, value) VALUES (?, '1') ON CONFLICT(key) "
+                 "DO UPDATE SET value=excluded.value", (f"{RENAMED}{b}:{r.name}",))
+    print(f"[rename] {r.display} -> {b}: {n} scoreboard history rows "
+          f"(servers: {', '.join(sorted(servers)) or 'none'})")
+    return servers
+
+
 def apply_pending_merges(conn, merges, run_at, db_path, *, backup=True):
-    """Folds every not-yet-applied merge in. One transaction; returns the
-    list of (from, to) applied."""
+    """Folds every not-yet-applied merge and rename in. One transaction;
+    returns the list of (from, to) merges applied."""
     todo = pending(conn, merges)
-    if not todo:
+    renames = pending_renames(conn, merges)
+    if not todo and not renames:
         return []
     if backup:
         print(f"[merge] DB backup: {backup_db(conn, db_path)}")
@@ -198,6 +249,8 @@ def apply_pending_merges(conn, merges, run_at, db_path, *, backup=True):
                          "DO UPDATE SET value=excluded.value", (META + a, b))
             print(f"[merge] {a} -> {b}: {n1} stat + {n2} scoreboard history rows "
                   f"(servers: {', '.join(sorted(s1 | s2)) or 'none'})")
+        for r in renames:
+            touched |= _fold_rename(conn, r, run_at)
         if touched:
             derive.rebuild_totals(conn, run_at, sorted(touched))
         conn.commit()

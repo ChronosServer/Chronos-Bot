@@ -560,10 +560,15 @@ def run_scoreboard_snapshot(conn, server_key, world_path, usercache, dictionary,
         if is_mirror_obj(obj_name):
             continue
 
-        player_uuid, kind = _resolve_participant(raw_name, name_to_uuid, known_stat_uuids)
+        # player_merges.json renames: a former name of one account (date-bounded)
+        renamed = merges.rename_target(raw_name, now) if merges else None
+        if renamed:
+            player_uuid, kind = renamed, "player"
+        else:
+            player_uuid, kind = _resolve_participant(raw_name, name_to_uuid, known_stat_uuids)
         # player_merges.json: a merged account's entries (by uuid, or by one
         # of its listed names) are summed into the target player.
-        if merges:
+        if merges and not renamed:
             if player_uuid:
                 player_uuid = merges.target(player_uuid)
             elif raw_name.lower() in merges.by_name:
