@@ -7,8 +7,8 @@ from api import db, timeq
 from api.cache import cached
 from api.rivals import closing_stats, window_floor
 from api.routes.series import build_series
-from api.scope import (achievement_not_mirror_sql, resolve_scope,
-                       scoreboard_filter_sql, stat_filter_sql)
+from api.scope import (achievement_not_mirror_sql, order_servers, resolve_scope,
+                       scoreboard_filter_sql, stat_filter_sql, tracked_sql)
 from api.settings import api_settings
 
 router = APIRouter()
@@ -141,10 +141,11 @@ def player(ident: str, request: Request, conn=Depends(db.get_db),
     boards = _ranked_scoreboards(conn, sc, include_bots, uuid)
     marks = ",".join("?" * len(sc.servers))
     sp = [uuid, *sc.servers]
-    servers = sorted({r[0] for r in conn.execute(
-        f"SELECT DISTINCT server_key FROM stat_current WHERE uuid=? AND server_key IN ({marks}) "
-        f"UNION SELECT DISTINCT server_key FROM scoreboard_current WHERE participant_key=? "
-        f"AND server_key IN ({marks})", [*sp, *sp])})
+    servers = order_servers(conn, (r[0] for r in conn.execute(
+        f"SELECT DISTINCT server_key FROM stat_current t WHERE uuid=? AND server_key IN ({marks})"
+        f"{tracked_sql('t', 'stats')} UNION SELECT DISTINCT server_key FROM scoreboard_current t "
+        f"WHERE participant_key=? AND server_key IN ({marks}){tracked_sql('t', 'scoreboards')}",
+        [*sp, *sp])))
     badges = [dict(zip(("badge_key", "server_key", "awarded_at"), r)) for r in conn.execute(
         f"SELECT badge_key, server_key, awarded_at FROM badges WHERE uuid=? AND "
         f"(server_key IS NULL OR server_key IN ({marks})) ORDER BY awarded_at, badge_key",
@@ -153,12 +154,14 @@ def player(ident: str, request: Request, conn=Depends(db.get_db),
              "value_at", "earliest_known", "approximate")
     milestones = [dict(zip(mcols, r)) for r in conn.execute(
         f"SELECT {', '.join(mcols)} FROM milestones WHERE uuid=? AND server_key IN ({marks}) "
-        f"AND {achievement_not_mirror_sql('milestones')} ORDER BY at DESC, id DESC LIMIT ?",
+        f"AND {achievement_not_mirror_sql('milestones')}{tracked_sql('milestones', 'category')} "
+        f"ORDER BY at DESC, id DESC LIMIT ?",
         [*sp, api_settings().api.player_milestones_limit])]
     fcols = ("at", "server_key", "category", "stat_key", "earliest_known", "approximate")
     firsts = [dict(zip(fcols, r)) for r in conn.execute(
         f"SELECT {', '.join(fcols)} FROM firsts WHERE uuid=? AND server_key IN ({marks}) "
-        f"AND {achievement_not_mirror_sql('firsts')} ORDER BY at, id", sp)]
+        f"AND {achievement_not_mirror_sql('firsts')}{tracked_sql('firsts', 'category')} "
+        f"ORDER BY at, id", sp)]
     return {"uuid": uuid, "name": name, "name_resolved": resolved,
             "last_activity": last, "is_bot_on_smp": _is_bot_on_smp(conn, uuid),
             "servers": servers, "stats": stats, "scoreboards": boards,

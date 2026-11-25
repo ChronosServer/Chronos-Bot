@@ -38,7 +38,13 @@ def _v3(conn):
         "PRIMARY KEY(server_key, last_played))")
 
 
-MIGRATIONS = [_v1, _v2, _v3]
+def _v4(conn):
+    # Display order = stats_tracking.servers order in config.json; written by
+    # bot/snapshot.py sync_servers_table. NULL = not in config (sorts last).
+    _add_column(conn, "servers", "position", "INTEGER")
+
+
+MIGRATIONS = [_v1, _v2, _v3, _v4]
 
 
 def migrate(conn: sqlite3.Connection) -> None:

@@ -10,7 +10,8 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from api.scope import (  # noqa: E402,F401
-    Scope, achievement_not_mirror_sql, counted_uuids, scoreboard_filter_sql, stat_filter_sql,
+    SERVER_ORDER_SQL, Scope, achievement_not_mirror_sql, counted_uuids, scoreboard_filter_sql,
+    stat_filter_sql,
 )
 from api.settings import DAY, DEFAULTS, days_s  # noqa: E402,F401
 from api.history import snap_from  # noqa: E402
@@ -45,7 +46,7 @@ def begin_immediate(conn, timeout_s=BUSY_TIMEOUT_S):
 
 def _servers(conn):
     return [r[0] for r in conn.execute(
-        "SELECT key FROM servers WHERE provisioned=1 ORDER BY key")]
+        "SELECT key FROM servers WHERE provisioned=1 ORDER BY " + SERVER_ORDER_SQL)]
 
 
 def tracking_start(conn, server_key):
@@ -80,16 +81,17 @@ def counted_achievements(key, alias):
 def counted_stats(key, alias):
     """WHERE fragment: counted players' rows on one server (any table with
     server_key + uuid columns)."""
-    return stat_filter_sql(Scope(key, (key,)), False, alias)
+    return stat_filter_sql(Scope(key, (key,)), False, alias, track=None)
 
 
 def counted_all(conn, alias):
     """Same, across every provisioned server."""
-    return stat_filter_sql(Scope("all", tuple(_servers(conn))), False, alias)
+    return stat_filter_sql(Scope("all", tuple(_servers(conn))), False, alias, track=None)
 
 
 def counted_scoreboard(key, alias, is_current):
-    return scoreboard_filter_sql(Scope(key, (key,)), False, alias, is_current=is_current)
+    return scoreboard_filter_sql(Scope(key, (key,)), False, alias, is_current=is_current,
+                                 track=None)
 
 
 def clamped_ago(conn, key, run_at, seconds):

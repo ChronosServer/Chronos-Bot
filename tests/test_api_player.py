@@ -60,7 +60,7 @@ def test_player_by_uuid(env):
     j = env.get(P + U1).json()
     assert j["uuid"] == U1 and j["name"] == "Alice"
     assert j["is_bot_on_smp"] is False
-    assert j["servers"] == ["cmp", "smp"]
+    assert j["servers"] == ["smp", "cmp"]  # config order
     assert stat(j)["value"] == 11
     assert j["scoreboards"][0]["objective"] == "kills"
     assert set(j) >= {"name_resolved", "last_activity", "badges", "milestones",

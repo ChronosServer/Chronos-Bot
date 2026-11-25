@@ -144,6 +144,7 @@ What to check:
 | `--dictionary FILE` | An extra `dictionary-<version>.json` of mirror objective names. You can repeat it. The bundled `dictionaries/` folder is always used. |
 | `--config PATH` | The `config.json` to read `stats_tracking` from. Default: the repo's `config.json`. |
 | `--rebuild-only` | Import nothing and only rerun the derived-data rebuild for `--server`. You need this only if the rebuild after an import stopped because the DB was busy. |
+| `--reimport-scoreboards` | Repair: rewrite the scoreboard rows of every backup already imported for `--server`, re-read from the folder recorded at import time, under the current participant rules (e.g. after the rename fix: every name of one player, matched by uuid through the backups' usercaches, is summed under the player's latest name, like the in-game `stattransfer`; the output lists each `old -> current` pair merged). Stat rows and live rows are untouched. Works with `--dry-run` (prints old -> new row counts per backup), makes the usual DB backup, then rebuilds. Every recorded folder must still be readable, or nothing changes. Takes no folders and no `--date`. |
 
 Exit codes:
 

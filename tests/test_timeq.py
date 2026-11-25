@@ -5,6 +5,7 @@ import pytest
 
 from api import timeq
 from api.scope import resolve_scope
+from sql.migrations import migrate
 
 SCHEMA = (Path(__file__).resolve().parent.parent / "sql" / "schema.sql").read_text()
 U1 = "11111111-1111-1111-1111-111111111111"
@@ -16,6 +17,7 @@ def conn(tmp_path):
     c = sqlite3.connect(str(tmp_path / "t.db"))
     c.row_factory = sqlite3.Row
     c.executescript(SCHEMA)
+    migrate(c)
     c.executemany("INSERT INTO servers(key,label,group_key,filters_bots) VALUES(?,?,?,?)",
                   [("smp", "SMP", "smp", 0), ("cmp", "CMP", "cmp", 0)])
     c.execute("INSERT INTO meta VALUES('tracking_started_at:smp','1000')")

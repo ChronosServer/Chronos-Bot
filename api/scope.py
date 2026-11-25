@@ -14,8 +14,21 @@ from dataclasses import dataclass
 
 from api.settings import api_settings
 
-_RESERVED = {"_scope_pf", "_scope_m"}
+_RESERVED = {"_scope_pf", "_scope_m", "_trk", "_mir_m"}
 _IDENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+
+
+# Display order of servers everywhere: the order of stats_tracking.servers in
+# config.json (servers.position, written by bot/snapshot.py); rows no longer in
+# config (position NULL) last, by key. Use with the servers table unaliased.
+SERVER_ORDER_SQL = "position IS NULL, position, key"
+
+
+def order_servers(conn, keys) -> list:
+    """`keys` (any iterable of server keys, deduplicated) in display order."""
+    rank = {k: i for i, (k,) in enumerate(conn.execute(
+        f"SELECT key FROM servers ORDER BY {SERVER_ORDER_SQL}"))}
+    return sorted(set(keys), key=lambda k: (rank.get(k, len(rank)), k))
 
 
 @dataclass(frozen=True)
@@ -35,7 +48,7 @@ def resolve_scope(conn, name: str, groups=None) -> Scope:
     settings.scope_groups)."""
     groups = _scope_groups(groups)
     prov = conn.execute(
-        "SELECT key, group_key FROM servers WHERE provisioned=1 ORDER BY key").fetchall()
+        "SELECT key, group_key FROM servers WHERE provisioned=1 ORDER BY " + SERVER_ORDER_SQL).fetchall()
     if name == "all":
         servers = tuple(k for k, _ in prov)
     elif name in groups:
@@ -53,13 +66,24 @@ def list_scopes(conn, groups=None) -> list:
     server (e.g. cmps); then the servers inside those groups."""
     groups = _scope_groups(groups)
     prov = conn.execute(
-        "SELECT key, group_key FROM servers WHERE provisioned=1 ORDER BY key").fetchall()
+        "SELECT key, group_key FROM servers WHERE provisioned=1 ORDER BY " + SERVER_ORDER_SQL).fetchall()
     grouped = set(groups.values())
     out = ["all"]
     out += [k for k, g in prov if g not in grouped]
     out += [n for n, g in groups.items() if any(pg == g for _, pg in prov)]
     out += [k for k, g in prov if g in grouped]
     return list(dict.fromkeys(out))
+
+
+def scope_group_servers(conn, groups=None) -> dict:
+    """Group scope name -> its provisioned server keys, in display order, for
+    every scope_groups name with at least one (the ones list_scopes offers)."""
+    groups = _scope_groups(groups)
+    prov = conn.execute(
+        "SELECT key, group_key FROM servers WHERE provisioned=1 ORDER BY "
+        + SERVER_ORDER_SQL).fetchall()
+    out = {n: [k for k, pg in prov if pg == g] for n, g in groups.items()}
+    return {n: ks for n, ks in out.items() if ks}
 
 
 def _alias(alias):
@@ -80,14 +104,41 @@ def _scope_sql(scope, include_bots, a, uuid_col):
     return sql, params
 
 
-def stat_filter_sql(scope: Scope, include_bots: bool, alias: str):
+_TRACK = {"stats": "_trk.track_stats", "scoreboards": "_trk.track_scoreboards"}
+
+
+def tracked_sql(alias: str, track) -> str:
+    """" AND <fragment>" hiding rows of a server whose tracking toggle is off
+    (config servers.<key>.track_stats / track_scoreboards), or "" for
+    track=None. Read-time only: the rows stay, so turning the toggle back on
+    shows them again. track: "stats", "scoreboards", or "category" (rows with
+    a category column: category 'scoreboard' follows track_scoreboards, every
+    other category track_stats -- firsts, milestones, rivalries, spotlight).
+    The API hides; derive passes track=None and keeps computing on the frozen
+    rows, so totals history gets no fake drop to 0."""
+    if track is None:
+        return ""
+    a = _alias(alias)
+    if track == "category":
+        col = (f"CASE WHEN {a}.category = 'scoreboard' THEN _trk.track_scoreboards "
+               "ELSE _trk.track_stats END")
+    elif track in _TRACK:
+        col = _TRACK[track]
+    else:
+        raise ValueError(f"bad track: {track!r}")
+    return f" AND EXISTS (SELECT 1 FROM servers _trk WHERE _trk.key={a}.server_key AND {col}=1)"
+
+
+def stat_filter_sql(scope: Scope, include_bots: bool, alias: str, track="stats"):
+    """track: see tracked_sql ("category" for firsts/milestones/rivalries/
+    spotlight rows; None in derive)."""
     a = _alias(alias)
     sql, params = _scope_sql(scope, include_bots, a, "uuid")
-    return f"({sql})", params
+    return f"({sql}{tracked_sql(a, track)})", params
 
 
 def scoreboard_filter_sql(scope: Scope, include_bots: bool, alias: str,
-                          is_current: bool = False):
+                          is_current: bool = False, track="scoreboards"):
     a = _alias(alias)
     if is_current:
         sql, params = _scope_sql(scope, include_bots, a, "participant_key")
@@ -97,7 +148,7 @@ def scoreboard_filter_sql(scope: Scope, include_bots: bool, alias: str,
         unresolved = f"{a}.participant_kind != 'unresolved'"
     mirror = (f"NOT EXISTS (SELECT 1 FROM scoreboard_meta _scope_m WHERE _scope_m.server_key={a}.server_key"
               f" AND _scope_m.objective={a}.objective AND _scope_m.is_vanilla_mirror=1)")
-    return f"({sql} AND {unresolved} AND {mirror})", params
+    return f"({sql} AND {unresolved} AND {mirror}{tracked_sql(a, track)})", params
 
 
 def achievement_not_mirror_sql(alias: str) -> str:

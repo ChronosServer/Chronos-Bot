@@ -48,7 +48,7 @@ def derive_activity(conn, run_at, settings=None):
 def _derive_stat_totals(conn, key, run_at):
     # Full recompute every run: classification (bot flags) can change with no
     # stat change, and a previously failed derive must self-heal.
-    sql, params = stat_filter_sql(Scope(key, (key,)), False, "s")
+    sql, params = stat_filter_sql(Scope(key, (key,)), False, "s", track=None)
     totals = {(c, k): t for c, k, t in conn.execute(
         "SELECT category, stat_key, SUM(value) FROM stat_current "
         "WHERE server_key=? GROUP BY category, stat_key", (key,))}
@@ -74,8 +74,8 @@ def _derive_stat_totals(conn, key, run_at):
 
 def _derive_scoreboard_totals(conn, key, run_at):
     scope = Scope(key, (key,))
-    sql_all, p_all = scoreboard_filter_sql(scope, True, "sc", is_current=True)
-    sql_nb, p_nb = scoreboard_filter_sql(scope, False, "sc", is_current=True)
+    sql_all, p_all = scoreboard_filter_sql(scope, True, "sc", is_current=True, track=None)
+    sql_nb, p_nb = scoreboard_filter_sql(scope, False, "sc", is_current=True, track=None)
     totals = dict(conn.execute(
         f"SELECT objective, SUM(value) FROM scoreboard_current sc WHERE {sql_all} "
         "GROUP BY objective", p_all).fetchall())

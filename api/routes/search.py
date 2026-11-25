@@ -35,7 +35,9 @@ def _build_index(conn):
     for obj, srv in conn.execute(
             "SELECT m.objective, m.server_key FROM scoreboard_meta m "
             "JOIN servers s ON s.key=m.server_key AND s.provisioned=1 "
-            "WHERE m.is_vanilla_mirror=0 AND m.removed=0 ORDER BY m.objective, m.server_key"):
+            "AND s.track_scoreboards=1 "
+            "WHERE m.is_vanilla_mirror=0 AND m.removed=0 ORDER BY m.objective, "
+            "s.position IS NULL, s.position, s.key"):  # = api.scope.SERVER_ORDER_SQL
         servers[obj].append(srv)
     objectives = [(o, s, o.lower()) for o, s in servers.items()]
     return {"players": players, "stats": stats, "objectives": objectives}
@@ -119,5 +121,6 @@ def keys(request: Request, conn=Depends(db.get_db), scope: str = "all",
     rows = conn.execute(
         f"SELECT objective, MIN(removed) FROM scoreboard_meta "
         f"WHERE is_vanilla_mirror=0 AND server_key IN ({marks}) "
+        f"AND server_key IN (SELECT key FROM servers WHERE track_scoreboards=1) "
         f"GROUP BY objective ORDER BY objective", list(sc.servers)).fetchall()
     return {"objectives": [{"objective": o, "removed": bool(r)} for o, r in rows]}

@@ -216,10 +216,10 @@ tables) → SQLite → `api/` (FastAPI, read-only) → nginx `/api/stats/*` → 
 | `api/cache.py` | `@cached`: key = path + declared params + data_version; ETag (includes a settings fingerprint)/304; LRU bounds from `api.cache_*` (default ≤128 MiB, bodies >8 MiB not cached) |
 | `api/db.py` | read-only connections; `data_version` = live `MAX(snapshot_runs.id)`; `REQUIRED_INDEXES` startup check |
 | `api/routes/*` | meta, leaderboard, series/totals, player/compare, search/keys, feeds (milestones, firsts, rivalries, activity, spotlight) |
-| `sql/schema.sql`, `sql/migrations.py` | schema (CREATE IF NOT EXISTS) then migrations by `PRAGMA user_version` (now 3: v3 adds `approximate` on firsts/milestones and the `imports` table) |
+| `sql/schema.sql`, `sql/migrations.py` | schema (CREATE IF NOT EXISTS) then migrations by `PRAGMA user_version` (now 4: v3 adds `approximate` on firsts/milestones and the `imports` table; v4 adds `servers.position`) |
 | `tools/` | `import_backups.py` (old world backups into history), `stat_renames.json` (old->new stat keys, editable), `README.md` (operator guide) |
 | `dictionaries/` | bundled every-scoreboard `dictionary-<version>.json`, 1.16-26.2 (34 files; 1.19.1/.3/.4 missing); mirror-objective lists for the snapshot and the import |
-| `deploy/` | systemd units (snapshot, timer, api) + nginx snippet |
+| `deploy/` | systemd units (snapshot, timer, api) + nginx snippet; `update.sh` (git-pull updater, see Deploy) + `check_config.py` |
 | `tests/` | pytest, 358 tests, synthetic worlds built through the real snapshot write path, no network; tests never read the repo's config.json (autouse fixture; `api_config` writes one) |
 | `STATS_PLAN.md` | agreed scope, hard rules, build order/status |
 | `STATS_API.md` | the HTTP contract for the website (copy into the website repo) |
@@ -240,6 +240,13 @@ tables) → SQLite → `api/` (FastAPI, read-only) → nginx `/api/stats/*` → 
   `provisioned=1` servers (the `all` pseudo row in `servers` is provisioned=0 and exists
   only as an FK target for `snapshot_runs.kind='derive'`). Multi-server scopes sum per
   player. A bot on SMP still counts on CMPs.
+- **Server order = config order.** `sync_servers_table` (`bot/snapshot.py`, every run)
+  writes `servers.position` = index in `stats_tracking.servers`; servers no longer in
+  config get NULL (last, by key). Everything that lists servers sorts by
+  `api.scope.SERVER_ORDER_SQL` (or `order_servers()` for a key set): `/meta.servers`,
+  `scopes`, `scope_groups`, scope tuples, `/player.servers`, `/search` objective servers,
+  derive's server loop. Never `ORDER BY key` on servers. A reorder in config takes effect at
+  the next snapshot run (new `data_version` → new ETags), no API restart.
 - **Tracking start** per server = `MIN(at)` of stats **and import** runs with `ok=1 AND entries_read>0`.
   Ranges reaching earlier are clamped and responses carry `effective_from`. After a backup
   import it moves back to the oldest backup, so it (and `effective_from`) can be years
@@ -330,9 +337,31 @@ Order, on the live server (Debian, root, repo `/opt/chronos/Chronos-Bot`, Python
 6. Backup import: stop timer + service, `tools/import_backups.py --server smp --dry-run`
    on the SMP backups (1.16/1.17/1.18/1.20/1.21), then the real run, then start the timer.
    The API can keep running. Then check `/meta.tracking_started_at.smp` moved back.
-7. The code is on `master` (origin). A later update: stop the timer + service, copy the
-   changed files (or `git pull`), run `bot/snapshot.py` once if `sql/` changed, restart
-   `chronos-stats-api` if `api/` changed, start the timer.
+7. The code is on `master` (origin). **Later updates: `bash deploy/update.sh`** (as root,
+   in the repo; `--check` first shows incoming commits + the config check and changes
+   nothing). It replaces WinSCP copying and steps 1-5 for routine updates:
+   - fetch, fast-forward only; refuses on server-only commits or tracked files that differ
+     from both git and the incoming version (`--discard-local` backs them up to
+     `/opt/chronos/config-backups/local-files.<stamp>/` and takes git's). Files already
+     identical to the incoming version (copied by hand) are fine.
+   - `config.json` stays tracked (owner's choice) but is **never written**: backed up to
+     `/opt/chronos/config-backups/config.json.<stamp>`, set aside for the merge, copied back
+     byte for byte (cmp-checked). `deploy/check_config.py` compares it with the incoming
+     repo `config.json` (MISSING keys = warn, add by hand; stats_tracking left-out keys =
+     defaults; invalid stats_tracking per the *incoming* `load_settings` = stop before
+     changing anything).
+   - Server checkout is sparse (`SPARSE_PATTERNS` in the script: no tests/, docs/,
+     examples/, planning .md files); classic `.git/info/sparse-checkout` + `read-tree`
+     because the server's git is 2.30.
+   - Stats paths changed (bot/ sql/ api/ dictionaries/): stop timer, wait for a running
+     snapshot, update, one snapshot by hand (migrations), restart the API if api/ or sql/
+     changed and curl it, start the timer. requirements.txt: pip dry-run, then asks.
+     Bot code (main.py, commands/, Chronos-Library/): offers to kill `python3 main.py`
+     (start.sh relaunches it 5 s later; the bot runs via start.sh in screen/tmux).
+     systemd/nginx files: prints what to copy, never installs.
+   - Logs to `/opt/chronos/update-logs/update-<stamp>.log` (owner downloads it).
+   The whole script body is one function, so a pull that replaces the script is safe.
+   Paths are env-overridable (`CHRONOS_PY`, `CHRONOS_LOG_DIR`, ...) for local testing.
 
 ### Working with the owner
 The owner can't copy/paste reliably from the server terminal: put server commands in
@@ -341,7 +370,7 @@ bottom. No `sqlite3` CLI on the server — use `python3 -c "import sqlite3..."`.
 Local tests: `pip install -r requirements.txt -r requirements-dev.txt`
 then `python -m pytest tests -q` (Windows, Python 3.13 locally; server is 3.14).
 
-## Resolved follow-ups (from the final review, 2026-11-25; fixed same day)
+## Resolved follow-ups (2026-11-25)
 1. **Custom range entirely inside the pre-live gap** (`Range.in_gap` / `for_values()` in
    `api/timeq.py`): `/series`, `/totals` and compare series return one point, the value at
    `to`; leaderboard/compare deltas stay empty ("no observation in the window").
@@ -354,61 +383,43 @@ then `python -m pytest tests -q` (Windows, Python 3.13 locally; server is 3.14).
    applies: bundle the new version's dictionary (every-scoreboard `create.py`) before
    bumping `server.minecraft_version`.
 
+4. **Tracking toggle off hides that server's data** (`api.scope.tracked_sql`; fixed
+   2026-11-25, not deployed yet). Read time only, never deleted: `stat_filter_sql` /
+   `scoreboard_filter_sql` add an `EXISTS (servers ... track_*=1)` clause by default
+   (`track="stats"` / `"scoreboards"`; `track="category"` for rows with a category column:
+   firsts, milestones, spotlight; `scoreboard` → `track_scoreboards`, else `track_stats`).
+   Also `/search` objectives, `/keys` scoreboard, `/totals`, `/player` servers/firsts/
+   milestones, `/meta.categories`. **Derive passes `track=None`** and keeps computing on the
+   frozen rows: hiding there would write a fake drop to 0 into totals history (and a jump
+   back when re-enabled). Badges already awarded stay visible. A toggle change takes effect
+   at the next snapshot run (it syncs `servers`). Owner can now turn `track_scoreboards`
+   off on the CMPs + `building` once this is deployed.
+5. **Import: renamed players' old-name scoreboard entries** (fixed 2026-11-25; owner's
+   decision: **match by uuid, sum under the latest name**). In `_scoreboard_rows`, every raw
+   name that resolves to a uuid (any backup's usercache, or the live `players` names) is
+   summed per (uuid, objective) into one row whose raw_name is the uuid's latest name (live
+   name, else newest backup name). Same result as the in-game `stattransfer <old> <new>`
+   (`+=` then reset), so history doesn't jump at the transfer, and never two rows for one
+   (uuid, objective, at). Generic, nothing name-specific (owner: NotQuiteRat_ →
+   NotQuiteRat, LordHamster42 → hampter42, Obi81 → ObiWan8_, ...). The import and the repair
+   print the `old -> current` pairs they merged. Limit: an old name in no backup usercache
+   and not a live name can't be tied to a uuid (Mojang has no name-history API since
+   2022, and name→uuid returns today's holder, possibly someone else); it stays
+   `unresolved:`. Live DB repair: `import_backups.py --server smp --reimport-scoreboards`
+   (dry run first; rewrites the scoreboard rows at every recorded import point from its
+   folder, adjusts `rows_written`, then rebuilds; needs the backup folders).
+6. **Live snapshot records a reset score as 0** (fixed 2026-11-25). `run_scoreboard_snapshot`:
+   when the `PlayerScores` tag is present, an entry in `scoreboard_current` whose objective
+   is still on the board (and not a mirror) but which is gone this run gets a value-0
+   history row + current 0 (raw_name from its latest history row). Missing tag = nothing;
+   removed objective = `scoreboard_meta.removed`. A reset player then shows 0 (like any
+   0 score), not their stale value.
+
 ## Known follow-ups (open)
-1. **Hide a server's data when its tracking toggle is off (decided, not implemented yet).**
-   `track_stats` / `track_scoreboards` only stop the snapshot reading that server
-   (`bot/snapshot.py run_once`); rows already collected stay, and nothing in `api/` or derive
-   checks the flags (only `/meta` reports them). So turning a toggle off after data was
-   collected leaves that server's values frozen at the last reading but still shown in
-   `cmps`/`all` (summed with live values for same-named keys), in `/search`, `/leaderboard`,
-   `/series`, `/totals`, `/player`, and its firsts/milestones stay in the feeds.
-   Live state: the owner wants `track_scoreboards` off on every CMP and `building`, but
-   kept it ON for now (2026-11-25, at deploy) so their data isn't stale; turn it off only
-   after this fix is deployed.
-   Agreed fix: **hide at read time, never delete** (turning a toggle back on brings the data
-   back), the same pattern as the mirror filter. Add a servers-flag clause in `api/scope.py`
-   (`EXISTS (SELECT 1 FROM servers WHERE key=<a>.server_key AND track_scoreboards=1)`, and
-   the `track_stats` equivalent) to `scoreboard_filter_sql` / `stat_filter_sql`, to
-   `achievement_not_mirror_sql` (by category: `scoreboard` rows → `track_scoreboards`, others
-   → `track_stats`) and `objective_not_mirror_sql`; filter `api/routes/search.py`'s objective
-   and stat lists; and decide whether derive (totals, rivalries, badges, spotlight) should
-   skip untracked data too (it reads the same fragments via `derive_common`, so it would by
-   default — check badge/total side effects). Keep pinned-index `EXPLAIN QUERY PLAN` tests
-   passing.
-2. **Import: a renamed player's old-name scoreboard entries collide with the new name's.**
-   Scoreboards key by name, so after a rename the old name's entries stay on the board,
-   frozen. `tools/import_backups.py` resolves names through every backup's usercache merged
-   (`_resolve_names`), so both names map to the same uuid and both rows are written at the
-   same `at`. History reads (`MAX(at) ... GROUP BY server_key, uuid`) then pick one of the
-   two arbitrarily, so the value at that import point may be the stale one. Live is not
-   affected (the live usercache has only the current name; the old one stays
-   `unresolved:`). Seen on the live DB after the 2026-11-25 import: 20 (at, objective)
-   groups, all one player (old name `NotQuiteRat_` 179 vs current `NotQuiteRat` 7 on
-   `Levels`; owner-confirmed which is which; both names already appear in the 2021
-   backup); it also
-   made the real import write 16 fewer scoreboard rows than the dry run. Renames are
-   handled in-game by `commands/statTransferCommand.py` (admin `stattransfer <from> <to>`:
-   `scoreboard players operation <to> <obj> += <from> <obj>` for every objective, then
-   `scoreboard players reset <from>`); `NotQuiteRat_` → `NotQuiteRat` was transferred
-   after the last backup (2026-07-15), so live data is correct (everything on
-   `NotQuiteRat`, matching Discord `/stats`) and only the import points are affected.
-   Fix (mirror what the live snapshot does): in `_scoreboard_rows`, a raw name counts as
-   the uuid only if it is that uuid's name in **that backup's own** usercache; other names
-   for the same uuid become `unresolved:` rows, as live does. A later live transfer then
-   shows as the same jump it would have live. Repair the live DB: rewrite those rows at
-   import points (uuid NULL, kind unresolved), then `import_backups.py --server smp
-   --rebuild-only` (timer stopped). Add a test.
-3. **Live snapshot never records a reset score.** `run_scoreboard_snapshot`
-   (`bot/snapshot.py`) only writes entries present in `PlayerScores`; an entry that
-   disappears (`scoreboard players reset`, e.g. the `<from>` side of `stattransfer`) keeps
-   its last value in `scoreboard_current` forever. Harmless for a normal rename transfer
-   (the old name is `unresolved:`, never shown), wrong when `<from>` is a real current
-   player (an alt merged into a main, or an admin reset): their old scores stay on the
-   API, and after a transfer they're counted twice. Fix: when the `PlayerScores` tag is
-   present, every `(participant_key, objective)` in `scoreboard_current` whose objective
-   still exists but whose entry is gone this run gets a value-0 history row and current
-   0. A missing `PlayerScores` tag still means nothing (Paper omission, see the NBT quirk
-   above), and a removed objective stays `scoreboard_meta.removed`'s job. Test both.
+None from the stats backend. Bot-side requests queued by the owner (2026-11-25): the
+members export should use each member's Discord username, not their Chronos server
+nickname; and archive pictures should be cached (they disappear after a while; Discord
+attachment URLs expire).
 
 ## Website nav plan (for when Stats ships)
 Top-level nav gets one new "Stats ▾" dropdown (Overview / Explorer / Scoreboards /

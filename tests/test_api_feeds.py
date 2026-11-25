@@ -95,6 +95,37 @@ def test_firsts(env):
     assert len(env.get("/api/stats/firsts?include_bots=true").json()["rows"]) == 2
 
 
+FI = ("INSERT INTO firsts (at, server_key, uuid, category, stat_key, earliest_known) "
+      "VALUES (?, 'smp', ?, 'c', ?, ?)")
+
+
+def test_firsts_default_order_unchanged_and_limit(env):
+    many(env.world, FI, [(30, U1, "c", 0), (10, U1, "a", 0), (20, U1, "b", 0)])
+    j = env.get("/api/stats/firsts").json()
+    assert set(j) == {"rows"} and [r["key"] for r in j["rows"]] == ["a", "b", "c"]
+    j = env.get("/api/stats/firsts?limit=2").json()
+    assert set(j) == {"rows"} and [r["key"] for r in j["rows"]] == ["a", "b"]
+    assert "id" not in j["rows"][0]
+
+
+def test_firsts_newest_paged_earliest_known_last(env):
+    many(env.world, FI, [(500, U1, "ek1", 1), (100, U1, "d100", 0), (300, U2, "d300", 0),
+                         (200, U1, "d200", 0), (900, U2, "ek2", 1)])
+    j = env.get("/api/stats/firsts?order=newest&limit=2").json()
+    assert [r["key"] for r in j["rows"]] == ["d300", "d200"] and j["next"]
+    j2 = env.get("/api/stats/firsts?order=newest&limit=2&before=" + j["next"]).json()
+    assert [r["key"] for r in j2["rows"]] == ["d100", "ek2"] and j2["next"]
+    j3 = env.get("/api/stats/firsts?order=newest&limit=2&before=" + j2["next"]).json()
+    assert [r["key"] for r in j3["rows"]] == ["ek1"] and j3["next"] is None
+    assert set(j3["rows"][0]) == {"server_key", "category", "key", "uuid", "name", "at",
+                                  "earliest_known", "approximate"}
+    # limit capped at api.feed_max_limit; bad params 400
+    assert len(env.get("/api/stats/firsts?order=newest&limit=99999").json()["rows"]) == 5
+    assert env.get("/api/stats/firsts?order=sideways").status_code == 400
+    assert env.get("/api/stats/firsts?order=newest&before=junk").status_code == 400
+    assert env.get("/api/stats/firsts?before=0:1:1").status_code == 400
+
+
 def test_rivalry_overtake_days(env):
     many(env.world, "INSERT INTO rivalries VALUES ('smp', 'c', ?, ?, ?, ?, ?, ?)",
          [("slow", U1, U2, 10, 12, NOW), ("fast", U1, U2, 10, 80, NOW),

@@ -323,6 +323,98 @@ def test_scoreboard_participant_resolved_via_players(tmp_path, db):
         ("player", U2)]
 
 
+def _sb(conn):
+    return sorted(conn.execute(
+        "SELECT at, participant_kind, uuid, raw_name, objective, value "
+        "FROM scoreboard_snapshots"), key=lambda r: (r[0], r[3], r[4]))
+
+
+def _renamed_player(db, tmp_path):
+    """U1 renamed Rat_ -> Rat (live name Rat); both names on the board in
+    both backups. b1's usercache still says Rat_, b2's says Rat."""
+    db.execute("INSERT INTO players (uuid, name, name_resolved, first_seen, last_observed) "
+               "VALUES (?, 'Rat', 1, 5, 5)", (U1,))
+    db.commit()
+    sb = (["Levels"], [("Rat_", "Levels", 179), ("Rat", "Levels", 7)])
+    b1 = backup(tmp_path, "b1", T1, {U1: mined(1)}, scoreboard=sb, usercache={U1: "Rat_"})
+    b2 = backup(tmp_path, "b2", T2, {U1: mined(1)}, scoreboard=sb, usercache={U1: "Rat"})
+    return b1, b2
+
+
+# Both names summed into one row under the latest name (Rat), as the in-game
+# stattransfer does; T2 has the same sum, so no row (change-only).
+RENAME_ROWS = [(T1, "player", U1, "Rat", "Levels", 186)]
+
+
+def test_renamed_player_names_summed_under_latest_name(tmp_path, db, capsys):
+    results = run(db, list(_renamed_player(db, tmp_path)))
+    assert _sb(db) == RENAME_ROWS
+    assert [r.renamed_players for r in results] == [{("Rat_", "Rat")}] * 2
+    ib._print_renamed(results[0])
+    assert "Rat_ -> Rat" in capsys.readouterr().out
+    # never two rows for the same (uuid, objective, at)
+    assert db.execute("SELECT COUNT(*) FROM (SELECT 1 FROM scoreboard_snapshots "
+                      "WHERE uuid IS NOT NULL GROUP BY at, uuid, objective "
+                      "HAVING COUNT(*) > 1)").fetchone() == (0,)
+
+
+def test_old_name_only_on_board_goes_to_latest_name(tmp_path, db):
+    db.execute("INSERT INTO players (uuid, name, name_resolved, first_seen, last_observed) "
+               "VALUES (?, 'Rat', 1, 5, 5)", (U1,))
+    db.commit()
+    b = backup(tmp_path, "b", T1, {U1: mined(1)}, usercache={U1: "Rat_"},
+               scoreboard=(["Levels", "Xp"], [("Rat_", "Levels", 179), ("Rat_", "Xp", 5),
+                                              ("npc", "Xp", 1)]))
+    run(db, [b])
+    assert _sb(db) == [(T1, "player", U1, "Rat", "Levels", 179),
+                       (T1, "player", U1, "Rat", "Xp", 5),
+                       (T1, "unresolved", None, "npc", "Xp", 1)]
+
+
+def test_reimport_scoreboards_repairs_old_rows(tmp_path, db):
+    run(db, list(_renamed_player(db, tmp_path)))
+    stat_rows = rows(db)
+    runs = db.execute("SELECT at, rows_written FROM snapshot_runs WHERE kind='import' "
+                      "ORDER BY at").fetchall()
+    # what the old code wrote: one row per name, both as U1, at each point
+    db.execute("DELETE FROM scoreboard_snapshots")
+    db.executemany(
+        "INSERT INTO scoreboard_snapshots (at, server_key, participant_kind, uuid, raw_name, "
+        "objective, value) VALUES (?, 'smp', 'player', ?, ?, 'Levels', ?)",
+        [(T1, U1, "Rat_", 179), (T1, U1, "Rat", 7), (T2, U1, "Rat_", 179), (T2, U1, "Rat", 7)])
+    db.execute("UPDATE snapshot_runs SET rows_written = rows_written + "
+               "CASE WHEN at=? THEN 1 ELSE 2 END WHERE kind='import'", (T1,))
+    db.commit()
+    backups, errors = ib.imported_backups(db, "smp")
+    assert errors == [] and [b.at for b in backups] == [T1, T2]
+
+    res = ib.reimport_scoreboards(db, "smp", backups, set(), dry_run=True)
+    assert [(b.at, d, w) for b, d, w, _ in res] == [(T1, 2, 1), (T2, 2, 0)]
+    assert res[0][3] == {("Rat_", "Rat")} and res[1][3] == {("Rat_", "Rat")}
+    assert len(_sb(db)) == 4  # dry run: unchanged
+
+    ib.reimport_scoreboards(db, "smp", backups, set(), dry_run=False)
+    assert _sb(db) == RENAME_ROWS
+    assert rows(db) == stat_rows
+    assert db.execute("SELECT at, rows_written FROM snapshot_runs WHERE kind='import' "
+                      "ORDER BY at").fetchall() == runs
+
+
+def test_reimport_scoreboards_cli_needs_backup_folders(tmp_path, db, world, capsys):
+    run(db, list(_renamed_player(db, tmp_path)))
+    db.execute("UPDATE imports SET world_path=?", (str(tmp_path / "gone"),))
+    db.commit()
+    cfg = tmp_path / "cfg.json"
+    cfg.write_text(json.dumps(world.config), encoding="utf-8")
+    before = _sb(db)
+    assert ib.main(["--server", "smp", "--config", str(cfg), "--reimport-scoreboards",
+                    "--no-backup"], dictionary={}) == 1
+    assert "nothing changed" in capsys.readouterr().out
+    assert _sb(db) == before
+    assert ib.main(["--server", "smp", "--config", str(cfg), "--reimport-scoreboards",
+                    str(tmp_path)], dictionary={}) == 2
+
+
 def test_scoreboard_change_only(tmp_path, db):
     b1 = backup(tmp_path, "b1", T1, {}, scoreboard=(["digs"], [("npc", "digs", 3)]))
     b2 = backup(tmp_path, "b2", T2, {}, scoreboard=(["digs"], [("npc", "digs", 3)]))

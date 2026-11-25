@@ -69,7 +69,10 @@ are backend config: build the range picker from `/meta.settings.range_presets`
   a `/leaderboard` delta (and a `/compare` delta) is empty / 0, since nothing was observed
   in the window. Total mode (`to` only) is unaffected and returns the value at `to`.
 - Between backups (and between the last backup and the first live snapshot) history has
-  only a few points, so graphs over imported periods are coarse step lines.
+  only a few points, so graphs over imported periods are coarse step lines. The boundary
+  is `/meta.live_started_at[server]`: before it, sparse imported points; from it on, live
+  tracking. Use it to shade or split the imported span on a time axis. For a multi-server
+  scope, take the latest of its servers' values.
 
 ### Units (raw values → display)
 - `minecraft:custom` keys ending in `_one_cm` are **centimetres**: /100 = m, /100000 = km.
@@ -91,20 +94,39 @@ are backend config: build the range picker from `/meta.settings.range_presets`
 Load this once per page.
 ```json
 {"data_version": "4127", "last_run_at": 1795600000,
- "servers": [{"key":"cmp","label":"CMP","group":"cmp","filters_bots":false,
+ "servers": [{"key":"smp","label":"SMP","group":"smp","filters_bots":true,
               "track_stats":true,"track_scoreboards":true}, …],
- "scopes": ["all","smp","cmps","building","cmp","cmp2","cmp3","cmp4"],
+ "scopes": ["all","smp","cmps","cmp","cmp2","cmp3","cmp4","building"],
+ "scope_groups": {"cmps": ["cmp","cmp2","cmp3","cmp4","building"]},
  "categories": ["minecraft:broken","minecraft:crafted","minecraft:custom", …],
- "tracking_started_at": {"smp": 1795527876, …},
+ "tracking_started_at": {"smp": 1635379200, "cmp": 1795528255, …},
+ "live_started_at": {"smp": 1795528255, "cmp": 1795528255, …},
  "settings": {…}}
 ```
 - Use `last_run_at` for an "updated N min ago" label.
+- **Order:** `servers` and `scopes` come in the backend config's server order (today smp,
+  cmp, cmp2, cmp3, cmp4, building). **Keep that order; don't sort.** The same order is
+  used for every other list of server keys: `scope_groups` values, `/player.servers` and
+  `/search` objective `servers`. Changing the order is a backend config edit only.
 - `tracking_started_at`: per server key, unix seconds of the oldest history point
   (the oldest imported backup if there is one, else the first live snapshot). Servers
   with no history yet are missing from the map.
+- `live_started_at`: per server key, unix seconds of that server's **first live**
+  (non-imported) snapshot: where sparse imported history ends and dense 15-minute
+  tracking begins (see Time ranges). Equal to `tracking_started_at` for a server without
+  imported backups. Servers with no live snapshot yet are missing from the map.
 - `filters_bots: true` marks the server where the bot toggle matters (smp).
+- `track_stats: false` / `track_scoreboards: false`: that server's stats / scoreboards are
+  not tracked, and the API leaves them out of every response (leaderboards, series,
+  totals, player, search, keys, feeds). The server itself stays in `servers` and `scopes`.
+  So a scope can have no scoreboard data at all: show an empty state, not an error.
 - `scopes` is in menu order: `all`, single servers outside any group (`smp`), group
   scopes (`cmps`), then the servers inside groups.
+- `scope_groups`: each group scope → its server keys (in the order above). Use it to know
+  which servers a group scope covers (e.g. "does this scope include SMP" for the bots
+  toggle); don't derive it from names. Only group scopes with at least one server appear,
+  the same ones `scopes` lists. A single-server scope covers just that server; `all`
+  covers every entry of `servers`.
 
 #### `/meta.settings`
 The backend's tuning values. They come from the server's config, so **read presets,
@@ -129,7 +151,7 @@ limits and badge thresholds from here instead of hardcoding them**:
 (the values shown are the defaults)
 - `range_presets`: the valid `range=` values besides `all`.
 - `limits`: the most a request returns. `leaderboard` caps `/leaderboard` `limit`, `feed`
-  caps `/milestones` and `/rivalries`, `search` caps `/search`, `series_players` is the
+  caps `/milestones`, `/firsts` and `/rivalries`, `search` caps `/search`, `series_players` is the
   most uuids `/series` takes, `series_points` the most points per line,
   `player_milestones` how many milestones `/player` returns. A larger `limit` is clamped,
   not rejected.
@@ -200,7 +222,7 @@ Server-vs-server comparison: whole-server total lines. Params: `kind`, `category
 The player profile ("dossier"). Params: `scope`, `include_bots`.
 ```json
 {"uuid":"…","name":"Chezloc","name_resolved":1,"last_activity":1795599000,
- "is_bot_on_smp": false, "servers": ["cmp","smp"],
+ "is_bot_on_smp": false, "servers": ["smp","cmp"],
  "stats": [{"category":"minecraft:mined","key":"minecraft:stone","value":123456,"rank":4,"of":812}, …],
  "scoreboards": [{"objective":"digs","value":5000,"rank":2,"of":40}, …],
  "badges": [{"badge_key":"firsts:1","server_key":"smp","awarded_at":…}, …],
@@ -249,8 +271,16 @@ The milestones feed. `limit` max `settings.limits.feed` (200).
   before tracking" ones (`earliest_known: 1`). Show those under a separate, quieter
   heading such as "Already reached before tracking began", without a date.
 
-### `GET /firsts?scope=all`
+### `GET /firsts?scope=all&order=oldest|newest&limit=…&before=<cursor>`
 `{"rows": [{"server_key","category","key","uuid","name","at","earliest_known","approximate"}, …]}`
+- `order=oldest` (the default): **every** row, oldest first (`at`, then insert order). It
+  is large on `all` (~17k rows, ~3.4 MB), so use it only for a full list. Optional `limit`
+  (max `settings.limits.feed`, 200) keeps the oldest N. No `next` field.
+- `order=newest`: paged exactly like `/milestones`. Dated firsts (`earliest_known: 0`)
+  come first, newest first, then the `earliest_known: 1` ones. `limit` defaults to 50, max
+  `settings.limits.feed`. The response adds `"next"`: pass it back as `before` for the
+  next page; `null` means the end. For an overview, `order=newest&limit=5`.
+- `before` is only valid with `order=newest`; a bad `order` or cursor is a 400.
 - `earliest_known: 1` → label it **"earliest known holder"**, not "first ever".
 - `earliest_known: 0` → an observed first, so show the date (but see `approximate`).
 - `approximate: 1` (on firsts and milestones, in `/firsts`, `/milestones` and `/player`)

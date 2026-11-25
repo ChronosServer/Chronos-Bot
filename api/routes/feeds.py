@@ -44,7 +44,7 @@ def milestones(request: Request, conn=Depends(db.get_db), scope: str = "all",
                limit: int = 50, before: str = None, include_bots: bool = False):
     sc = resolve_scope(conn, scope)
     limit = _limit(limit)
-    frag, params = stat_filter_sql(sc, include_bots, "m")
+    frag, params = stat_filter_sql(sc, include_bots, "m", track="category")
     frag = f"{frag} AND {achievement_not_mirror_sql('m')}"
     cur_sql, cur = "", []
     if before:
@@ -69,17 +69,44 @@ def milestones(request: Request, conn=Depends(db.get_db), scope: str = "all",
 @router.get("/firsts")
 @cached
 def firsts(request: Request, conn=Depends(db.get_db), scope: str = "all",
-           include_bots: bool = False):
+           include_bots: bool = False, order: str = "oldest", limit: int = None,
+           before: str = None):
+    """order=oldest (default): every row, oldest first ({"rows"}); `limit`
+    optional. order=newest: paged like /milestones ({"rows", "next"}): dated
+    firsts newest first, then earliest_known ones; limit default 50."""
+    if order not in ("oldest", "newest"):
+        raise ValueError(f"bad order: {order!r}")
+    if before and order != "newest":
+        raise ValueError("before needs order=newest")
     sc = resolve_scope(conn, scope)
-    frag, params = stat_filter_sql(sc, include_bots, "f")
+    frag, params = stat_filter_sql(sc, include_bots, "f", track="category")
     frag = f"{frag} AND {achievement_not_mirror_sql('f')}"
-    rows = conn.execute(
-        f"SELECT f.server_key, f.category, f.stat_key, f.uuid, p.name, f.at, "
-        f"f.earliest_known, f.approximate FROM firsts f LEFT JOIN players p ON p.uuid = f.uuid "
-        f"WHERE {frag} ORDER BY f.at, f.id", params).fetchall()
+    sel = (f"SELECT f.server_key, f.category, f.stat_key, f.uuid, p.name, f.at, "
+           f"f.earliest_known, f.approximate, f.id FROM firsts f "
+           f"LEFT JOIN players p ON p.uuid = f.uuid WHERE {frag}")
     cols = ("server_key", "category", "key", "uuid", "name", "at", "earliest_known",
             "approximate")
-    return {"rows": [dict(zip(cols, r)) for r in rows]}
+    if order == "oldest":
+        lim_sql, lim = ("", []) if limit is None else (" LIMIT ?", [_limit(limit)])
+        rows = conn.execute(f"{sel} ORDER BY f.at, f.id{lim_sql}", [*params, *lim]).fetchall()
+        return {"rows": [dict(zip(cols, r[:-1])) for r in rows]}
+    limit = _limit(50 if limit is None else limit)
+    cur_sql, cur = "", []
+    if before:
+        ek, at, id_ = _parse_cursor(before)
+        cur_sql = (" AND (f.earliest_known > ? OR (f.earliest_known = ? AND "
+                   "(f.at < ? OR (f.at = ? AND f.id < ?))))")
+        cur = [ek, ek, at, at, id_]
+    rows = conn.execute(
+        f"{sel}{cur_sql} ORDER BY f.earliest_known ASC, f.at DESC, f.id DESC LIMIT ?",
+        [*params, *cur, limit + 1]).fetchall()
+    more = len(rows) > limit
+    rows = rows[:limit]
+    nxt = None
+    if more and rows:
+        last = rows[-1]
+        nxt = f"{last[6]}:{last[5]}:{last[8]}"
+    return {"rows": [dict(zip(cols, r[:-1])) for r in rows], "next": nxt}
 
 
 @router.get("/rivalries")
@@ -150,7 +177,7 @@ def _seen_pairs(seen):
 def spotlight(request: Request, conn=Depends(db.get_db), scope: str = "all",
               seen: str = "", include_bots: bool = False):
     sc = resolve_scope(conn, scope)
-    frag, params = stat_filter_sql(sc, include_bots, "c")
+    frag, params = stat_filter_sql(sc, include_bots, "c", track="category")
     rows = conn.execute(
         f"SELECT c.trigger, c.server_key, c.uuid, p.name, c.category, c.stat_key, "
         f"c.value, c.detail_json FROM spotlight_candidates c "

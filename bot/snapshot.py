@@ -98,21 +98,26 @@ def connect_db(db_path):
 def sync_servers_table(conn, cfg, now=None, settings=None):
     now = int(time.time()) if now is None else now
     settings = settings or load_settings(cfg["stats_tracking"])
-    for key, s in settings.servers.items():
+    # Display order (api.scope.SERVER_ORDER_SQL) is the config's order; a row
+    # no longer in config keeps NULL and sorts last, by key.
+    conn.execute("UPDATE servers SET position=NULL")
+    for position, (key, s) in enumerate(settings.servers.items()):
         world_path, _ = server_paths(cfg, key)
         provisioned = 1 if is_provisioned(world_path) else 0
         conn.execute(
             """
             INSERT INTO servers (key, label, group_key, filters_bots,
-                                  track_stats, track_scoreboards, provisioned)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+                                  track_stats, track_scoreboards, provisioned,
+                                  position)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(key) DO UPDATE SET
                 label=excluded.label,
                 group_key=excluded.group_key,
                 filters_bots=excluded.filters_bots,
                 track_stats=excluded.track_stats,
                 track_scoreboards=excluded.track_scoreboards,
-                provisioned=excluded.provisioned
+                provisioned=excluded.provisioned,
+                position=excluded.position
             """,
             (
                 key,
@@ -122,6 +127,7 @@ def sync_servers_table(conn, cfg, now=None, settings=None):
                 1 if s.track_stats else 0,
                 1 if s.track_scoreboards else 0,
                 provisioned,
+                position,
             ),
         )
     # Pseudo row so run-wide records (kind='derive') satisfy the FK on
@@ -471,6 +477,7 @@ def run_scoreboard_snapshot(conn, server_key, world_path, usercache, dictionary,
     rows_written = 0
     pending_snapshot_rows = []
     pending_current_updates = []
+    seen = set()
 
     for entry in scores_tag:
         raw_name = nbt_val(entry, "Name")
@@ -491,6 +498,7 @@ def run_scoreboard_snapshot(conn, server_key, world_path, usercache, dictionary,
         participant_key = player_uuid if player_uuid else f"unresolved:{raw_name}"
 
         key = (participant_key, obj_name)
+        seen.add(key)
         if current.get(key) == value:
             continue
         pending_snapshot_rows.append(
@@ -501,6 +509,30 @@ def run_scoreboard_snapshot(conn, server_key, world_path, usercache, dictionary,
         )
         current[key] = value
         rows_written += 1
+
+    # A reset score (`scoreboard players reset`, the <from> side of
+    # stattransfer) is an entry gone from a PlayerScores tag that is present:
+    # record it as 0, or its last value stays current forever. A missing tag
+    # means nothing (Paper omission); a removed objective is
+    # scoreboard_meta.removed's job, so only objectives still on the board.
+    if data is not None and "PlayerScores" in data:
+        for (pk, obj), old in list(current.items()):
+            if ((pk, obj) in seen or old == 0 or obj not in objective_names
+                    or obj in mirror_full_names):
+                continue
+            if pk.startswith("unresolved:"):
+                kind, player_uuid, raw_name = "unresolved", None, pk[len("unresolved:"):]
+            else:
+                kind, player_uuid = "player", pk
+                row = conn.execute(
+                    "SELECT raw_name FROM scoreboard_snapshots WHERE server_key=? AND uuid=? "
+                    "AND objective=? ORDER BY at DESC LIMIT 1", (server_key, pk, obj)).fetchone()
+                raw_name = row[0] if row else (usercache.get(pk) or pk)
+            pending_snapshot_rows.append(
+                (now, server_key, kind, player_uuid, raw_name, obj, 0))
+            pending_current_updates.append((server_key, pk, obj, 0, now, now))
+            current[(pk, obj)] = 0
+            rows_written += 1
 
     if pending_snapshot_rows:
         conn.executemany(

@@ -92,6 +92,17 @@ def test_meta_points_written(imported):
     assert history.meta_points(imported, "nope") == ([], None)
 
 
+def test_meta_live_started_at(imported, world, monkeypatch):
+    monkeypatch.setenv("CHRONOS_STATS_DB", world.db_path)
+    cache.clear()
+    with TestClient(create_app()) as c:
+        j = c.get("/api/stats/meta").json()
+    cache.clear()
+    assert j["tracking_started_at"]["smp"] == T1   # oldest backup
+    assert j["live_started_at"] == {"smp": L, "cmp": L}  # first live run; cmp2 has none
+    assert "cmp2" not in j["tracking_started_at"]
+
+
 # ---------------------------------------------------------------- API ranges
 
 def test_week_range_in_gap_snaps_to_live_start(imported):

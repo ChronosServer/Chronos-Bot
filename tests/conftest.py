@@ -161,6 +161,14 @@ def _isolated_api_settings(tmp_path, monkeypatch):
     settings.reset_api_settings()
 
 
+@pytest.fixture(autouse=True)
+def _fresh_search_index(monkeypatch):
+    """/search's in-memory index is keyed by data_version only; two test DBs
+    with the same run count would otherwise share one."""
+    from api.routes import search
+    monkeypatch.setattr(search, "_index", (None, None))
+
+
 @pytest.fixture
 def api_config(tmp_path, monkeypatch):
     """api_config(stats_tracking_dict): the API's config.json for this test."""

@@ -91,6 +91,8 @@ class ImportResult:
     objectives: int = 0
     mirrors_by_dictionary: int = 0
     mirrors_by_prefix: list = field(default_factory=list)
+    # (scoreboard name, latest name) pairs summed into the latest name
+    renamed_players: set = field(default_factory=set)
     backup: Optional[Backup] = None
 
 
@@ -304,6 +306,17 @@ def _resolve_names(conn, backups):
     return name_to_uuid
 
 
+def _fallback_names(conn, backups):
+    """uuid -> the player's latest known name: the live name (players), else
+    the newest backup's usercache name."""
+    out = {}
+    for b in backups:  # oldest -> newest
+        out.update(b.usercache)
+    out.update({u: n for u, n in conn.execute(
+        "SELECT uuid, name FROM players WHERE name IS NOT NULL")})
+    return out
+
+
 def _player_rows(conn, uuids, at, names):
     """Missing players are inserted (first_seen = last_observed = backup date);
     existing ones get first_seen moved back to the backup date when earlier,
@@ -368,6 +381,7 @@ def _import(conn, server_key, backups, renames, dictionary, dry_run, skip_unknow
     winner = {b.at: i for i, b, *_ in steps}  # steps are (date, argument) ordered
     live_backups = [b for i, b, *_ in steps if winner[b.at] == i]
     name_to_uuid = _resolve_names(conn, live_backups)
+    fallback = _fallback_names(conn, live_backups)
     names = {}
     for b in live_backups:  # oldest -> newest: the newest name wins
         names.update(b.usercache)
@@ -394,7 +408,8 @@ def _import(conn, server_key, backups, renames, dictionary, dry_run, skip_unknow
         sb_rows = []
         if track_scoreboards:
             sb_rows = _scoreboard_rows(conn, server_key, b, mirrors, keep_prefixed,
-                                       name_to_uuid, r, carried_sb if dry_run else None)
+                                       name_to_uuid, fallback, r,
+                                       carried_sb if dry_run else None)
         r.rows_stats, r.rows_scoreboard = len(stat_rows), len(sb_rows)
         if dry_run:
             continue
@@ -419,6 +434,69 @@ def _import(conn, server_key, backups, renames, dictionary, dry_run, skip_unknow
     return results
 
 
+def reimport_scoreboards(conn, server_key, backups, mirrors, dry_run, *,
+                         keep_prefixed=False, lock_timeout_s=BUSY_TIMEOUT_S):
+    """Repair: replaces the scoreboard rows at already-imported points with
+    rows read again from those backups under the current participant rules
+    (e.g. after the rename fix). `backups` are the imported ones, dated at
+    their import point. Stat rows, live rows and stat_current/scoreboard_current
+    are untouched; snapshot_runs/imports rows_written are adjusted. One
+    transaction; a dry run rolls back. Returns [(backup, deleted, written,
+    renamed)], renamed = {(scoreboard name, latest name)} summed at that point."""
+    start = live_start(conn, server_key)
+    backups = sorted(backups, key=lambda b: b.at)
+    for b in backups:
+        if start is not None and b.at >= start:
+            raise ValueError(f"{b.path}: dated on/after the first live snapshot")
+    acquire_write_lock(conn, lock_timeout_s)
+    out = []
+    try:
+        name_to_uuid = _resolve_names(conn, backups)
+        fallback = _fallback_names(conn, backups)
+        for b in backups:
+            n = conn.execute("DELETE FROM scoreboard_snapshots WHERE server_key=? AND at=?",
+                             (server_key, b.at)).rowcount
+            out.append([b, n, 0, set()])
+        # Oldest first, inserted as we go: each point's change-only check sees
+        # the rows just written for the points before it.
+        for item in out:
+            b = item[0]
+            r = ImportResult(path=b.path, at=b.at, backup=b)
+            rows = _scoreboard_rows(conn, server_key, b, mirrors, keep_prefixed,
+                                    name_to_uuid, fallback, r, None)
+            conn.executemany(
+                "INSERT INTO scoreboard_snapshots (at, server_key, participant_kind, uuid, "
+                "raw_name, objective, value) VALUES (?, ?, ?, ?, ?, ?, ?)", rows)
+            item[2], item[3] = len(rows), r.renamed_players
+            diff = len(rows) - item[1]
+            conn.execute("UPDATE snapshot_runs SET rows_written = rows_written + ? "
+                         "WHERE server_key=? AND kind='import' AND at=?", (diff, server_key, b.at))
+            conn.execute("UPDATE imports SET rows_written = rows_written + ? "
+                         "WHERE server_key=? AND last_played=?", (diff, server_key, b.at))
+    except BaseException:
+        conn.rollback()
+        raise
+    if dry_run:
+        conn.rollback()
+    else:
+        conn.commit()
+    return [tuple(x) for x in out]
+
+
+def imported_backups(conn, server_key):
+    """The server's imported backups re-read from their recorded folders,
+    dated at their import point; (backups, missing folder errors)."""
+    backups, errors = [], []
+    for path, at in conn.execute(
+            "SELECT world_path, last_played FROM imports WHERE server_key=? "
+            "ORDER BY last_played", (server_key,)):
+        try:
+            backups.append(read_backup(Path(path), at))
+        except ValueError as e:
+            errors.append(f"{path}: {e}")
+    return backups, errors
+
+
 def _stat_rows(conn, server_key, b, renames, known_keys, targets, skip_unknown, r,
                carried):
     prev = {(c, k, u): v for c, k, u, v, _ in
@@ -440,7 +518,8 @@ def _stat_rows(conn, server_key, b, renames, known_keys, targets, skip_unknown, 
     return rows, uuids
 
 
-def _scoreboard_rows(conn, server_key, b, mirrors, keep_prefixed, name_to_uuid, r, carried):
+def _scoreboard_rows(conn, server_key, b, mirrors, keep_prefixed, name_to_uuid,
+                     fallback_names, r, carried):
     data = snapshot.read_scoreboard_nbt(b.scoreboard_path) if b.scoreboard_path else None
     objectives = {snapshot.nbt_val(o, "Name") for o in snapshot.nbt_list(data, "Objectives")}
     objectives.discard(None)
@@ -457,7 +536,12 @@ def _scoreboard_rows(conn, server_key, b, mirrors, keep_prefixed, name_to_uuid, 
     if carried is not None:
         prev.update(carried)
     stat_uuids = {u for u, _ in snapshot.iter_stat_files(b.stats_dir)}
-    rows = []
+    # key -> [kind, uuid, raw_name, value]. Every name of one player (an old
+    # name left on the board after a rename, e.g. NotQuiteRat_ and NotQuiteRat)
+    # is summed into one row under the player's latest name: what the in-game
+    # `stattransfer <old> <new>` does live, so history has no jump at the
+    # transfer and never two rows for one (uuid, objective, at).
+    merged = {}
     for entry in snapshot.nbt_list(data, "PlayerScores"):
         raw = snapshot.nbt_val(entry, "Name")
         obj = snapshot.nbt_val(entry, "Objective")
@@ -468,10 +552,19 @@ def _scoreboard_rows(conn, server_key, b, mirrors, keep_prefixed, name_to_uuid, 
             continue
         u, kind = snapshot._resolve_participant(raw, name_to_uuid, stat_uuids)
         key = (obj, u or f"unresolved:{raw}")
+        if key in merged:
+            merged[key][3] += value
+        else:
+            name = fallback_names.get(u, raw) if u else raw
+            merged[key] = [kind, u, name, value]
+        if u and raw != merged[key][2]:
+            r.renamed_players.add((raw, merged[key][2]))
+    rows = []
+    for key, (kind, u, name, value) in merged.items():
         if prev.get(key, 0) == value:
             continue
         prev[key] = value
-        rows.append((b.at, server_key, kind, u, raw, obj, value))
+        rows.append((b.at, server_key, kind, u, name, key[0], value))
         if carried is not None:
             carried[key] = value
     return rows
@@ -508,6 +601,13 @@ def _print_result(r, dry_run):
             f"{k} x{n}" for k, n in sorted(r.renamed_hits.items())))
     if r.unknown_keys:
         print(f"  unknown keys ({len(r.unknown_keys)}): " + ", ".join(sorted(r.unknown_keys)))
+    _print_renamed(r)
+
+
+def _print_renamed(r):
+    if r.renamed_players:
+        print(f"  old names summed into the current name ({len(r.renamed_players)}): " +
+              ", ".join(f"{a} -> {b}" for a, b in sorted(r.renamed_players)))
 
 
 def _parse_args(argv):
@@ -529,6 +629,9 @@ def _parse_args(argv):
     p.add_argument("--config", default=str(DEFAULT_CONFIG), help="config.json path")
     p.add_argument("--rebuild-only", action="store_true",
                    help="import nothing; only rerun the derived-data rebuild for --server")
+    p.add_argument("--reimport-scoreboards", action="store_true",
+                   help="repair: rewrite the scoreboard rows of every already-imported "
+                        "backup of --server from its recorded folder, then rebuild")
     p.add_argument("worlds", nargs="*", metavar="world_dir")
     return p.parse_args(argv)
 
@@ -594,6 +697,71 @@ def _rebuild_only(args, settings):
         conn.close()
 
 
+def _mirrors(conn, cfg, settings, args, dictionary):
+    """Mirror objective names (current + every bundled dictionary + --dictionary),
+    or raises (no current dictionary)."""
+    if dictionary is None:
+        version = cfg.get("server", {}).get("minecraft_version", "unknown")
+        dictionary = snapshot.fetch_dictionary(conn, version, settings)
+    # Every dictionary in the repo (1.16 .. current) plus any --dictionary files:
+    # old backups hold mirrors of names that no longer exist today.
+    bundled = sorted(str(f) for f in snapshot.DICTIONARY_DIR.glob("dictionary-*.json"))
+    return merge_dictionaries(dictionary, bundled + list(args.dictionary))
+
+
+def _reimport_scoreboards(args, cfg, settings, dictionary):
+    conn = snapshot.connect_db(settings.db_path)
+    try:
+        backups, errors = imported_backups(conn, args.server)
+        if errors:
+            for e in errors:
+                print(f"error: {e}")
+            print("every imported backup folder must still be readable; nothing changed")
+            return 1
+        if not backups:
+            print(f"nothing to do: {args.server} has no imported backups")
+            return 0
+        try:
+            mirrors = _mirrors(conn, cfg, settings, args, dictionary)
+        except Exception as e:
+            print(f"error: current dictionary unavailable ({e})")
+            return 1
+        if not args.dry_run:
+            try:
+                acquire_write_lock(conn)
+                conn.rollback()
+            except DatabaseBusy as e:
+                print(f"error: {e}")
+                return 1
+            if not args.no_backup:
+                print(f"DB backup: {backup_db(conn, settings.db_path)}")
+        try:
+            res = reimport_scoreboards(conn, args.server, backups, mirrors, args.dry_run,
+                                       keep_prefixed=args.keep_prefixed)
+        except DatabaseBusy as e:
+            print(f"error: {e}")
+            return 1
+        print(("DRY RUN, nothing written" if args.dry_run else "Rewritten") +
+              f" - {args.server} scoreboard rows at import points")
+        for b, deleted, written, renamed in res:
+            print(f"  {_fmt(b.at)}  {b.path}: {deleted} -> {written} rows")
+            _print_renamed(ImportResult(path=b.path, at=b.at, renamed_players=renamed))
+        if args.dry_run:
+            return 0
+        import derive_achievements
+        t0 = time.time()
+        try:
+            counts = derive_achievements.rebuild_from_points(conn, args.server, settings)
+        except DatabaseBusy as e:
+            print(f"error: rebuild not run: {e}. Rows are committed; run "
+                  f"import_backups.py --server {args.server} --rebuild-only")
+            return 1
+        print(f"rebuild: {counts} in {time.time() - t0:.1f}s")
+        return 0
+    finally:
+        conn.close()
+
+
 def main(argv=None, *, dictionary=None):
     """`dictionary` (tests) replaces the fetched current dictionary.
     Exit codes: 0 ok, 1 a backup refused / DB busy / dictionary missing,
@@ -611,6 +779,12 @@ def main(argv=None, *, dictionary=None):
             print("error: --rebuild-only takes no world folders and no --dry-run")
             return 2
         return _rebuild_only(args, settings)
+    if args.reimport_scoreboards:
+        if args.worlds or args.date:
+            print("error: --reimport-scoreboards takes no world folders and no --date "
+                  "(it uses the recorded imports)")
+            return 2
+        return _reimport_scoreboards(args, cfg, settings, dictionary)
     if not args.worlds:
         print("error: give at least one world folder (or --rebuild-only)")
         return 2
@@ -633,18 +807,13 @@ def main(argv=None, *, dictionary=None):
         if live_start(conn, args.server) is None:
             print(f"[warn] {args.server} has no live snapshot yet: import after the first "
                   "live run, or its crossings will not be marked approximate")
-        if dictionary is None:
+        try:
+            mirrors = _mirrors(conn, cfg, settings, args, dictionary)
+        except Exception as e:
             version = cfg.get("server", {}).get("minecraft_version", "unknown")
-            try:
-                dictionary = snapshot.fetch_dictionary(conn, version, settings)
-            except Exception as e:
-                print(f"error: dictionary-{version}.json unavailable ({e}); without it "
-                      "vanilla-mirror objectives can't be skipped")
-                return 1
-        # Every dictionary in the repo (1.16 .. current) plus any --dictionary files:
-        # old backups hold mirrors of names that no longer exist today.
-        bundled = sorted(str(f) for f in snapshot.DICTIONARY_DIR.glob("dictionary-*.json"))
-        mirrors = merge_dictionaries(dictionary, bundled + list(args.dictionary))
+            print(f"error: dictionary-{version}.json unavailable ({e}); without it "
+                  "vanilla-mirror objectives can't be skipped")
+            return 1
 
         pending = any(step[2] is None for step in plan(conn, args.server, backups))
         if not args.dry_run and pending:
