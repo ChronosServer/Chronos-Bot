@@ -5,6 +5,26 @@ endpoint the Stats pages can use, exactly as the backend (Chronos-Bot, `master`)
 implements it; it is live at `https://www.chronosmc.com/api/stats/`. `STATS_PLAN.md` is the scope and feature list; this file is
 the data contract.
 
+**What changed (round 2, 2026-11-26)**, per item of the website's request:
+1. **Fake players are bots on every server** (see Scopes and bots). New
+   `/meta.servers[].has_bots` (where to show the toggle: today smp and every CMP except
+   building), `/search?include_bots=`, and `is_fake` / `is_bot` on `/player` and
+   `/compare.players[]`.
+   1b. **Slur filter**: players whose name or a former name contains a slur are gone from the
+   whole API, even with `include_bots=true`; `/player` and `/compare` answer 404. They stay
+   inside whole-server `/totals` lines (no name is shown there).
+4. **New `GET /rankings?by=top1|firsts|badges`** for "Top players".
+5. **`/totals`**: new `starts` (one per line), and `effective_from` is now the **earliest**
+   line start (it was the latest), so each line begins at its own data.
+6. **`/leaderboard?q=`**: name filter; rows keep their real rank.
+7. **Former names**: `/player` gains `aka`; `/search`, `/leaderboard?q=` and `/player/<old
+   name>` match former names. Renamed players' old scoreboard scores and replaced accounts
+   (NotAless50_ -> IBeatLIMBO, wRongo_ -> _wRongo, qstrql -> qstrqlw) now count for the
+   current player. Merged accounts are **added together** (not "the new account's value once
+   it exists"): the in-game `stattransfer` moved only scoreboard scores and reset the old
+   name, and never touched stat files, so the old account's vanilla stats are its own.
+8. **`/search`**: a space matches `_` ("redstone block" finds `minecraft:redstone_block`).
+
 ## Basics
 
 - Base URL: same origin as the site, `/api/stats/…` (nginx proxies it to the API). No
@@ -21,6 +41,8 @@ the data contract.
     non-integer `from`.
 - Player heads: `https://crafatar.com/avatars/<uuid>?size=32&overlay` (works for every
   uuid, named or not).
+- `/leaderboard` and `/rankings` share the row shape `{rank, uuid, name, value}`; ties share
+  a rank (1, 1, 3).
 - `name` can be `null`: about 1.6k old players have no known name yet (lookups fill
   them in slowly). Show the first 8 characters of the uuid plus the head instead.
 
@@ -29,9 +51,22 @@ the data contract.
   `building`. `/meta.scopes` lists the valid ones (group scopes like `cmps` are set in
   the backend config, so take the list from there rather than hardcoding it). The UI needs **All / CMPs / SMP**
   as the main switch, plus a picker for single servers.
-- `include_bots` (default `false`) only affects SMP: on SMP, players in no team are bots
-  and are hidden by default. CMPs always show everyone. Offer an "include bots" toggle
-  only where SMP data is in view.
+- `include_bots` (default `false`) hides **bots**, which are two things:
+  - **Fake players, on every server**: Carpet fake players with made-up names have
+    offline-mode uuids (version 3: the 15th character of the uuid is `3`); real Mojang
+    accounts are version 4. A fake player spawned under a real account's name gets that
+    account's real uuid and can't be told apart.
+  - **SMP's team rule**: on SMP, players in no team are bots (named automation accounts).
+
+  Bots are hidden by default on leaderboards, `/series`, `/compare`, `/totals`, `/search`,
+  the feeds (`/milestones`, `/firsts`, `/rivalries`), `/spotlight` and `/activity`, and
+  included with `include_bots=true`. Offer the toggle where `/meta.servers[].has_bots` is
+  true for a server in view. A fake player never holds a first (like SMP bots; there is one
+  first per stat).
+- **Slur filter (hard block):** a player whose name or a former name contains a term from the
+  backend's blocklist is gone from every response **even with `include_bots=true`**: search,
+  leaderboards, `/rankings`, `/series`, `/compare` and `/player` (both 404), feeds,
+  spotlight and activity. Their numbers stay only inside whole-server `/totals` lines.
 - Multi-server scopes **sum** a player's values across servers.
 
 ### Time ranges
@@ -102,7 +137,7 @@ are backend config: build the range picker from `/meta.settings.range_presets`
 Load this once per page.
 ```json
 {"data_version": "4127", "last_run_at": 1795600000,
- "servers": [{"key":"smp","label":"SMP","group":"smp","filters_bots":true,
+ "servers": [{"key":"smp","label":"SMP","group":"smp","filters_bots":true,"has_bots":true,
               "track_stats":true,"track_scoreboards":true}, …],
  "scopes": ["all","smp","cmps","cmp","cmp2","cmp3","cmp4","building"],
  "scope_groups": {"cmps": ["cmp","cmp2","cmp3","cmp4","building"]},
@@ -123,7 +158,9 @@ Load this once per page.
   (non-imported) snapshot: where sparse imported history ends and dense 15-minute
   tracking begins (see Time ranges). Equal to `tracking_started_at` for a server without
   imported backups. Servers with no live snapshot yet are missing from the map.
-- `filters_bots: true` marks the server where the bot toggle matters (smp).
+- `has_bots: true`: the server has bots (fake players, or the SMP team rule), so
+  `include_bots` changes what it shows. Show the "Include bots" toggle when a server in view
+  has it. `filters_bots: true` only marks the SMP team rule (smp); don't use it for the toggle.
 - `track_stats: false` / `track_scoreboards: false`: that server's stats / scoreboards are
   not tracked, and the API leaves them out of every response (leaderboards, series,
   totals, player, search, keys, feeds). The server itself stays in `servers` and `scopes`.
@@ -169,14 +206,19 @@ limits and badge thresholds from here instead of hardcoding them**:
   family and tier order (the first `firsts` tier is Trailblazer, the second Pioneer, the
   third Founder; `cat:<category>:1/2/3` are I/II/III, and so on).
 
-### `GET /search?q=sto&limit=10`
+### `GET /search?q=sto&limit=10&include_bots=false`
 Autocomplete. It answers from memory, so call it on every keystroke (debounce about 120 ms).
 ```json
 {"players": [{"uuid":"…","name":"Stonks"}],
  "stats": [{"category":"minecraft:mined","key":"minecraft:stone"}, …],
  "objectives": [{"objective":"digs","servers":["smp","cmp"]}]}
 ```
-- Matching is case-insensitive. Prefix matches come first, then shorter ones.
+- Matching is case-insensitive and **a space matches `_`**: "redstone block", "Redstone
+  Block" and "redstone_block" all find `minecraft:redstone_block`; the same holds for
+  objectives and player names. Prefix matches come first, then shorter ones.
+- Players are also found by a **former name** (`aka`); the result shows the current name.
+- `include_bots` (default false): bots (fake players, SMP team-less players) are only
+  offered with `include_bots=true`. Slur-filtered players are never offered.
 - `stone` matches `minecraft:stone`. The same key appears once per category (mined,
   used, crafted…), so group them in the dropdown.
 - `limit` defaults to 10, max `settings.limits.search` (50).
@@ -196,6 +238,10 @@ Params:
 - `range` or `from`/`to`
 - `include_bots`
 - `limit` (default 50, max `settings.limits.leaderboard`, 200) and `offset`
+- `q` (optional): name filter, a case-insensitive substring of the player's name or a
+  former name (`aka`); a space matches `_`. Rows keep their **real rank** on the unfiltered
+  board, and `total_count` is the number of matches (page with `limit`/`offset` as usual).
+  No match: `total_count: 0`, `rows: []`. A blank `q` is no filter.
 
 ```json
 {"effective_from": 1795527876, "to": 1795600000, "mode": "total",
@@ -227,19 +273,27 @@ Graph lines for 1–6 players (`settings.limits.series_players`). Params: `kind`
 Server-vs-server comparison: whole-server total lines. Params: `kind`, `category`,
 `key`, `scopes=smp,cmps`, `range` or `from`/`to`, `include_bots`.
 ```json
-{"effective_from": …, "to": …, "series": {"smp": [[ts,total],…], "cmps": [[ts,total],…]}}
+{"effective_from": 1635426651, "to": …,
+ "starts": {"smp": 1635426651, "cmp": 1795528261},
+ "series": {"smp": [[ts,total],…], "cmp": [[ts,total],…]}}
 ```
-- Same step format as `/series`, and all lines share the same `effective_from`.
+- Same step format as `/series`. **Each line starts at its own data**: `starts[scope]` is
+  that line's own start (the window start clamped to that scope's tracking start and gap
+  snapped, exactly what a single-scope request gets), and the line's first point is there.
+  With one line per server, SMP's line goes back through its imported history while the
+  CMPs' lines begin at their own later start.
+- `effective_from` = the **earliest** of the `starts` (use it as the axis start); `to` is
+  shared. A scope with no data in the window has `starts[scope] = null` and `[]`.
 - With a range the lines are **running totals** over the window (the whole-server total
-  at each point), not gains; the gain is last value minus first. The common
-  `effective_from` is computed over all requested scopes together (multi-server rule
-  above), so `scopes=smp,cmps` starts where both have data.
+  at each point), not gains; a line's gain is its last value minus its first. A
+  multi-server scope (`all`, `cmps`) still starts where all of its servers have data.
+- Slur-filtered players' numbers are included here (no name is shown).
 
 ### `GET /player/{uuid-or-name}`
 The player profile ("dossier"). Params: `scope`, `include_bots`.
 ```json
-{"uuid":"…","name":"Chezloc","name_resolved":1,"last_activity":1795599000,
- "is_bot_on_smp": false, "servers": ["smp","cmp"],
+{"uuid":"…","name":"Chezloc","aka":["Chez_old"],"name_resolved":1,"last_activity":1795599000,
+ "is_bot_on_smp": false, "is_fake": false, "is_bot": false, "servers": ["smp","cmp"],
  "stats": [{"category":"minecraft:mined","key":"minecraft:stone","value":123456,"rank":4,"of":812}, …],
  "scoreboards": [{"objective":"digs","value":5000,"rank":2,"of":40}, …],
  "badges": [{"badge_key":"firsts:1","server_key":"smp","awarded_at":…}, …],
@@ -253,7 +307,10 @@ The player profile ("dossier"). Params: `scope`, `include_bots`.
              "gap":339,"gap_7d_ago":800,"computed_at":…,
              "closing_per_day":65.8,"overtake_days":5.2}, …]}
 ```
-- A name lookup is case-insensitive.
+- A name lookup is case-insensitive and also accepts a **former name**.
+- `aka`: the player's former names (renames and merged accounts' names), without the current
+  name, sorted; `[]` for most players. Show it as "also known as".
+- 404 for a slur-filtered player (as if it doesn't exist).
 - Merged accounts: separate accounts the server counts as one player (e.g. an alt) resolve
   to the main one. `/player/<alt name or uuid>` returns the main player, so the response
   `uuid`/`name` can differ from what was asked; use them for links. The alt never appears
@@ -266,8 +323,9 @@ The player profile ("dossier"). Params: `scope`, `include_bots`.
   `/search` (a stat nobody has a non-zero value for is not offered). `top1:*` badges
   never counted 0 values. Air (`minecraft:air`, `cave_air`, `void_air`) is not tracked
   in any category.
-- If `is_bot_on_smp` is true, the player's own numbers still show. Label them as a bot
-  account.
+- Bot flags: `is_fake` (a Carpet fake player, any server), `is_bot_on_smp` (SMP team rule),
+  `is_bot` = either. If `is_bot` is true the player's own numbers still show (people reach
+  the page from a board with bots on); label it as a bot.
 
 ### `GET /compare`
 N-way compare. Params:
@@ -278,17 +336,38 @@ N-way compare. Params:
 - `scope`, `range` or `from`/`to`, `include_bots`
 
 ```json
-{"players": [{"uuid":"…","name":"…","is_bot_on_smp":false}, …], "effective_from": …, "to": …,
+{"players": [{"uuid":"…","name":"…","is_bot_on_smp":false,"is_fake":false,"is_bot":false}, …],
+ "effective_from": …, "to": …,
  "values": {"minecraft:mined|minecraft:stone": {"<uuid>": 123, …}, …},
  "series": {"minecraft:mined|minecraft:stone": {"<uuid>": [[ts,v],…]}, …}}
 ```
-- An SMP bot shows 0 unless `include_bots=true`. If a compared player has
-  `is_bot_on_smp: true` (in `players`, same meaning as on `/player`), turn the bot toggle
-  on for the comparison.
+- A bot shows 0 unless `include_bots=true`. If a compared player has `is_bot: true` (in
+  `players`, same meaning as on `/player`), turn the bot toggle on for the comparison.
+- A slur-filtered player in `uuids=` gives a 404.
 - `players` holds each **distinct** player once, in request order. Names/uuids that
   resolve to the same player (a merged alt and its main account, or a name and its uuid)
   collapse into one entry, so `players` can be shorter than `uuids=`. If fewer than
   `settings.compare.min_players` distinct players remain, it's a 400.
+
+### `GET /rankings?by=top1|firsts|badges`
+"Top players": players ranked by a count. Params: `by` (default `top1`), `scope` (default
+`all`), `include_bots` (default false), `limit` (default 50, max
+`settings.limits.leaderboard`) and `offset`.
+```json
+{"by": "top1", "total_count": 57,
+ "rows": [{"rank":1,"uuid":"…","name":"PapiChase","value":412}, …]}
+```
+- `by=top1`: how many stats **and** scoreboard objectives (vanilla-copy objectives left out)
+  the player is #1 in right now (ties included), on the scope-summed current value > 0. Same
+  rule as the `top1:*` (Champion) badges, which count stats only, per server.
+- `by=firsts`: how many `/firsts` rows the player holds in the scope, **without** the
+  `earliest_known: 1` ones ("already had it when tracking began"); `approximate: 1` ones
+  count (as for the Firsts badges).
+- `by=badges`: how many distinct badge keys the player has on servers in the scope
+  (server-less badges count everywhere).
+- Players with 0 are left out; ties share a rank. **Fake players never appear** (not even
+  with `include_bots=true`); SMP team-less bots follow `include_bots`; slur-filtered players
+  never appear. A bad `by` or a negative `offset` is a 400.
 
 ### `GET /milestones?scope=all&limit=50&before=<cursor>`
 The milestones feed. `limit` max `settings.limits.feed` (200).

@@ -258,6 +258,29 @@ milestones, badges and activity into the main account and rebuilds totals (meta
 the website shows the main player for the alt's name. Removing an entry does not split the
 data again: restore that backup instead.
 
+### Former names (`player_merges.json` `renames`)
+For ONE account that was renamed and whose old name no usercache knows any more (scoreboards
+key by name, so its old scores sit unlinked):
+```json
+{"renames": [{"uuid": "<uuid>", "names": ["OldName_"], "from": "2021-01-01",
+              "until": "2024-06-30", "note": "OldName_ -> NewName"}]}
+```
+`from`/`until` are optional (UTC dates, inclusive): when the name was this player's (for a
+name someone else used later). The next snapshot run folds the name's existing scoreboard
+history into the player once (meta `renamed:<uuid>:<name>`, same DB backup as merges); from
+then on the live snapshot and the import count that name for the player. The website lists
+former names as "aka" and finds the player by them. After adding entries, rerun
+`python3 tools/import_backups.py --server smp --rebuild-only` (timer stopped) to re-derive
+the approximate firsts/milestones over the linked history.
+
+### Slur filter (`name_blocklist.txt`, `name_allowlist.txt`)
+One term per line at the repo root. A player whose name (or a former name) contains a term,
+after normalising (case, `_`, leetspeak, doubled letters), is hidden from the whole API,
+even with "include bots"; their numbers stay only in whole-server totals. Applies at the
+next snapshot run (table `blocked_players`), no restart. Check what a list catches:
+`python3 tools/check_blocklist.py` (read-only); put innocent names or uuids in
+`name_allowlist.txt`.
+
 ### First live run = a full observation
 A key a backup has but the live files didn't have at the first live snapshot (a reset
 stat, a removed objective) gets a 0 row at that first live snapshot, so history never

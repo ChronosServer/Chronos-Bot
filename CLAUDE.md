@@ -28,13 +28,40 @@ players by ~1,100 on SMP since it only holds recently-cached names). Apply this
 identically everywhere a participant is classified — don't invent a second,
 different heuristic (e.g. regex on name shape) in a new code path.
 
-Bot filtering is **SMP-only**, via scoreboard team membership: in a team = real
+**Carpet fake players = version-3 uuids, bots on every server** (stats round 2,
+2026-11-26, verified on live data: smp 926 v3 / 1092 v4, cmp 546 / 926, cmp2 20 / 106,
+cmp3 161 / 254, cmp4 49 / 163, building 0 / 58; real Mojang accounts are always v4). Made-up
+names get offline-mode uuids; one spawned under a real account's name gets that account's v4
+uuid and can't be told apart. The rule lives only in `api/scope.py` (`is_fake_uuid`,
+`fake_sql`, applied in `_scope_sql` when `include_bots=false`, so derive's "counted" follows).
+A fake player never holds a first (one-time derive step `apply_fake_rule`, meta
+`fake_rule_applied`, re-seeded such firsts as earliest_known). `/meta.servers[].has_bots` tells
+the site where to show the toggle.
+
+SMP additionally filters bots via scoreboard team membership: in a team = real
 player, in no team = bot. **Strict, no exceptions, confirmed by the owner against
 live data** (2026-11-24: ~196 team members; 968 of 1,087 SMP stat-file holders
 are bots, e.g. `BedBot`, `Endswitch`, `digsort`, `001`. These are named automation
 accounts WITH stat files, a different thing from the unnamed fake-player NPCs
 above). Missing flag = bot (fail closed). Default-excluded from leaderboards, toggle to include.
 **CMPs never filter bots — always included, no toggle, by explicit decision.**
+
+## Slur filter + renames (stats round 2, 2026-11-26)
+- `name_blocklist.txt` / `name_allowlist.txt` (repo root, owner-edited; tests never read them):
+  derive's first stage (`bot/derive_blocked.py`) rewrites `blocked_players` (migration v5)
+  every run from players' names + former names (`api/names.py` normalises: lowercase, no
+  `_`, leetspeak, doubled letters collapsed; substring match). `_scope_sql(blocked=True)`
+  hides them in every API read, bots on or off; derive's totals pass `blocked=False` (their
+  numbers stay in whole-server totals). `/player` / `/compare` 404. `tools/check_blocklist.py`
+  lists what the list catches (owner reviews, fills the allowlist).
+- `player_merges.json` `renames`: former names of ONE uuid, optional `from`/`until` dates.
+  `bot/merge_players.py` folds a new rename once (meta `renamed:<uuid>:<name>`, same backup +
+  timeline SUM as merges, unresolved name rows -> the uuid); the live snapshot and the import
+  resolve those names first (date-bounded). `/player.aka`, `/search`, `/leaderboard?q=` and
+  `resolve_player` use former names. Merges stay a SUM (owner: stattransfer moved only
+  scoreboard scores and reset the old name; stat files were never transferred).
+- New reads: `/rankings` (top1 | firsts | badges), `/totals.starts` (per-line start;
+  `effective_from` = the earliest), `/leaderboard?q=`, `/search` space = `_`.
 
 ## Discord bot layout
 - **`main.py`:**
