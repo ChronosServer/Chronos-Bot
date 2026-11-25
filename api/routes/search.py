@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, Request
 
 from api import db
 from api.cache import cached
+from api.merges import api_merges
 from api.scope import Scope, resolve_scope, scoreboard_filter_sql, stat_filter_sql
 from api.settings import api_settings
 
@@ -34,9 +35,9 @@ def _build_index(conn):
     players = []
     for uuid, name in conn.execute("SELECT uuid, name FROM players"):
         if uuid in everyone:
-            players.append((uuid, name, (name or "").lower(), uuid not in counted))
+            players.append((uuid, name, _norm(name), uuid not in counted))
     # keys nobody has a non-zero value for (junk like crafted/minecraft:air) aren't offered
-    stats = [(c, k, k.lower()) for c, k in conn.execute(
+    stats = [(c, k, _norm(k)) for c, k in conn.execute(
         f"SELECT DISTINCT sc.category, sc.stat_key FROM stat_current sc WHERE {f_stat} "
         f"AND sc.value != 0", p_stat)]
     servers = defaultdict(list)
@@ -47,8 +48,14 @@ def _build_index(conn):
             "WHERE m.is_vanilla_mirror=0 AND m.removed=0 ORDER BY m.objective, "
             "s.position IS NULL, s.position, s.key"):  # = api.scope.SERVER_ORDER_SQL
         servers[obj].append(srv)
-    objectives = [(o, s, o.lower()) for o, s in servers.items()]
+    objectives = [(o, s, _norm(o)) for o, s in servers.items()]
     return {"players": players, "stats": stats, "objectives": objectives}
+
+
+def _norm(text):
+    """Search text: case-insensitive, a space reads as '_' (people type
+    what the site shows: "redstone block" for minecraft:redstone_block)."""
+    return (text or "").lower().replace(" ", "_")
 
 
 def _get_index(conn):
@@ -90,14 +97,17 @@ def _top(items, texts_of, q, limit, tiebreak):
 def search(request: Request, conn=Depends(db.get_db), q: str = "", limit: int = 10,
            include_bots: bool = False):
     limit = max(1, min(limit, api_settings().api.search_max_limit))
-    q = q.strip().lower()
+    q = _norm(q.strip())
     if not q:
         return {"players": [], "stats": [], "objectives": []}
     idx = _get_index(conn)
     by_uuid = bool(_UUID_Q.match(q))
 
-    def ptexts(p):
+    m = api_merges()
+
+    def ptexts(p):  # current name, former names (aka), uuid for a uuid-looking q
         t = [p[2]] if p[1] is not None else []
+        t += [_norm(n) for n in m.former_names(p[0])] if m else []
         return t + ([p[0]] if by_uuid else [])
     pool = idx["players"] if include_bots else [p for p in idx["players"] if not p[3]]
     players = _top(pool, ptexts, q, limit, lambda p: (p[2], p[0]))

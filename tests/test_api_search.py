@@ -135,3 +135,23 @@ def test_keys_bad_args(env):
 def test_search_include_bots_shows_smp_bots(env):
     j = env.get(S, params={"q": "botty", "include_bots": "true"}).json()
     assert j["players"] == [{"uuid": U3, "name": "Botty"}]
+
+
+def test_search_spaces_match_underscores(env):
+    for q in ("play time", "Play Time", "play_time", "minecraft:play time"):
+        assert env.get(S, params={"q": q}).json()["stats"][0]["key"] == "minecraft:play_time", q
+    sql(env.world, "INSERT INTO scoreboard_meta VALUES ('smp', 'dig_all', 0, 1, 1, 0)")
+    sql(env.world, "INSERT INTO snapshot_runs (at, server_key, kind, ok, entries_read, "
+        "rows_written) VALUES (1000100, 'smp', 'stats', 1, 1, 1)")
+    assert env.get(S, params={"q": "Dig All"}).json()["objectives"] == [
+        {"objective": "dig_all", "servers": ["smp"]}]
+
+
+def test_search_finds_former_names(env, tmp_path, monkeypatch):
+    import json
+    from api import merges as mg
+    p = tmp_path / "m.json"
+    p.write_text(json.dumps({"renames": [{"uuid": U1, "names": ["OldAl_x"]}]}), encoding="utf-8")
+    monkeypatch.setattr(mg, "MERGES_PATH", p)
+    mg.reset_api_merges()
+    assert env.get(S, params={"q": "oldal x"}).json()["players"] == [{"uuid": U1, "name": "Alice"}]
