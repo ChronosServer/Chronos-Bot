@@ -17,7 +17,8 @@ import time
 
 from derive_common import (  # noqa: F401  (DatabaseBusy/BUSY_MESSAGE re-exported)
     BUSY_MESSAGE, BUSY_TIMEOUT_S, DEFAULTS, SCOREBOARD_CATEGORY, TICKS_PER_HOUR,
-    DatabaseBusy, _servers, begin_immediate, counted_scoreboard, counted_stats, days_s,
+    DatabaseBusy, _servers, begin_immediate, counted_achievements, counted_scoreboard,
+    counted_stats, days_s,
     history_points, stat_value_at_sql, tracking_start,
 )
 
@@ -262,8 +263,8 @@ def _derive_badges(conn, run_at, settings=None):
     conn.create_function("chronos_local_day", 1, _local_day, deterministic=True)
     for key in _servers(conn):
         fs, ps = counted_stats(key, "s")
-        ff, pf = counted_stats(key, "f")
-        fm, pm = counted_stats(key, "m")
+        ff, pf = counted_achievements(key, "f")
+        fm, pm = counted_achievements(key, "m")
         fa, pa = counted_stats(key, "a")
 
         # Firsts: only earliest_known=0 rows count (approximate=1 rows are

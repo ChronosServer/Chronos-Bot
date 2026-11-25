@@ -100,6 +100,27 @@ def scoreboard_filter_sql(scope: Scope, include_bots: bool, alias: str,
     return f"({sql} AND {unresolved} AND {mirror})", params
 
 
+def achievement_not_mirror_sql(alias: str) -> str:
+    """WHERE fragment for firsts/milestones rows (category, stat_key): drops
+    scoreboard rows (category 'scoreboard', stat_key = objective) whose
+    objective is now a vanilla mirror on that server. An objective created
+    before its version's dictionary was bundled gets derived rows while it
+    looks real; once the dictionary flags it, they are hidden (not deleted,
+    like its scoreboard history)."""
+    a = _alias(alias)
+    return (f"NOT ({a}.category = 'scoreboard' AND EXISTS (SELECT 1 FROM scoreboard_meta _mir_m"
+            f" WHERE _mir_m.server_key={a}.server_key AND _mir_m.objective={a}.stat_key"
+            f" AND _mir_m.is_vanilla_mirror=1))")
+
+
+def objective_not_mirror_sql(alias: str) -> str:
+    """WHERE fragment for rows with server_key + objective (scoreboard_totals):
+    drops objectives that are vanilla mirrors on that server."""
+    a = _alias(alias)
+    return (f"NOT EXISTS (SELECT 1 FROM scoreboard_meta _mir_m WHERE _mir_m.server_key="
+            f"{a}.server_key AND _mir_m.objective={a}.objective AND _mir_m.is_vanilla_mirror=1)")
+
+
 def is_counted(conn, server_key: str, uuid: str, include_bots: bool = False) -> bool:
     if include_bots:
         return True

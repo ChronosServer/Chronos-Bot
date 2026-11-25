@@ -641,3 +641,23 @@ def test_run_row_queries_use_at_indexes(world, run_snapshot, db):
         tables.append(m.group(1))
     # activity + firsts (stats, scoreboard) + milestones (stats, scoreboard)
     assert tables.count("idx_stat_at") >= 3 and tables.count("idx_scoreboard_at") >= 2
+
+
+def test_mirror_objective_firsts_do_not_count_for_badges_or_spotlight(run_snapshot, db):
+    fresh(run_snapshot, db)
+    add_run(db, "cmp", T0)
+    db.execute("INSERT INTO scoreboard_meta (server_key, objective, is_vanilla_mirror, "
+               "first_seen, last_seen) VALUES ('cmp', 'm-stone', 1, ?, ?)", (T0, T0))
+    db.execute("INSERT INTO firsts (at, server_key, uuid, category, stat_key, earliest_known) "
+               "VALUES (?, 'cmp', ?, 'scoreboard', 'm-stone', 0)", (RUN - DAY, P))
+    db.commit()
+    derive.derive_spotlight(db, RUN)
+    assert spot(db, "recent_first") == []
+    derive.derive_badges(db, RUN)
+    assert db.execute("SELECT COUNT(*) FROM badges WHERE badge_key LIKE 'firsts:%'"
+                      ).fetchone()[0] == 0
+    db.execute("UPDATE scoreboard_meta SET is_vanilla_mirror=0")  # control: real objective
+    db.commit()
+    derive.derive_badges(db, RUN)
+    assert db.execute("SELECT COUNT(*) FROM badges WHERE badge_key LIKE 'firsts:%'"
+                      ).fetchone()[0] == 1

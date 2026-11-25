@@ -5,7 +5,8 @@ import json
 from collections import Counter
 
 from derive_common import (
-    DAY, DEFAULTS, WEEK, _servers, clamped_ago, counted_all, counted_stats, days_s,
+    DAY, DEFAULTS, WEEK, _servers, clamped_ago, counted_achievements, counted_all,
+    counted_stats, days_s,
     stat_value_at_sql,
 )
 
@@ -126,8 +127,8 @@ def derive_spotlight(conn, run_at, settings=None):
     conn.execute("DELETE FROM spotlight_candidates")
     for key in _servers(conn):
         fs, ps = counted_stats(key, "s")
-        fm, pm = counted_stats(key, "m")
-        ff, pf = counted_stats(key, "f")
+        fm, pm = counted_achievements(key, "m")
+        ff, pf = counted_achievements(key, "f")
 
         # outlier: the top counted holder (one per key), if their value is
         # >= outlier.ratio x the median of non-zero holders, with

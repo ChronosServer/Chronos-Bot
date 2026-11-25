@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, Request
 from api import db, timeq
 from api.cache import cached
 from api.rivals import closing_stats, window_floor
-from api.scope import resolve_scope, stat_filter_sql
+from api.scope import achievement_not_mirror_sql, resolve_scope, stat_filter_sql
 from api.settings import api_settings
 
 router = APIRouter()
@@ -45,6 +45,7 @@ def milestones(request: Request, conn=Depends(db.get_db), scope: str = "all",
     sc = resolve_scope(conn, scope)
     limit = _limit(limit)
     frag, params = stat_filter_sql(sc, include_bots, "m")
+    frag = f"{frag} AND {achievement_not_mirror_sql('m')}"
     cur_sql, cur = "", []
     if before:
         ek, at, id_ = _parse_cursor(before)
@@ -71,6 +72,7 @@ def firsts(request: Request, conn=Depends(db.get_db), scope: str = "all",
            include_bots: bool = False):
     sc = resolve_scope(conn, scope)
     frag, params = stat_filter_sql(sc, include_bots, "f")
+    frag = f"{frag} AND {achievement_not_mirror_sql('f')}"
     rows = conn.execute(
         f"SELECT f.server_key, f.category, f.stat_key, f.uuid, p.name, f.at, "
         f"f.earliest_known, f.approximate FROM firsts f LEFT JOIN players p ON p.uuid = f.uuid "

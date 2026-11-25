@@ -10,7 +10,7 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from api.scope import (  # noqa: E402,F401
-    Scope, counted_uuids, scoreboard_filter_sql, stat_filter_sql,
+    Scope, achievement_not_mirror_sql, counted_uuids, scoreboard_filter_sql, stat_filter_sql,
 )
 from api.settings import DAY, DEFAULTS, days_s  # noqa: E402,F401
 from api.history import snap_from  # noqa: E402
@@ -68,6 +68,13 @@ def history_points(conn, server_key):
     if live is not None:
         points.add(live)
     return sorted(points), live
+
+
+def counted_achievements(key, alias):
+    """counted_stats for firsts/milestones rows, minus scoreboard rows of
+    objectives that are now vanilla mirrors (api.scope)."""
+    sql, params = counted_stats(key, alias)
+    return f"{sql} AND {achievement_not_mirror_sql(alias)}", params
 
 
 def counted_stats(key, alias):

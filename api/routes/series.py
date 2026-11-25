@@ -4,8 +4,8 @@ from fastapi import APIRouter, Depends, Request
 
 from api import db, timeq
 from api.cache import cached
-from api.scope import (Scope, resolve_scope, scoreboard_filter_sql,
-                       stat_filter_sql)
+from api.scope import (Scope, objective_not_mirror_sql, resolve_scope,
+                       scoreboard_filter_sql, stat_filter_sql)
 from api.settings import api_settings
 
 router = APIRouter()
@@ -106,13 +106,16 @@ def _totals_events(conn, kind, category, key, servers, col, rng):
     if kind == "stat":
         tbl, kcond, kp = "stat_totals", "category=? AND stat_key=?", [category, key]
     else:
-        tbl, kcond, kp = "scoreboard_totals", "objective=?", [key]
+        # a mirror objective's totals (written before its dictionary was
+        # bundled) are hidden, like its scoreboard history
+        tbl, kcond, kp = ("scoreboard_totals",
+                          f"objective=? AND {objective_not_mirror_sql('t')}", [key])
     base = conn.execute(
-        f"SELECT server_key, MAX(at), {col} FROM {tbl} WHERE server_key IN ({marks}) "
+        f"SELECT server_key, MAX(at), {col} FROM {tbl} t WHERE server_key IN ({marks}) "
         f"AND {kcond} AND at<=? GROUP BY server_key",
         [*servers, *kp, rng.effective_from]).fetchall()
     rest = conn.execute(
-        f"SELECT server_key, at, {col} FROM {tbl} WHERE server_key IN ({marks}) "
+        f"SELECT server_key, at, {col} FROM {tbl} t WHERE server_key IN ({marks}) "
         f"AND {kcond} AND at>? AND at<=?",
         [*servers, *kp, rng.effective_from, rng.to_ts]).fetchall()
     out: dict = {}

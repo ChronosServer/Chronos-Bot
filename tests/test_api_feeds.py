@@ -190,3 +190,33 @@ def test_milestones_feed_uses_index_no_sort(env, include_bots, cursor):
 def test_milestones_feed_index_required():
     from api import db
     assert "idx_milestones_feed" in db.REQUIRED_INDEXES
+
+
+def test_mirror_objective_firsts_and_milestones_hidden(env):
+    """An objective stored as real before its dictionary was bundled, later
+    flagged as a mirror: its scoreboard firsts/milestones (and totals) are
+    hidden; stat rows with the same key name are not."""
+    w = env.world
+    many(w, "INSERT INTO firsts (at, server_key, uuid, category, stat_key, earliest_known) "
+            "VALUES (?, 'smp', ?, ?, ?, 0)",
+         [(100, U1, "scoreboard", "kills"), (101, U1, "minecraft:custom", "kills")])
+    many(w, "INSERT INTO milestones (at, server_key, uuid, rule_key, category, stat_key, "
+            "threshold, value_at, earliest_known) VALUES (?, 'smp', ?, 'r', ?, ?, 1, 3, 0)",
+         [(100, U1, "scoreboard", "kills"), (101, U1, "minecraft:custom", "kills")])
+
+    def seen():
+        cache.clear()
+        f = [r["category"] for r in env.get("/api/stats/firsts?scope=smp").json()["rows"]]
+        m = [r["category"] for r in env.get("/api/stats/milestones?scope=smp").json()["rows"]]
+        p = env.get(f"/api/stats/player/{U1}?scope=smp").json()
+        t = env.get("/api/stats/totals?kind=scoreboard&key=kills&scopes=smp"
+                    "&from=0&to=2000000").json()["series"]["smp"]
+        return (sorted(f), sorted(m), sorted(r["category"] for r in p["firsts"]),
+                sorted(r["category"] for r in p["milestones"]), bool(t))
+
+    both = ["minecraft:custom", "scoreboard"]
+    assert seen() == (both, both, both, both, True)
+    sql(w, "UPDATE scoreboard_meta SET is_vanilla_mirror=1 WHERE server_key='smp' "
+           "AND objective='kills'")
+    only = ["minecraft:custom"]
+    assert seen() == (only, only, only, only, False)
