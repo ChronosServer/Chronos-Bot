@@ -363,7 +363,9 @@ then `python -m pytest tests -q` (Windows, Python 3.13 locally; server is 3.14).
    two arbitrarily, so the value at that import point may be the stale one. Live is not
    affected (the live usercache has only the current name; the old one stays
    `unresolved:`). Seen on the live DB after the 2026-11-25 import: 20 (at, objective)
-   groups, all one player (`NotQuiteRat` 7 vs `NotQuiteRat_` 179 on `Levels`); it also
+   groups, all one player (old name `NotQuiteRat_` 179 vs current `NotQuiteRat` 7 on
+   `Levels`; owner-confirmed which is which; both names already appear in the 2021
+   backup); it also
    made the real import write 16 fewer scoreboard rows than the dry run. Renames are
    handled in-game by `commands/statTransferCommand.py` (admin `stattransfer <from> <to>`:
    `scoreboard players operation <to> <obj> += <from> <obj>` for every objective, then
