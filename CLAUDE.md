@@ -369,7 +369,9 @@ then `python -m pytest tests -q` (Windows, Python 3.13 locally; server is 3.14).
    made the real import write 16 fewer scoreboard rows than the dry run. Renames are
    handled in-game by `commands/statTransferCommand.py` (admin `stattransfer <from> <to>`:
    `scoreboard players operation <to> <obj> += <from> <obj>` for every objective, then
-   `scoreboard players reset <from>`); `NotQuiteRat` was never transferred at those points.
+   `scoreboard players reset <from>`); `NotQuiteRat_` → `NotQuiteRat` was transferred
+   after the last backup (2026-07-15), so live data is correct (everything on
+   `NotQuiteRat`, matching Discord `/stats`) and only the import points are affected.
    Fix (mirror what the live snapshot does): in `_scoreboard_rows`, a raw name counts as
    the uuid only if it is that uuid's name in **that backup's own** usercache; other names
    for the same uuid become `unresolved:` rows, as live does. A later live transfer then
