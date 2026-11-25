@@ -180,7 +180,7 @@ server, currently running the OLD `snapshot.py` until the branch is deployed). L
 ~3.3k players, ~263k stat_current rows, ~10k scoreboard rows, history since 2026-11-24.
 It also has early `ok=1` stats runs with `entries_read=0` (from before the path fixes)
 — tracking start must ignore them (see below). The API, derive step and import tool are
-verified by tests (326) only; they have not run on the live server yet.
+verified by tests (349) only; they have not run on the live server yet.
 
 ### What the backend is (branch `stats-api`, not merged/pushed yet)
 Pipeline: timer → `bot/snapshot.py` (history, change-only) → `bot/derive.py` (derived
@@ -200,9 +200,9 @@ tables) → SQLite → `api/` (FastAPI, read-only) → nginx `/api/stats/*` → 
 | `api/routes/*` | meta, leaderboard, series/totals, player/compare, search/keys, feeds (milestones, firsts, rivalries, activity, spotlight) |
 | `sql/schema.sql`, `sql/migrations.py` | schema (CREATE IF NOT EXISTS) then migrations by `PRAGMA user_version` (now 3: v3 adds `approximate` on firsts/milestones and the `imports` table) |
 | `tools/` | `import_backups.py` (old world backups into history), `stat_renames.json` (old->new stat keys, editable), `README.md` (operator guide) |
-| `dictionaries/` | bundled every-scoreboard `dictionary-<version>.json`, 1.16-26.2 (33 files; 1.19.1/.3/.4 missing); mirror-objective lists for the snapshot and the import |
+| `dictionaries/` | bundled every-scoreboard `dictionary-<version>.json`, 1.16-26.2 (34 files; 1.19.1/.3/.4 missing); mirror-objective lists for the snapshot and the import |
 | `deploy/` | systemd units (snapshot, timer, api) + nginx snippet |
-| `tests/` | pytest, 326 tests, synthetic worlds built through the real snapshot write path, no network; tests never read the repo's config.json (autouse fixture; `api_config` writes one) |
+| `tests/` | pytest, 349 tests, synthetic worlds built through the real snapshot write path, no network; tests never read the repo's config.json (autouse fixture; `api_config` writes one) |
 | `STATS_PLAN.md` | agreed scope, hard rules, build order/status |
 | `STATS_API.md` | the HTTP contract for the website (copy into the website repo) |
 | `docs/STATS_DATABASE.md` | operator guide: config, first setup, upgrade, health checks, backup, reset |
@@ -317,6 +317,31 @@ The owner can't copy/paste reliably from the server terminal: put server command
 bottom. No `sqlite3` CLI on the server — use `python3 -c "import sqlite3..."`.
 Local tests: `pip install -r requirements.txt -r requirements-dev.txt`
 then `python -m pytest tests -q` (Windows, Python 3.13 locally; server is 3.14).
+
+## Known follow-ups (not blocking deploy; from the final review, 2026-11-25)
+1. **Custom range entirely inside the pre-live gap returns empty.** With `from` and `to`
+   both between the last imported backup and the first live run, `from` snaps to the first
+   live run (after `to`), so `Range.empty` is true and `/leaderboard` delta + `/series`
+   return nothing although the value at `to` is known (from the last backup). Presets are
+   unaffected. Fix idea: for series/total mode, read the value at `to` instead of returning
+   empty; for delta mode an empty "no observation in this window" answer is defensible —
+   decide, and update the stale `Range.empty` docstring in `api/timeq.py` ("ends before
+   tracking began").
+2. **Bot-reclassification rebuilds totals more than needed.** `check_counted`
+   (`bot/derive.py`) clears `totals_backfilled` on ANY change to an SMP counted-uuid set,
+   then every server's totals history is rebuilt (~10-25 s). A brand-new team member with no
+   history before `run_at` produces identical rows. Refinement: rebuild only the changed
+   server, and only when a newly counted/uncounted uuid has rows before `run_at`.
+3. **Mirror objectives created before their dictionary is bundled leak into feeds.** If the
+   server moves to a Minecraft version whose dictionary isn't in `dictionaries/` yet, new
+   `m-`/`u-`/… objectives are stored as real objectives and can get scoreboard firsts /
+   milestones / totals. When the dictionary is added they flip to `is_vanilla_mirror=1` and
+   their scoreboard data is hidden, but `/milestones`, `/firsts`, `/player` milestones/firsts
+   (`api/routes/feeds.py`, `api/routes/player.py`) and `/totals?kind=scoreboard` have no
+   mirror filter. Fix: add the mirror `NOT EXISTS` clause (as in `api/scope.py
+   scoreboard_filter_sql`) to those queries, or delete derived rows for objectives that flip
+   to mirror. Prevention: add the new version's dictionary (every-scoreboard `create.py`)
+   before bumping `server.minecraft_version`.
 
 ## Website nav plan (for when Stats ships)
 Top-level nav gets one new "Stats ▾" dropdown (Overview / Explorer / Scoreboards /
