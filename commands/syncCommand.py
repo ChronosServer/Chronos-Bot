@@ -15,6 +15,9 @@ import shutil
 import threading
 from nbt import nbt, region as nbt_region
 import requests
+import hashlib
+import re
+import urllib.parse
 
 # load config directly
 with open('config.json') as f:
@@ -235,6 +238,111 @@ def export_server_status():
 
 # ---------- forum archive ----------
 
+# Discord attachment links expire (signed `ex=` param), so archived pictures
+# disappeared after a while. Every picture/file/avatar of an archived post is
+# downloaded once into the website's cache (next to cache/items, already
+# served) and archive.json points at the local copy. The file name comes from
+# the URL without its query, so a re-signed link of the same attachment maps
+# to the same file and is never downloaded twice.
+ARCHIVE_MEDIA_DIR = os.path.join(_server_cfg['website_path'], 'cache', 'archive')
+ARCHIVE_MEDIA_URL = '/cache/archive/'
+ARCHIVE_MEDIA_MAX_BYTES = 50 * 1024 * 1024   # bigger files (long videos) stay linked to Discord
+os.makedirs(ARCHIVE_MEDIA_DIR, exist_ok=True)
+
+
+def _media_name(url):
+    """'<hash>/<original file name>': the folder keeps names unique, the file
+    name stays the original one (the archive page shows it as the download
+    name and checks its extension for images)."""
+    parts = urllib.parse.urlsplit(url)
+    base = urllib.parse.unquote(parts.path.rsplit('/', 1)[-1])
+    base = re.sub(r'[^A-Za-z0-9._-]', '_', base).strip('._') or 'file'
+    digest = hashlib.sha1((parts.netloc + parts.path).encode()).hexdigest()[:16]
+    return f'{digest}/{base[:100]}'
+
+
+def _is_remote(url):
+    return isinstance(url, str) and url.startswith(('http://', 'https://'))
+
+
+def cache_media(url, failed):
+    """The local URL of a remote media file (downloaded once), or the URL
+    unchanged when it can't be. `failed`: set of media names given up on for
+    good (too big, or HTTP 403/404/410), kept in sync_state.json and not
+    retried; a timeout or other error is retried at the next sync."""
+    if not _is_remote(url):
+        return url
+    name = _media_name(url)
+    dest = os.path.join(ARCHIVE_MEDIA_DIR, name)
+    if os.path.exists(dest):
+        return ARCHIVE_MEDIA_URL + name
+    if name in failed:
+        return url
+    tmp = dest + '.part'
+    try:
+        os.makedirs(os.path.dirname(dest), exist_ok=True)
+        with requests.get(url, timeout=20, stream=True) as r:
+            if r.status_code != 200:
+                if r.status_code in (403, 404, 410):
+                    failed.add(name)
+                raise ValueError(f'HTTP {r.status_code}')
+            size = 0
+            with open(tmp, 'wb') as f:
+                for chunk in r.iter_content(64 * 1024):
+                    size += len(chunk)
+                    if size > ARCHIVE_MEDIA_MAX_BYTES:
+                        failed.add(name)
+                        raise ValueError('too big')
+                    f.write(chunk)
+        os.replace(tmp, dest)
+        return ARCHIVE_MEDIA_URL + name
+    except Exception as e:
+        log(f"archive: media not cached ({e}): {url.split('?')[0]}")
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
+        return url
+
+
+def _message_media(m):
+    """(getter, setter) pairs for every media URL of one archived message/post."""
+    out = [(lambda m=m: m.get('author_avatar'), lambda v, m=m: m.__setitem__('author_avatar', v))]
+    atts = m.get('attachments', [])
+    for i in range(len(atts)):
+        out.append((lambda a=atts, i=i: a[i], lambda v, a=atts, i=i: a.__setitem__(i, v)))
+    for e in m.get('embeds', []):
+        for k in ('image', 'thumbnail'):
+            if k in e:
+                out.append((lambda e=e, k=k: e[k], lambda v, e=e, k=k: e.__setitem__(k, v)))
+    return out
+
+
+def _post_media(post):
+    pairs = _message_media(post)
+    for m in post.get('messages', []):
+        pairs += _message_media(m)
+    return pairs
+
+
+def localize_post(post, failed):
+    """Replaces every remote media URL of a post (and its replies) with the
+    cached copy. Runs in a worker thread (blocking downloads)."""
+    for get, put in _post_media(post):
+        put(cache_media(get(), failed))
+
+
+def needs_media_refresh(post, failed):
+    """True if a saved post still links a remote file that isn't cached and
+    wasn't given up on: its links may have expired, so the thread is fetched
+    again for fresh ones (once per thread; afterwards it's all local)."""
+    for get, _ in _post_media(post):
+        url = get()
+        if _is_remote(url) and _media_name(url) not in failed \
+                and not os.path.exists(os.path.join(ARCHIVE_MEDIA_DIR, _media_name(url))):
+            return True
+    return False
+
 def load_state():
     if os.path.exists(STATE_FILE):
         with open(STATE_FILE) as f:
@@ -290,6 +398,7 @@ async def sync_archive(bot, full=False):
 
     state = load_state()
     existing = {p['id']: p for p in state.get('archive', [])}
+    failed = set(state.get('archive_media_failed', []))
     now = datetime.now(timezone.utc)
 
     threads = list(channel.threads)
@@ -304,8 +413,10 @@ async def sync_archive(bot, full=False):
         last_id = str(thread.last_message_id or '')
         cached = existing.get(tid)
 
-        # unchanged thread (no new messages): reuse the saved copy instead of refetching it
-        if cached and not full and cached.get('last_message_id') == last_id:
+        # unchanged thread (no new messages) whose files are all cached locally:
+        # reuse the saved copy instead of refetching it
+        if (cached and not full and cached.get('last_message_id') == last_id
+                and not needs_media_refresh(cached, failed)):
             cached['title'] = thread.name
             cached['tags'] = tags
             posts.append(cached)
@@ -322,7 +433,7 @@ async def sync_archive(bot, full=False):
 
         fetched += 1
         first = messages[0] if messages else {}
-        posts.append({
+        post = {
             'id': tid,
             'title': thread.name,
             'tags': tags,
@@ -335,11 +446,14 @@ async def sync_archive(bot, full=False):
             'attachments': first.get('attachments', []),
             'embeds': first.get('embeds', []),
             'messages': messages[1:],
-        })
+        }
+        await asyncio.to_thread(localize_post, post, failed)  # downloads: off the event loop
+        posts.append(post)
         await asyncio.sleep(0.25)
 
     posts.sort(key=lambda x: x['timestamp'], reverse=True)
     state['archive'] = posts
+    state['archive_media_failed'] = sorted(failed)
     save_state(state)
     write_json_atomic(os.path.join(DATA_DIR, 'archive.json'), posts)
     log(f"archive: {len(posts)} posts written ({fetched} fetched, {failed} failed and kept old copy)")

@@ -85,8 +85,17 @@ this first whenever data looks stale, before assuming the sync is broken.
 What they write to `<website_path>/data/`:
 - `server_status.json`: every 5 min.
 - `ms_storage.json` and `dig_storage.json`: every 8 h. An empty scan keeps the old file.
-- `archive.json` (forum archive from `bot.archive_channel_id`): every 8 h.
-- `members.json` (membersExport): every 1 h.
+- `archive.json` (forum archive from `bot.archive_channel_id`): every 8 h. Discord
+  attachment links expire (signed `ex=`), so every attachment, embed image/thumbnail and
+  author avatar is downloaded once to `<website_path>/cache/archive/<hash>/<original name>`
+  (served like `cache/items`) and `archive.json` links the local `/cache/archive/...` path
+  (hash = URL without query, so re-signed links reuse the file). A saved thread whose files
+  aren't all cached is fetched again (fresh links) instead of reused. Files over 50 MB or
+  answering 403/404/410 keep their Discord link and are listed in `sync_state.json`
+  `archive_media_failed` (not retried); other errors are retried next sync. The website's
+  archive page must accept same-site `/...` links, not only `http(s)://`.
+- `members.json` (membersExport): every 1 h. `name` = the member's own Discord name
+  (`global_name`, else username), not their server nickname (owner's request, 2026-11-25).
 
 Loop state is kept in `sync_state.json`. nginx only serves these files by name (see the
 `location ~ ^/data/(…)\.json$` whitelist in the site config). A new data file must be

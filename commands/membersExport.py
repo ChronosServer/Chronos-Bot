@@ -108,7 +108,10 @@ class membersExport(commands.Cog):
         members, trial, inactive = [], [], []
         for member in guild.members:
             role_ids = {r.id for r in member.roles}
-            entry = {'name': member.display_name, 'avatar': str(member.display_avatar.url)}
+            # their own Discord name (profile display name, else username),
+            # not the nickname they have on the Chronos server
+            entry = {'name': member.global_name or member.name,
+                     'avatar': str(member.display_avatar.url)}
             if ROLE_INACTIVE in role_ids:
                 inactive.append(entry)
             elif ROLE_MEMBER in role_ids:
