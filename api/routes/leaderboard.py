@@ -50,24 +50,36 @@ def leaderboard(request: Request, conn=Depends(db.get_db), kind: str = "stat",
         # total mode: values at `to` when given, else current; a 0 is no
         # standing (unused stat, reset score) and is left out like a 0 gain
         vals = {u: v for u, v in values_at(None if r.is_now else r.to_ts).items() if v != 0}
+    ranked = rank_rows(vals)
+    return {
+        "effective_from": r.effective_from,
+        "to": r.to_ts,
+        "mode": "delta" if delta else "total",
+        "total_count": len(ranked),
+        "rows": page_rows(conn, ranked, limit, offset),
+    }
+
+
+def rank_rows(vals: dict) -> list:
+    """{uuid: value} -> [(uuid, value, rank)], highest first (uuid breaks
+    ties in order); competition ranking: ties share a rank, the next rank
+    skips (1, 1, 3)."""
     ordered = sorted(vals.items(), key=lambda kv: (-kv[1], kv[0]))
-    ranks, prev, rank = [], None, 0
-    for i, (_, v) in enumerate(ordered):
+    out, prev, rank = [], None, 0
+    for i, (u, v) in enumerate(ordered):
         if v != prev:
             rank, prev = i + 1, v
-        ranks.append(rank)
-    page = ordered[offset:offset + limit]
+        out.append((u, v, rank))
+    return out
+
+
+def page_rows(conn, ranked, limit, offset) -> list:
+    """One page of rank_rows output as [{rank, uuid, name, value}]."""
+    page = ranked[offset:offset + limit]
     names = {}
     if page:
         marks = ",".join("?" * len(page))
         names = dict(conn.execute(
             f"SELECT uuid, name FROM players WHERE uuid IN ({marks})",
-            [u for u, _ in page]).fetchall())
-    return {
-        "effective_from": r.effective_from,
-        "to": r.to_ts,
-        "mode": "delta" if delta else "total",
-        "total_count": len(ordered),
-        "rows": [{"rank": ranks[offset + i], "uuid": u, "name": names.get(u),
-                  "value": v} for i, (u, v) in enumerate(page)],
-    }
+            [u for u, _, _ in page]).fetchall())
+    return [{"rank": rk, "uuid": u, "name": names.get(u), "value": v} for u, v, rk in page]

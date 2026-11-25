@@ -7,7 +7,7 @@ from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import JSONResponse
 
 from api import db
-from api.routes import feeds, leaderboard, meta, player, search, series
+from api.routes import feeds, leaderboard, meta, player, rankings, search, series
 from api.settings import api_settings
 
 
@@ -41,4 +41,5 @@ def create_app() -> FastAPI:
     app.include_router(player.router, prefix="/api/stats")
     app.include_router(search.router, prefix="/api/stats")
     app.include_router(feeds.router, prefix="/api/stats")
+    app.include_router(rankings.router, prefix="/api/stats")
     return app
