@@ -92,7 +92,7 @@ Loop state is kept in `sync_state.json`. nginx only serves these files by name (
 `location ~ ^/data/(…)\.json$` whitelist in the site config). A new data file must be
 added to that whitelist, or it 404s.
 
-## Stats subsystem (backend built on branch `stats-api`; frontend next)
+## Stats subsystem (backend on `master` and live since 2026-11-25; website frontend next, in the website repo)
 Change-only SQLite storage: a history row is written ONLY when a value differs from
 the last known value (tracked in `stat_current`/`scoreboard_current`). This is load-
 bearing, not a style choice — SMP alone has 9,346 scoreboard objectives and 175k
