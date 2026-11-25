@@ -4,7 +4,7 @@ Value at T = latest row with at <= T per (server, uuid, key). History is sparse,
 so `at` is never lower-bounded: a player whose last change predates the range
 still has a value at its start.
 """
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Optional
 
 from fastapi import Query
@@ -28,11 +28,30 @@ class Range:
     to_ts: int
     effective_from: int
     is_now: bool
+    # Start clamped to tracking start, before gap snapping (None: no data
+    # existed at parse time; then same as effective_from).
+    clamped_from: Optional[int] = None
 
     @property
     def empty(self) -> bool:
-        """True when the window ends before tracking began: no data exists."""
+        """True when no observation falls inside the window: it ends before
+        tracking began, or lies entirely inside the sparse pre-live gap
+        (between two import points / the last import and the first live
+        run, see in_gap). Deltas over an empty window are empty."""
         return self.effective_from > self.to_ts
+
+    @property
+    def in_gap(self) -> bool:
+        """Empty only because the window sits inside the pre-live gap: the
+        value at to_ts is still known (from the import point before it)."""
+        start = self.effective_from if self.clamped_from is None else self.clamped_from
+        return self.empty and start <= self.to_ts
+
+    def for_values(self) -> "Range":
+        """The range series / totals read: a window inside the pre-live gap
+        becomes the single instant to_ts (one point, the value known there)
+        instead of nothing. Unchanged otherwise."""
+        return replace(self, effective_from=self.to_ts) if self.in_gap else self
 
 
 def tracking_start(conn, scope: Scope) -> Optional[int]:
@@ -66,11 +85,11 @@ def parse_range(conn, scope: Scope, range: Optional[str], from_: Optional[int],
         from_ts = start if start is not None else 0
     if from_ts > to_ts:
         raise ValueError("from must be <= to")
-    eff = from_ts if start is None else max(from_ts, start)
+    clamped = from_ts if start is None else max(from_ts, start)
     # Before live tracking a server's history is sparse (import points only):
     # start at the next real observation, never a stale earlier backup.
-    eff = max(eff, snap_scope(conn, scope.servers, from_ts))
-    return Range(from_ts, to_ts, eff, to is None)
+    eff = max(clamped, snap_scope(conn, scope.servers, from_ts))
+    return Range(from_ts, to_ts, eff, to is None, clamped)
 
 
 def _sum(rows) -> dict:

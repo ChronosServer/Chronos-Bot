@@ -59,6 +59,7 @@ def _history_events(conn, scope, include_bots, kind, category, key, uuids, rng):
 def build_series(conn, scope: Scope, include_bots: bool, kind: str,
                  category: str, key: str, uuids: list, rng) -> dict:
     out = {u: [] for u in uuids}
+    rng = rng.for_values()  # inside the pre-live gap: the value at to_ts
     if rng.empty or not uuids:
         return out
     base, bp, rest, rp = _history_events(conn, scope, include_bots, kind,
@@ -94,7 +95,7 @@ def series(request: Request, conn=Depends(db.get_db), kind: str = "stat",
     _check(kind, category, key)
     ulist = _parse_uuids(uuids)
     sc = resolve_scope(conn, scope)
-    r = timeq.parse_range(conn, sc, range, from_, to, int(time.time()))
+    r = timeq.parse_range(conn, sc, range, from_, to, int(time.time())).for_values()
     return {"effective_from": r.effective_from, "to": r.to_ts,
             "series": build_series(conn, sc, include_bots, kind, category, key,
                                    ulist, r)}
@@ -138,7 +139,8 @@ def totals(request: Request, conn=Depends(db.get_db), kind: str = "stat",
     resolved = {n: resolve_scope(conn, n) for n in names}
     union = Scope("union", tuple(sorted({s for sc in resolved.values()
                                          for s in sc.servers})))
-    r = timeq.parse_range(conn, union, range, from_, to, int(time.time()))
+    # inside the pre-live gap: one point, the total known at to_ts
+    r = timeq.parse_range(conn, union, range, from_, to, int(time.time())).for_values()
     col = "total" if include_bots else "total_no_bots"
     out = {n: [] for n in names}
     if not r.empty:

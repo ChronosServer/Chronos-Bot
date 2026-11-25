@@ -190,3 +190,48 @@ def test_spotlight_mover_from_live_start(tmp_path, world, run_snapshot):
     # U1: 2000 -> 4000 from L (+2000, +100%): a mover, measured from L, not T2.
     # U2: +2000 is < 50% of 10000: not a mover (from T2 it would be +11000).
     assert [(u, json.loads(d)) for u, d in rows] == [(U1, {"from": 2000, "delta": 2000})]
+
+
+# ---------------------------------------------------------------- window inside the gap
+
+def _get(world, monkeypatch, url):
+    monkeypatch.setenv("CHRONOS_STATS_DB", world.db_path)
+    cache.clear()
+    with TestClient(create_app()) as c:
+        j = c.get(url).json()
+    cache.clear()
+    return j
+
+
+def test_range_inside_gap_is_empty_but_in_gap(imported):
+    r = rng(imported, "smp", from_=T2 + DAY, to=L - DAY)
+    assert r.empty and r.in_gap and r.effective_from == L
+    v = r.for_values()
+    assert v.effective_from == v.to_ts == L - DAY and not v.empty
+    before = rng(imported, "smp", from_=0, to=T1 - DAY)  # before tracking: no data at all
+    assert before.empty and not before.in_gap and before.for_values() == before
+    live = rng(imported, "smp", from_=L + 1, to=L2)
+    assert not live.in_gap and live.for_values() == live
+
+
+def test_series_inside_gap_returns_value_at_to(imported, world, monkeypatch):
+    j = _get(world, monkeypatch, "/api/stats/series?kind=stat&category=minecraft:mined"
+             f"&key=minecraft:stone&scope=smp&uuids={U1},{U2}&from={T2 + DAY}&to={L - DAY}")
+    # the value known at `to` is the T2 backup's
+    assert j["effective_from"] == L - DAY
+    assert j["series"] == {U1: [[L - DAY, 50_000]], U2: [[L - DAY, 40_000]]}
+
+
+def test_totals_inside_gap_returns_total_at_to(imported, world, monkeypatch):
+    j = _get(world, monkeypatch, "/api/stats/totals?kind=stat&category=minecraft:mined"
+             f"&key=minecraft:stone&scopes=smp&include_bots=true&from={T2 + DAY}&to={L - DAY}")
+    assert j["series"] == {"smp": [[L - DAY, 90_000]]}
+
+
+def test_leaderboard_inside_gap_delta_empty_total_known(imported, world, monkeypatch):
+    base = ("/api/stats/leaderboard?kind=stat&category=minecraft:mined"
+            "&key=minecraft:stone&scope=smp&include_bots=true")
+    j = _get(world, monkeypatch, base + f"&from={T2 + DAY}&to={L - DAY}")
+    assert j["mode"] == "delta" and j["rows"] == []  # no observation in the window
+    j = _get(world, monkeypatch, base + f"&to={L - DAY}")
+    assert {r["uuid"]: r["value"] for r in j["rows"]} == {U1: 50_000, U2: 40_000}
