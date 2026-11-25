@@ -93,7 +93,11 @@ production (never hardcode the domain in page code).
 - Forwarding must pass the path + query string, method GET, and the `If-None-Match`
   request header; and return the status (including `304`), body and the `Content-Type`,
   `ETag` and `Cache-Control` response headers unchanged. Send `Host:
-  www.chronosmc.com` upstream. Make the upstream origin one setting (default
+  www.chronosmc.com` upstream. The site is behind Cloudflare: send a normal browser
+  `User-Agent` upstream (Cloudflare may challenge Python's default one with a 403 HTML
+  page), and treat an HTML body where JSON is expected as a Cloudflare block, not an API
+  error. Cloudflare may turn the API's ETags into weak ones (`W/"..."`); pass them through
+  as they are (the API accepts both). Make the upstream origin one setting (default
   `https://www.chronosmc.com`, overridable by an env var such as `STATS_API_ORIGIN`), so
   it can also point at a locally run API (`http://localhost:8765`, see below).
 - Keep the dev server out of the deployed files: check `deploy.sh` and exclude it if
