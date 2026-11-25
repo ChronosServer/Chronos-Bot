@@ -40,6 +40,7 @@ from mojang import MojangClient, default_fetch  # noqa: E402
 from api.merges import load_merges  # noqa: E402
 from merge_players import apply_pending_merges  # noqa: E402
 from history_fill import ensure_filled  # noqa: E402
+from ignored_keys import apply_ignored  # noqa: E402
 SCHEMA_PATH = REPO_ROOT / "sql" / "schema.sql"
 CONFIG_PATH = REPO_ROOT / "config.json"
 DICTIONARY_DIR = REPO_ROOT / "dictionaries"
@@ -359,7 +360,7 @@ def iter_stat_files(stats_dir):
 
 
 def run_stats_snapshot(conn, server_key, world_path, usercache, now, names=None,
-                       merges=None):
+                       merges=None, ignored=()):
     """names: {uuid: display name} (run_once: newest across every server's
     usercache); defaults to this server's usercache. merges: api.merges.Merges
     (player_merges.json)."""
@@ -384,6 +385,8 @@ def run_stats_snapshot(conn, server_key, world_path, usercache, now, names=None,
             if not isinstance(stat_map, dict):
                 continue
             for stat_key, value in stat_map.items():
+                if stat_key in ignored:  # settings snapshot.ignored_stat_keys
+                    continue
                 if isinstance(value, int) and not isinstance(value, bool):
                     yield (category, stat_key), value
 
@@ -721,6 +724,10 @@ def run_once(config=None, now_fn=time.time, dictionary=None, mojang_fetch=None, 
     # One run-wide timestamp: every row written this run shares `at`, so
     # derive can find the whole run with `at = run_at`.
     run_at = int(now_fn())
+    # Stat keys that aren't real (air): stored rows deleted once per list.
+    gone = apply_ignored(conn, settings.snapshot.ignored_stat_keys)
+    if gone:
+        print("[ignored keys] deleted: " + ", ".join(f"{t} {n}" for t, n in gone.items() if n))
     # Once per DB: the 0 rows the first live run implies (bot/history_fill.py;
     # imports refill their server). Before merges, which sum timelines.
     filled = ensure_filled(conn)
@@ -778,7 +785,8 @@ def run_once(config=None, now_fn=time.time, dictionary=None, mojang_fetch=None, 
             t0 = time.time()
             try:
                 result = run_stats_snapshot(conn, key, world_path, usercache, now,
-                                            names=display, merges=merges)
+                                            names=display, merges=merges,
+                                            ignored=set(settings.snapshot.ignored_stat_keys))
                 record_run(conn, key, "stats", True, None,
                            result["entries_read"], result["rows_written"],
                            int((time.time() - t0) * 1000), now=now)

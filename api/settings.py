@@ -80,7 +80,11 @@ DEFAULT_CONFIG = {
     # mirror_prefix: objective names matching it are every-scoreboard copies of
     # vanilla stats even when no bundled dictionary lists them ("" = off)
     "snapshot": {"dictionary_cache_hours": 24, "dictionary_timeout_s": 15,
-                 "mirror_prefix": "^(m|u|c|b|p|d|k|kb|z)-"},
+                 "mirror_prefix": "^(m|u|c|b|p|d|k|kb|z)-",
+                 # stat keys that aren't real items/blocks (in every category):
+                 # never stored; already stored rows are deleted once
+                 "ignored_stat_keys": ["minecraft:air", "minecraft:cave_air",
+                                       "minecraft:void_air"]},
     "api": {
         "range_presets": {"1d": 86400, "1w": 604800, "1m": 2592000, "6m": 15724800,
                           "1y": 31536000},
@@ -230,6 +234,7 @@ class Snapshot:
     dictionary_cache_hours: float
     dictionary_timeout_s: float
     mirror_prefix: str
+    ignored_stat_keys: Tuple[str, ...]
 
 
 @dataclass(frozen=True)
@@ -583,7 +588,9 @@ def load_settings(stats_tracking_cfg: Optional[dict]) -> Settings:
                                         f"{p}.snapshot.dictionary_cache_hours", ge=0),
             dictionary_timeout_s=_num(sn["dictionary_timeout_s"],
                                       f"{p}.snapshot.dictionary_timeout_s", gt=0),
-            mirror_prefix=_regex(sn["mirror_prefix"], f"{p}.snapshot.mirror_prefix")),
+            mirror_prefix=_regex(sn["mirror_prefix"], f"{p}.snapshot.mirror_prefix"),
+            ignored_stat_keys=tuple(_str_list(sn["ignored_stat_keys"],
+                                              f"{p}.snapshot.ignored_stat_keys"))),
         api=_api(raw["api"], f"{p}.api"),
     )
 

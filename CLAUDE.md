@@ -114,6 +114,10 @@ Plus a **name pattern** (`stats_tracking.snapshot.mirror_prefix`, default
 the dictionaries miss (older datapack names like `z-play_one_m+748` = pre-1.17
 play_one_minute, `u-moss`) are mirrors too. Real objectives (`dig-all`, `Levels`, `Deaths`)
 don't match (one prefix letter + dash). The import has the same rule (`MIRROR_PREFIX`).
+Junk stat keys (`stats_tracking.snapshot.ignored_stat_keys`, default the three air
+blocks: `crafted/air` is always 0, `used/air` small junk counts) are never stored by the
+snapshot or the import; `bot/ignored_keys.py` deletes rows stored earlier once per list
+(meta `ignored_stat_keys`).
 
 NBT quirk: Paper omits `Objectives`/`PlayerScores`/`Teams` tags entirely when they'd
 be empty (confirmed on the `building` world — has Teams, no Objectives at all).

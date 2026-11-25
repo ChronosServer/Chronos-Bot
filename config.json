@@ -255,7 +255,8 @@
         "snapshot": {
             "dictionary_cache_hours": 24,
             "dictionary_timeout_s": 15,
-            "mirror_prefix": "^(m|u|c|b|p|d|k|kb|z)-"
+            "mirror_prefix": "^(m|u|c|b|p|d|k|kb|z)-",
+            "ignored_stat_keys": ["minecraft:air", "minecraft:cave_air", "minecraft:void_air"]
         },
         "api": {
             "range_presets": {

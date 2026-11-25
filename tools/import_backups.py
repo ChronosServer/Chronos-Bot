@@ -349,8 +349,9 @@ def _player_rows(conn, uuids, at, names):
 
 def import_backups(conn, server_key, backups, renames, dictionary, dry_run, *,
                    skip_unknown=False, keep_prefixed=False,
-                   lock_timeout_s=BUSY_TIMEOUT_S):
-    """Imports backups (any order; processed oldest first) as history points
+                   lock_timeout_s=BUSY_TIMEOUT_S, ignored_keys=()):
+    """ignored_keys: settings snapshot.ignored_stat_keys (never imported).
+    Imports backups (any order; processed oldest first) as history points
     of server_key. Returns one ImportResult per backup, skipped ones included.
     Non-dry: takes the write lock (unless the caller already holds it), writes
     everything in one transaction and commits; DatabaseBusy if it can't."""
@@ -364,7 +365,8 @@ def import_backups(conn, server_key, backups, renames, dictionary, dry_run, *,
         acquire_write_lock(conn, lock_timeout_s)
     try:
         results = _import(conn, server_key, backups, renames, dictionary, dry_run,
-                          skip_unknown, keep_prefixed, track_stats, track_scoreboards)
+                          skip_unknown, keep_prefixed, track_stats, track_scoreboards,
+                          set(ignored_keys))
     except BaseException:
         if conn.in_transaction:
             conn.rollback()
@@ -378,7 +380,7 @@ def import_backups(conn, server_key, backups, renames, dictionary, dry_run, *,
 
 
 def _import(conn, server_key, backups, renames, dictionary, dry_run, skip_unknown,
-            keep_prefixed, track_stats, track_scoreboards):
+            keep_prefixed, track_stats, track_scoreboards, ignored=frozenset()):
     steps = plan(conn, server_key, backups)
     # Known = seen live on any server, or a rename target (a backup newer than
     # the rename holds the target key itself, even if no live player has it).
@@ -415,7 +417,8 @@ def _import(conn, server_key, backups, renames, dictionary, dry_run, skip_unknow
         if track_stats:
             stat_rows, uuids = _stat_rows(conn, server_key, b, renames, known_keys,
                                           targets, skip_unknown, r,
-                                          carried_stats if dry_run else None, merges)
+                                          carried_stats if dry_run else None, merges,
+                                          ignored)
             r.players = len(uuids)
         sb_rows = []
         if track_scoreboards:
@@ -515,7 +518,7 @@ def imported_backups(conn, server_key):
 
 
 def _stat_rows(conn, server_key, b, renames, known_keys, targets, skip_unknown, r,
-               carried, merges=None):
+               carried, merges=None, ignored=frozenset()):
     prev = {(c, k, u): v for c, k, u, v, _ in
             conn.execute(PREV_STATS_SQL, (server_key, b.at))}
     if carried is not None:
@@ -529,6 +532,8 @@ def _stat_rows(conn, server_key, b, renames, known_keys, targets, skip_unknown, 
         acc = per.setdefault(t, {})
         for k, value in _map_stats(content, renames, known_keys, targets,
                                    skip_unknown, r).items():
+            if k[1] in ignored:
+                continue
             acc[k] = acc.get(k, 0) + value
     rows, uuids = [], list(per)
     for u, acc in per.items():
@@ -860,7 +865,8 @@ def main(argv=None, *, dictionary=None):
         try:
             results = import_backups(conn, args.server, backups, renames, mirrors,
                                      args.dry_run, skip_unknown=args.skip_unknown,
-                                     keep_prefixed=args.keep_prefixed)
+                                     keep_prefixed=args.keep_prefixed,
+                                     ignored_keys=settings.snapshot.ignored_stat_keys)
         except DatabaseBusy as e:
             print(f"error: {e}")
             return 1

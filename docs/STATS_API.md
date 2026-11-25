@@ -264,7 +264,8 @@ The player profile ("dossier"). Params: `scope`, `include_bots`.
   stat (or a junk key such as `crafted/minecraft:air`) or a reset score has no rank.
   `of` counts only players with a non-zero value. The same 0 rule applies to `/keys` and
   `/search` (a stat nobody has a non-zero value for is not offered). `top1:*` badges
-  never counted 0 values.
+  never counted 0 values. Air (`minecraft:air`, `cave_air`, `void_air`) is not tracked
+  in any category.
 - If `is_bot_on_smp` is true, the player's own numbers still show. Label them as a bot
   account.
 
