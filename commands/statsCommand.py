@@ -68,9 +68,15 @@ TARGETS_BY_CATEGORY = {
 
 
 def load_usercache():
+    # One entry per NAME: a renamed player has one per name they used. The
+    # newest expiresOn ("2026-12-01 00:00:00 +0000", sorts as text) wins,
+    # never just the last entry in the file.
     with open(USERCACHE_PATH) as f:
         cache = json.load(f)
-    return {entry['uuid']: entry['name'] for entry in cache}
+    out = {}
+    for entry in sorted(cache, key=lambda e: e.get('expiresOn') or ''):
+        out[entry['uuid']] = entry['name']
+    return out
 
 
 def get_team_players(scoreboards):

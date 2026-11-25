@@ -23,6 +23,7 @@ import sys
 import time
 import urllib.request
 import uuid as uuidlib
+from datetime import datetime
 from pathlib import Path
 
 import nbt.nbt as nbt
@@ -167,24 +168,50 @@ def nbt_val(tag, key, default=None):
 # Usercache / dictionary / real-player resolution
 # --------------------------------------------------------------------------
 
-def load_usercache(website_path_or_server_root):
-    """usercache.json sits at the server root (sibling of world dirs).
-    Returns {uuid: name}. Missing file -> empty dict, not an error."""
-    path = Path(website_path_or_server_root) / "usercache.json"
+def _expires(text):
+    """usercache expiresOn ("2026-12-25 11:52:56 +0000") -> unix s; 0 if unreadable."""
+    try:
+        return int(datetime.strptime(text, "%Y-%m-%d %H:%M:%S %z").timestamp())
+    except (TypeError, ValueError):
+        return 0
+
+
+def load_usercache_entries(server_root):
+    """Every (uuid, name, expires) entry of <server_root>/usercache.json.
+    Minecraft keeps one entry per NAME, so a renamed player has one entry
+    per name they logged in with; expiresOn (last login + 1 month) says
+    which is newest. Missing/unreadable file -> []."""
+    path = Path(server_root) / "usercache.json"
     if not path.is_file():
-        return {}
+        return []
     try:
         with open(path, "r", encoding="utf-8") as f:
             entries = json.load(f)
     except (json.JSONDecodeError, OSError):
-        return {}
-    out = {}
-    for e in entries:
-        u = e.get("uuid")
-        n = e.get("name")
+        return []
+    out = []
+    for e in entries if isinstance(entries, list) else []:
+        u, n = e.get("uuid"), e.get("name")
         if u and n:
-            out[u] = n
+            out.append((u, n, _expires(e.get("expiresOn"))))
     return out
+
+
+def newest_names(entries):
+    """{uuid: (name, expires)} keeping each uuid's newest entry (ties: the
+    later one in the list)."""
+    out = {}
+    for u, n, exp in entries:
+        if u not in out or exp >= out[u][1]:
+            out[u] = (n, exp)
+    return out
+
+
+def load_usercache(server_root):
+    """usercache.json sits at the server root (sibling of world dirs).
+    Returns {uuid: newest name} (a renamed player's old-name entry never
+    wins). Missing file -> empty dict, not an error."""
+    return {u: n for u, (n, _) in newest_names(load_usercache_entries(server_root)).items()}
 
 
 def fetch_dictionary(conn, version, settings=None):
@@ -327,7 +354,10 @@ def iter_stat_files(stats_dir):
         yield player_uuid, data
 
 
-def run_stats_snapshot(conn, server_key, world_path, usercache, now):
+def run_stats_snapshot(conn, server_key, world_path, usercache, now, names=None):
+    """names: {uuid: display name} (run_once: newest across every server's
+    usercache); defaults to this server's usercache."""
+    names = usercache if names is None else names
     stats_dir = stat_files_dir(world_path)
     if not stats_dir.is_dir():
         return {"entries_read": 0, "rows_written": 0}
@@ -345,7 +375,7 @@ def run_stats_snapshot(conn, server_key, world_path, usercache, now):
 
     for player_uuid, data in iter_stat_files(stats_dir):
         entries_read += 1
-        name = usercache.get(player_uuid)
+        name = names.get(player_uuid) or usercache.get(player_uuid)
         upsert_player(conn, player_uuid, name, now, name_resolved=bool(name))
 
         stats_block = data.get("stats", {})
@@ -560,7 +590,8 @@ def run_scoreboard_snapshot(conn, server_key, world_path, usercache, dictionary,
 # Bot classification via team membership (filters_bots servers: SMP only by default)
 # --------------------------------------------------------------------------
 
-def run_team_check(conn, server_key, world_path, now, usercache, mojang=None):
+def run_team_check(conn, server_key, world_path, now, usercache, mojang=None,
+                   all_names=None):
     """Runs for every server with filters_bots (default: SMP only). In any
     team = real player, in no team = bot. This is classification,
     independent of whether scoreboard history is tracked -- always runs
@@ -568,7 +599,10 @@ def run_team_check(conn, server_key, world_path, now, usercache, mojang=None):
     (CMPs always include everyone, by explicit decision).
 
     Only uuids holding a stat file on that server are classified (proof of a
-    real join). Team names with no known uuid are resolved via Mojang (cached)."""
+    real join). Team names with no known uuid are resolved via Mojang (cached).
+    all_names: {uuid: every name this server's usercache lists for it}; a
+    uuid is in a team if ANY of its names is (team lists hold names, and a
+    renamed player may still be listed under either)."""
     data = load_scoreboard_dat(world_path)
     teamed = set()
     for team in nbt_list(data, "Teams"):
@@ -581,16 +615,21 @@ def run_team_check(conn, server_key, world_path, now, usercache, mojang=None):
     for u, n in conn.execute("SELECT uuid, name FROM players WHERE name IS NOT NULL"):
         name_by_uuid.setdefault(u, n)
 
+    names_of = {u: {n.lower()} for u, n in name_by_uuid.items()}
+    for u, ns in (all_names or {}).items():
+        names_of.setdefault(u, set()).update(n.lower() for n in ns)
+
     if mojang is not None:
-        known_names = {n.lower() for n in name_by_uuid.values()}
+        known_names = set().union(*names_of.values()) if names_of else set()
         unknown = sorted(teamed - known_names)
         if unknown:
             for low, (resolved_uuid, display) in mojang.names_to_uuids(unknown).items():
                 name_by_uuid[resolved_uuid] = display
+                names_of.setdefault(resolved_uuid, set()).add(display.lower())
                 upsert_player(conn, resolved_uuid, display, now, True)
 
     for player_uuid in known_stat_file_uuids(world_path):
-        is_bot = 0 if (name_by_uuid.get(player_uuid) or "").lower() in teamed else 1
+        is_bot = 0 if names_of.get(player_uuid, set()) & teamed else 1
         conn.execute(
             """
             INSERT INTO player_flags (server_key, uuid, is_bot, updated_at)
@@ -644,6 +683,20 @@ def run_once(config=None, now_fn=time.time, dictionary=None, mojang_fetch=None):
     # (the same set the backup import uses). None: no dictionary at all.
     mirrors, mirror_error = mirror_names(conn, version, settings, dictionary)
 
+    # usercache.json is per-server, sitting at the server's root directory
+    # (sibling of the world folder) -- NOT shared across servers, and NOT
+    # inside the world dir itself. Participant resolution stays per server;
+    # only the DISPLAY name (players.name) is the newest one across every
+    # server's usercache, so a server the player hasn't joined since a
+    # rename can't put the old name back.
+    entries = {}
+    for key in settings.servers:
+        root = cfg.get("server", {}).get(f"{key}_path")
+        if key not in excluded and root:
+            entries[key] = load_usercache_entries(root)
+    display = {u: n for u, (n, _) in newest_names(
+        [e for es in entries.values() for e in es]).items()}
+
     for key, s in settings.servers.items():
         if key in excluded:
             print(f"[{key}] excluded (mirror/tour-style duplicate) -- skipping")
@@ -654,18 +707,18 @@ def run_once(config=None, now_fn=time.time, dictionary=None, mojang_fetch=None):
             print(f"[{key}] not provisioned, skipping")
             continue
 
-        # usercache.json is per-server, sitting at the server's root
-        # directory (sibling of the world folder) -- NOT shared across
-        # servers, and NOT inside the world dir itself.
-        server_root = cfg.get("server", {}).get(f"{key}_path")
-        usercache = load_usercache(server_root) if server_root else {}
+        usercache = {u: n for u, (n, _) in newest_names(entries.get(key, [])).items()}
+        all_names = {}
+        for u, n, _ in entries.get(key, []):
+            all_names.setdefault(u, set()).add(n)
 
         now = run_at
 
         if s.track_stats:
             t0 = time.time()
             try:
-                result = run_stats_snapshot(conn, key, world_path, usercache, now)
+                result = run_stats_snapshot(conn, key, world_path, usercache, now,
+                                            names=display)
                 record_run(conn, key, "stats", True, None,
                            result["entries_read"], result["rows_written"],
                            int((time.time() - t0) * 1000), now=now)
@@ -694,7 +747,8 @@ def run_once(config=None, now_fn=time.time, dictionary=None, mojang_fetch=None):
         if s.filters_bots:
             t0 = time.time()
             try:
-                run_team_check(conn, key, world_path, now, usercache, mojang)
+                run_team_check(conn, key, world_path, now, usercache, mojang,
+                               all_names=all_names)
                 record_run(conn, key, "team_check", True, None, None, None,
                            int((time.time() - t0) * 1000), now=now)
                 print(f"[{key}] team_check: ok")

@@ -240,6 +240,14 @@ tables) → SQLite → `api/` (FastAPI, read-only) → nginx `/api/stats/*` → 
   `provisioned=1` servers (the `all` pseudo row in `servers` is provisioned=0 and exists
   only as an FK target for `snapshot_runs.kind='derive'`). Multi-server scopes sum per
   player. A bot on SMP still counts on CMPs.
+- **usercache.json has one entry per NAME**, so a renamed player has one per name used;
+  `expiresOn` (last login + 1 month) says which is newest. Always take the newest entry
+  per uuid (`snapshot.load_usercache` / `newest_names`; `statsCommand.load_usercache`),
+  never "last in file" (that put `NotQuiteRat_` back as the live name). `players.name`
+  (display) is the newest across **all** servers' usercaches; participant resolution
+  stays per server (newest name only). The SMP team check counts a uuid as teamed if
+  **any** of its usercache names is in a team (team lists hold names). The backup import
+  learns every entry's name (old ones too) for merging.
 - **Server order = config order.** `sync_servers_table` (`bot/snapshot.py`, every run)
   writes `servers.position` = index in `stats_tracking.servers`; servers no longer in
   config get NULL (last, by key). Everything that lists servers sorts by

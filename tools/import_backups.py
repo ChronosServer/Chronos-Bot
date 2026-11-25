@@ -72,9 +72,11 @@ class Backup:
     at: int
     stats_dir: Path
     scoreboard_path: Optional[Path]
-    usercache: dict
+    usercache: dict  # uuid -> newest name in this backup's usercache
     layout: str = "old"
     flat_files: int = 0  # pre-1.13 stat files, skipped one by one
+    # every (uuid, name, expires) entry: a renamed player has one per name
+    usercache_entries: list = field(default_factory=list)
 
 
 @dataclass
@@ -160,14 +162,16 @@ def read_backup(world_dir, date_override=None):
 
     # usercache.json sits next to the world folder (server root); some
     # backups keep it inside the world folder instead.
-    usercache = snapshot.load_usercache(world.parent) or snapshot.load_usercache(world)
+    entries = (snapshot.load_usercache_entries(world.parent)
+               or snapshot.load_usercache_entries(world))
+    usercache = {u: n for u, (n, _) in snapshot.newest_names(entries).items()}
     return Backup(
         path=world,
         level_name=snapshot.nbt_val(data, "LevelName"),
         version_name=snapshot.nbt_val(version, "Name"),
         data_version=snapshot.nbt_val(data, "DataVersion"),
         at=at, stats_dir=stats_dir, scoreboard_path=scoreboard_path,
-        usercache=usercache, layout=layout, flat_files=flat)
+        usercache=usercache, layout=layout, flat_files=flat, usercache_entries=entries)
 
 
 def is_modern(content):
@@ -298,10 +302,15 @@ def _map_stats(content, renames, known_keys, targets, skip_unknown, result):
 
 def _resolve_names(conn, backups):
     """name -> uuid for scoreboard participants: players' names, overridden
-    by the backups' own usercaches (newest backup last, so it wins)."""
+    by every name in the backups' usercaches, old-name entries included (a
+    renamed player has one entry per name). Oldest backup first and, within
+    one, oldest entry first, so a name later used by someone else maps to
+    its newest holder."""
     name_to_uuid = {n: u for u, n in conn.execute(
         "SELECT uuid, name FROM players WHERE name IS NOT NULL ORDER BY last_observed")}
     for b in backups:
+        for u, n, _ in sorted(b.usercache_entries, key=lambda e: e[2]):
+            name_to_uuid[n] = u
         name_to_uuid.update({n: u for u, n in b.usercache.items()})
     return name_to_uuid
 
