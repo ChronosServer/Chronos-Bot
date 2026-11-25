@@ -49,7 +49,9 @@ def test_parse_chains_and_errors():
 
 def test_repo_merge_file_is_valid():
     m = mg.load_merges(Path(__file__).resolve().parent.parent / "player_merges.json")
-    assert m.target(A) == B and m.by_name == {"lordhamster42": B}
+    assert m.target(A) == B and m.by_name["lordhamster42"] == B
+    assert m.target("c273fdfb-2181-47be-b174-6d8f20489b1b") == "76e49874-1786-4d4c-9527-4dfd741c989d"
+    assert m.rename_target("NotQuiteRat_") == "bb8d717d-1e2f-4204-8ea5-88c90a60bca4"
 
 
 def test_sum_timelines():

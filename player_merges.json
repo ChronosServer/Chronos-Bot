@@ -6,14 +6,83 @@
     "Use uuids (names change). 'names' = the from-account's scoreboard names (scoreboards key by name).",
     "Adding an entry: the next snapshot run backs up the DB and folds the existing data in, once.",
     "Removing an entry does NOT split the data again: restore the pre-merge-*.db backup for that.",
-    "Renames of ONE account need nothing here: they are handled by uuid automatically."
+    "",
+    "'renames': former names of ONE account (same uuid) that no usercache knows, so their scoreboard",
+    "scores (scoreboards key by name) count for that uuid. Optional 'from'/'until' (YYYY-MM-DD, UTC,",
+    "inclusive): when the name was this uuid's (for a name later used by someone else).",
+    "Adding a name: the next snapshot run folds its existing scoreboard history in, once.",
+    "Former names show on the player's page as 'aka' and are found by search."
   ],
   "merges": [
     {
       "from": "8d5af53c-11a5-4ea5-aa38-1cea7b746ad8",
       "to": "b1ac344e-4a2d-4202-ac2d-58d44e167df8",
-      "names": ["LordHamster42"],
+      "names": [
+        "LordHamster42"
+      ],
       "note": "LordHamster42 -> hampter42 (owner, 2026-11-25)"
+    },
+    {
+      "from": "c273fdfb-2181-47be-b174-6d8f20489b1b",
+      "to": "76e49874-1786-4d4c-9527-4dfd741c989d",
+      "names": [
+        "NotAless50_"
+      ],
+      "note": "NotAless50_ -> IBeatLIMBO, new account (owner, 2026-11-25)"
+    },
+    {
+      "from": "13b1d964-7abf-456e-a928-4772ece0f5bd",
+      "to": "79c7e2d6-2486-43de-a959-0c68d0963496",
+      "names": [
+        "wRongo_"
+      ],
+      "note": "wRongo_ -> _wRongo, new account (owner, 2026-11-25)"
+    },
+    {
+      "from": "6920e60b-012f-4b66-a32c-1c88aa71e879",
+      "to": "a53a264c-a7e2-4b01-85e2-5afa16043bfb",
+      "names": [
+        "qstrql"
+      ],
+      "note": "qstrql -> qstrqlw: listed as a rename, but two uuids in the data (2026-11-25)"
+    }
+  ],
+  "renames": [
+    {
+      "uuid": "bb8d717d-1e2f-4204-8ea5-88c90a60bca4",
+      "names": [
+        "NotQuiteRat_"
+      ],
+      "note": "NotQuiteRat_ -> NotQuiteRat (owner, 2026-11-25)"
+    },
+    {
+      "uuid": "5f2a15be-cdcc-49a6-a74a-1b31e0562786",
+      "names": [
+        "Q1306"
+      ],
+      "note": "Q1306 -> DiggusMaximus123 (owner, 2026-11-25)"
+    },
+    {
+      "uuid": "5e6b97fb-3ee3-47f6-9a55-a8058a91eed6",
+      "names": [
+        "EulerGauss"
+      ],
+      "note": "EulerGauss -> UsernameAccount (owner, 2026-11-25)"
+    },
+    {
+      "uuid": "38e6bba5-6c61-45fb-bdfb-d6f0eb3e22a2",
+      "names": [
+        "Obi0081_",
+        "Obi81"
+      ],
+      "note": "Obi0081_ -> Obi81 -> ObiWan81_ (owner, 2026-11-25)"
+    },
+    {
+      "uuid": "69dcb78d-ee6c-4400-99f8-ffda005cdaca",
+      "names": [
+        "lukepourquoi"
+      ],
+      "note": "lukepourquoi -> justlukie (owner, 2026-11-25)"
     }
   ]
 }

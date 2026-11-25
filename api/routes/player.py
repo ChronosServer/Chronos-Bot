@@ -25,10 +25,31 @@ def resolve_player(conn, ident: str):
         return m.target(ident)
     if ident.lower() in m.by_name:
         return m.by_name[ident.lower()]
+    renamed = m.rename_target(ident)  # a former name (player_merges.json renames)
+    if renamed:
+        return renamed
     row = conn.execute(
         "SELECT uuid FROM players WHERE name=? COLLATE NOCASE "
         "ORDER BY last_observed DESC LIMIT 1", (ident,)).fetchone()
     return m.target(row[0]) if row else None
+
+
+def former_names(conn, uuid, current=None) -> list:
+    """`aka`: the player's former names (player_merges.json renames and
+    merged accounts' names, plus the merged accounts' own player names),
+    case-insensitively deduplicated, without the current name, sorted."""
+    m = api_merges()
+    names = list(m.former_names(uuid))
+    froms = m.merged_from(uuid)
+    if froms:
+        names += [n for (n,) in conn.execute(
+            f"SELECT name FROM players WHERE uuid IN ({','.join('?' * len(froms))}) "
+            "AND name IS NOT NULL", froms)]
+    out = {}
+    for n in names:
+        if not current or n.lower() != current.lower():
+            out.setdefault(n.lower(), n)
+    return sorted(out.values(), key=lambda n: (n.lower(), n))
 
 
 def _not_found():
@@ -177,7 +198,8 @@ def player(ident: str, request: Request, conn=Depends(db.get_db),
         f"SELECT {', '.join(fcols)} FROM firsts WHERE uuid=? AND server_key IN ({marks}) "
         f"AND {achievement_not_mirror_sql('firsts')}{tracked_sql('firsts', 'category')} "
         f"ORDER BY at, id", sp)]
-    return {"uuid": uuid, "name": name, "name_resolved": resolved,
+    return {"uuid": uuid, "name": name, "aka": former_names(conn, uuid, name),
+            "name_resolved": resolved,
             "last_activity": last, **bot_flags(conn, uuid),
             "servers": servers, "stats": stats, "scoreboards": boards,
             "badges": badges, "milestones": milestones, "firsts": firsts,
