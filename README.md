@@ -71,8 +71,8 @@ Run the tests with (Python 3.12 or newer):
 
 When deploying the API on a server that already runs the bot, install only the three
 API packages (`fastapi`, `uvicorn[standard]`, `orjson`) and run `bot/snapshot.py` once
-before starting the API. Never run `pip install -r requirements.txt` on the server. See
-`CLAUDE.md`.
+before starting the API. `pip install -r requirements.txt` also works, but its exact pins
+move the bot's installed packages: run it with `--dry-run` first. See `CLAUDE.md`.
 
 ## Help
 

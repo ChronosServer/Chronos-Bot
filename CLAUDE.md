@@ -180,7 +180,7 @@ server, currently running the OLD `snapshot.py` until the branch is deployed). L
 ~3.3k players, ~263k stat_current rows, ~10k scoreboard rows, history since 2026-11-24.
 It also has early `ok=1` stats runs with `entries_read=0` (from before the path fixes)
 — tracking start must ignore them (see below). The API, derive step and import tool are
-verified by tests (349) only; they have not run on the live server yet.
+verified by tests (358) only; they have not run on the live server yet.
 
 ### What the backend is (branch `stats-api`, not merged/pushed yet)
 Pipeline: timer → `bot/snapshot.py` (history, change-only) → `bot/derive.py` (derived
@@ -202,7 +202,7 @@ tables) → SQLite → `api/` (FastAPI, read-only) → nginx `/api/stats/*` → 
 | `tools/` | `import_backups.py` (old world backups into history), `stat_renames.json` (old->new stat keys, editable), `README.md` (operator guide) |
 | `dictionaries/` | bundled every-scoreboard `dictionary-<version>.json`, 1.16-26.2 (34 files; 1.19.1/.3/.4 missing); mirror-objective lists for the snapshot and the import |
 | `deploy/` | systemd units (snapshot, timer, api) + nginx snippet |
-| `tests/` | pytest, 349 tests, synthetic worlds built through the real snapshot write path, no network; tests never read the repo's config.json (autouse fixture; `api_config` writes one) |
+| `tests/` | pytest, 358 tests, synthetic worlds built through the real snapshot write path, no network; tests never read the repo's config.json (autouse fixture; `api_config` writes one) |
 | `STATS_PLAN.md` | agreed scope, hard rules, build order/status |
 | `STATS_API.md` | the HTTP contract for the website (copy into the website repo) |
 | `docs/STATS_DATABASE.md` | operator guide: config, first setup, upgrade, health checks, backup, reset |
@@ -249,11 +249,14 @@ tables) → SQLite → `api/` (FastAPI, read-only) → nginx `/api/stats/*` → 
   awarded badges stay.
 - **Totals** are fully recomputed every run (set-based) and history was backfilled once
   (meta `totals_backfilled`); `total_no_bots` uses today's bot flags for all history.
-  So a reclassification must rebuild it: each run stores a sha1 of every bot-filtering
-  server's sorted counted-uuid set (meta `counted_fp:<server>`, one query per server);
-  when it differs from the stored one, `totals_backfilled` is cleared and that run's
-  totals stage rebuilds the whole totals history (no step at the flip run). First run /
-  missing fingerprint: just stored, no rebuild.
+  So a reclassification must rebuild it: each run stores every bot-filtering server's
+  sorted counted-uuid set (meta `counted_set:<server>`, JSON, one query per server).
+  `check_counted` rebuilds only that server's totals history (`rebuild_totals`, same
+  transaction, no step at the flip run), and only when a uuid that flipped has history
+  before `run_at` (a brand-new team member changes nothing earlier). First run: just
+  stored. Legacy `counted_fp:<server>` sha1 (no diff possible): a mismatch rebuilds that
+  server, then the key is replaced by the set. A missing `totals_backfilled` still
+  rebuilds every server.
 - **Performance gotcha:** without `ANALYZE` SQLite picks the `(server_key, at)` indexes
   and scans whole history. Hot queries are pinned with `INDEXED BY`; every pinned index
   must be listed in `api/db.py REQUIRED_INDEXES` (the API refuses to start if one is
@@ -299,9 +302,9 @@ Order, on the live server (Debian, root, repo `/opt/chronos/Chronos-Bot`, Python
    works too but a locally modified tracked `config.json` blocks it (stash/re-apply).
 2. Merge ONLY the `stats_tracking` block into the server's `config.json` and validate it
    with `load_settings` (see above).
-3. `pip install` **only** fastapi, uvicorn[standard], orjson (pins in requirements.txt;
-   **never `pip install -r requirements.txt` on the server** — it re-pins the bot and
-   re-adds nest_asyncio).
+3. Install fastapi, uvicorn[standard], orjson (pins in requirements.txt). `pip install -r
+   requirements.txt` is fine now that nest_asyncio is gone from it, but its `==` pins move
+   the bot's installed packages to exactly those versions: `--dry-run` it first.
 4. Stop the snapshot timer + in-flight service, run `bot/snapshot.py` once by hand
    (migrations to v3, totals backfill, seeding, about 20-60 s), start the timer.
 5. Install + start `chronos-stats-api.service`; add the nginx block inside the existing
@@ -318,30 +321,18 @@ bottom. No `sqlite3` CLI on the server — use `python3 -c "import sqlite3..."`.
 Local tests: `pip install -r requirements.txt -r requirements-dev.txt`
 then `python -m pytest tests -q` (Windows, Python 3.13 locally; server is 3.14).
 
-## Known follow-ups (not blocking deploy; from the final review, 2026-11-25)
-1. **Custom range entirely inside the pre-live gap returns empty.** With `from` and `to`
-   both between the last imported backup and the first live run, `from` snaps to the first
-   live run (after `to`), so `Range.empty` is true and `/leaderboard` delta + `/series`
-   return nothing although the value at `to` is known (from the last backup). Presets are
-   unaffected. Fix idea: for series/total mode, read the value at `to` instead of returning
-   empty; for delta mode an empty "no observation in this window" answer is defensible —
-   decide, and update the stale `Range.empty` docstring in `api/timeq.py` ("ends before
-   tracking began").
-2. **Bot-reclassification rebuilds totals more than needed.** `check_counted`
-   (`bot/derive.py`) clears `totals_backfilled` on ANY change to an SMP counted-uuid set,
-   then every server's totals history is rebuilt (~10-25 s). A brand-new team member with no
-   history before `run_at` produces identical rows. Refinement: rebuild only the changed
-   server, and only when a newly counted/uncounted uuid has rows before `run_at`.
-3. **Mirror objectives created before their dictionary is bundled leak into feeds.** If the
-   server moves to a Minecraft version whose dictionary isn't in `dictionaries/` yet, new
-   `m-`/`u-`/… objectives are stored as real objectives and can get scoreboard firsts /
-   milestones / totals. When the dictionary is added they flip to `is_vanilla_mirror=1` and
-   their scoreboard data is hidden, but `/milestones`, `/firsts`, `/player` milestones/firsts
-   (`api/routes/feeds.py`, `api/routes/player.py`) and `/totals?kind=scoreboard` have no
-   mirror filter. Fix: add the mirror `NOT EXISTS` clause (as in `api/scope.py
-   scoreboard_filter_sql`) to those queries, or delete derived rows for objectives that flip
-   to mirror. Prevention: add the new version's dictionary (every-scoreboard `create.py`)
-   before bumping `server.minecraft_version`.
+## Resolved follow-ups (from the final review, 2026-11-25; fixed same day)
+1. **Custom range entirely inside the pre-live gap** (`Range.in_gap` / `for_values()` in
+   `api/timeq.py`): `/series`, `/totals` and compare series return one point, the value at
+   `to`; leaderboard/compare deltas stay empty ("no observation in the window").
+2. **Bot reclassification** rebuilds only the changed server, only when a flipped uuid has
+   earlier history (see Totals above).
+3. **Mirror objectives flagged after the fact**: their scoreboard firsts/milestones
+   (`api.scope.achievement_not_mirror_sql`: feeds, player, badges, spotlight via
+   `derive_common.counted_achievements`) and `/totals?kind=scoreboard`
+   (`objective_not_mirror_sql`) are hidden at read time, never deleted. Prevention still
+   applies: bundle the new version's dictionary (every-scoreboard `create.py`) before
+   bumping `server.minecraft_version`.
 
 ## Website nav plan (for when Stats ships)
 Top-level nav gets one new "Stats ▾" dropdown (Overview / Explorer / Scoreboards /

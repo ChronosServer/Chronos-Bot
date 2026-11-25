@@ -193,8 +193,8 @@ Expected world layout, verified on the live server:
 
 ```bash
 cd /opt/chronos/Chronos-Bot
-# 1. Install the stats dependencies only. On a machine that also runs the bot, never
-#    `pip install -r requirements.txt`: it re-pins the bot's packages.
+# 1. Install the stats dependencies. `pip install -r requirements.txt` also works, but on
+#    a machine that also runs the bot its exact pins move the bot's packages: --dry-run first.
 /opt/python/bin/python3 -m pip install nbt==1.5.1 'fastapi==0.165.0' 'uvicorn[standard]==0.54.0' 'orjson==3.13.0'
 
 # 2. Create and fill the database with the first snapshot. Everything counts as "new"

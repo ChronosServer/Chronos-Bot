@@ -60,6 +60,12 @@ are backend config: build the range picker from `/meta.settings.range_presets`
   snapshot are never moved. Show the same "since <date>" note whenever
   `effective_from` > the requested start.
 - A window that ends before tracking began returns empty rows.
+- A custom window lying **entirely inside** that sparse span (`from` and `to` both
+  between two backups, or between the last backup and the first live snapshot) contains
+  no observation. Then `/series` and `/totals` return one point per player / scope,
+  `[to, value known at to]` (from the backup before `to`), with `effective_from` = `to`;
+  a `/leaderboard` delta (and a `/compare` delta) is empty / 0, since nothing was observed
+  in the window. Total mode (`to` only) is unaffected and returns the value at `to`.
 - Between backups (and between the last backup and the first live snapshot) history has
   only a few points, so graphs over imported periods are coarse step lines.
 

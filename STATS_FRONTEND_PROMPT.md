@@ -68,7 +68,9 @@ frontend only.
 - **`approximate: 1` items** (firsts and milestones) read as "by <date>", not as an
   exact date.
 - **Graphs:** step lines (values are cumulative and only change at snapshots). Smooth
-  and fast, with a sensible empty state while history is short.
+  and fast, with a sensible empty state while history is short. A series can be a
+  single point (a custom window entirely between two imported backups returns just the
+  value known at `to`, see STATS_API.md): render it as a value, not a broken chart.
 - **Speed:** a page should need one or two requests. Let the browser's HTTP cache work
   (the API sends ETags). No cache-busting params, and no polling faster than every 5
   minutes.
