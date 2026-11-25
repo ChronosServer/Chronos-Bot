@@ -10,7 +10,7 @@ from api.timeq import Range
 
 U1 = "11111111-1111-1111-1111-111111111111"
 U2 = "22222222-2222-2222-2222-222222222222"
-U3 = "33333333-3333-3333-3333-333333333333"
+U3 = "33333333-3333-4333-3333-333333333333"
 U4 = "44444444-4444-4444-4444-444444444444"
 S = "/api/stats/series?kind=stat&category=minecraft:mined&key=minecraft:stone"
 T = "/api/stats/totals?kind=stat&category=minecraft:mined&key=minecraft:stone"

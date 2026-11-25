@@ -1,10 +1,13 @@
 """Shared participant/scope rules. The single place these live; the API and
 bot/derive.py both import it.
 
-Bot rule: servers with filters_bots=1 (config servers.<key>.filters_bots;
-default smp only) only count rows whose uuid has a player_flags(is_bot=0) row;
-a missing flag means bot. Other servers are never filtered. Fragments use ?
-params only.
+Bot rules (include_bots=false):
+- Fake players, every server: a version-3 uuid (Carpet fake players with
+  made-up names get offline-mode uuids; real Mojang accounts are version 4).
+- SMP team rule: servers with filters_bots=1 (config servers.<key>.filters_bots;
+  default smp only) only count rows whose uuid has a player_flags(is_bot=0)
+  row; a missing flag means bot.
+Fragments use ? params only.
 
 Scopes: "all", every scope_groups name (config; default "cmps" -> group
 "cmp"), and every provisioned server key.
@@ -86,6 +89,17 @@ def scope_group_servers(conn, groups=None) -> dict:
     return {n: ks for n, ks in out.items() if ks}
 
 
+def is_fake_uuid(u) -> bool:
+    """A Carpet fake player: an offline-mode (version 3) uuid."""
+    return isinstance(u, str) and len(u) == 36 and u[14] == "3"
+
+
+def fake_sql(col: str) -> str:
+    """SQL form of is_fake_uuid for a uuid column (always false for
+    'unresolved:...' participant keys and other non-uuid strings)."""
+    return f"(length({col})=36 AND substr({col},15,1)='3')"
+
+
 def _alias(alias):
     if not _IDENT.match(alias) or alias in _RESERVED:
         raise ValueError(f"bad alias: {alias!r}")
@@ -97,6 +111,7 @@ def _scope_sql(scope, include_bots, a, uuid_col):
     sql = f"{a}.server_key IN ({marks})"
     params = list(scope.servers)
     if not include_bots:
+        sql += f" AND NOT {fake_sql(f'{a}.{uuid_col}')}"
         sql += (
             f" AND ({a}.server_key NOT IN (SELECT key FROM servers WHERE filters_bots=1)"
             f" OR EXISTS (SELECT 1 FROM player_flags _scope_pf WHERE _scope_pf.server_key={a}.server_key"
@@ -175,6 +190,8 @@ def objective_not_mirror_sql(alias: str) -> str:
 def is_counted(conn, server_key: str, uuid: str, include_bots: bool = False) -> bool:
     if include_bots:
         return True
+    if is_fake_uuid(uuid):
+        return False
     row = conn.execute("SELECT filters_bots FROM servers WHERE key=?", (server_key,)).fetchone()
     if not row or not row[0]:
         return True
@@ -184,9 +201,10 @@ def is_counted(conn, server_key: str, uuid: str, include_bots: bool = False) -> 
 
 
 def counted_uuids(conn, server_key: str):
-    """Batch form of is_counted(include_bots=False) for one server: None when
-    the server never filters bots (everyone counts), else the set of uuids
-    with a player_flags(is_bot=0) row."""
+    """Batch form of is_counted(include_bots=False) for one server, apart from
+    the fake-player rule (callers also check is_fake_uuid): None when the
+    server never filters bots, else the set of uuids with a
+    player_flags(is_bot=0) row."""
     row = conn.execute("SELECT filters_bots FROM servers WHERE key=?", (server_key,)).fetchone()
     if not row or not row[0]:
         return None

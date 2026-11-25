@@ -15,7 +15,7 @@ if str(BOT_DIR) not in sys.path:
     sys.path.insert(0, str(BOT_DIR))
 
 from derive_common import (  # noqa: E402,F401  (re-exported for callers/tests)
-    DEFAULTS, Scope, _servers, counted_uuids, history_points,
+    DEFAULTS, Scope, _servers, counted_uuids, is_fake_uuid, history_points,
     scoreboard_filter_sql, stat_filter_sql, tracking_start,
 )
 from derive_achievements import derive_badges, derive_firsts, derive_milestones  # noqa: E402
@@ -182,7 +182,7 @@ def _backfill_server(conn, key, run_at, emit_stat, emit_board):
     counted = counted_uuids(conn, key)  # current rule, once per server
 
     def is_counted(u):
-        return counted is None or u in counted
+        return not is_fake_uuid(u) and (counted is None or u in counted)
 
     def first_live(kind):
         return conn.execute(
