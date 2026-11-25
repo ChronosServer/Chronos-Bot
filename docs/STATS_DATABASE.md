@@ -269,9 +269,13 @@ key by name, so its old scores sit unlinked):
 name someone else used later). The next snapshot run folds the name's existing scoreboard
 history into the player once (meta `renamed:<uuid>:<name>`, same DB backup as merges); from
 then on the live snapshot and the import count that name for the player. The website lists
-former names as "aka" and finds the player by them. After adding entries, rerun
-`python3 tools/import_backups.py --server smp --rebuild-only` (timer stopped) to re-derive
-the approximate firsts/milestones over the linked history.
+former names as "aka" and finds the player by them. On a server with imported backups, then
+run `python3 tools/import_backups.py --server smp --reimport-scoreboards` (timer stopped,
+`--dry-run` first; the snapshot prints this as a WARNING). Needed: imported history is
+change-only and can't tell "the old name is gone from this backup" (after an in-game
+stattransfer) from "unchanged", so the fold alone keeps the old name's last backup value
+until the first live run; the reimport re-reads each backup with the rename applied, then
+re-derives the approximate firsts/milestones.
 
 ### Slur filter (`name_blocklist.txt`, `name_allowlist.txt`)
 One term per line at the repo root. A player whose name (or a former name) contains a term,

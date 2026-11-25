@@ -151,7 +151,8 @@ documented in `docs/STATS_API.md`; the frontend builds only against what is docu
   accounts' `players.name`), deduplicated, not the current name. `/search` matches them
   (result shows the current name) and `resolve_player` resolves an old name.
 - Deploy: the next snapshot folds the new entries; then `tools/import_backups.py --server
-  smp --rebuild-only` re-derives approximate firsts/milestones over the merged history.
+  smp --reimport-scoreboards` (the fold alone carries an old name past a stattransfer
+  between backups; the reimport re-reads each backup with renames applied, then rebuilds).
   Check: NotQuiteRat's dig-pickaxe series climbs 1.35M (2021) ... 10.3M; IBeatLIMBO's
   history includes NotAless50_'s.
 

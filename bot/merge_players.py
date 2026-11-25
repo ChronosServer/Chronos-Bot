@@ -219,6 +219,15 @@ def _fold_rename(conn, r, run_at):
                  "DO UPDATE SET value=excluded.value", (f"{RENAMED}{b}:{r.name}",))
     print(f"[rename] {r.display} -> {b}: {n} scoreboard history rows "
           f"(servers: {', '.join(sorted(servers)) or 'none'})")
+    # Imported history is change-only and never says "this name is gone from
+    # this backup" (e.g. after an in-game stattransfer), so the fold carries
+    # the old name's last backup value forward until the first live run. The
+    # import re-reads each backup and resolves the rename per point.
+    for (sk,) in conn.execute(
+            "SELECT DISTINCT server_key FROM imports ORDER BY server_key").fetchall():
+        if sk in servers:
+            print(f"[rename] WARNING: {sk} has imported backups. Run (timer stopped): "
+                  f"tools/import_backups.py --server {sk} --reimport-scoreboards")
     return servers
 
 

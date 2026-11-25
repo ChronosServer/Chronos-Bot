@@ -3,6 +3,7 @@ player_merges.json) matches name_blocklist.txt, minus name_allowlist.txt.
 Rewritten every run, so a list edit or a rename applies at the next
 snapshot. The API hides these uuids everywhere (api.scope)."""
 from api import names
+from api.merges import known_former_names
 
 
 def update_blocked(conn, merges=None) -> int:
@@ -14,7 +15,7 @@ def update_blocked(conn, merges=None) -> int:
         for uuid, name in conn.execute("SELECT uuid, name FROM players").fetchall():
             if uuid.lower() in allow:
                 continue
-            cands = ([name] if name else []) + (merges.former_names(uuid) if merges else [])
+            cands = ([name] if name else []) + known_former_names(conn, merges, uuid)
             for n in cands:
                 if n.lower() in allow:
                     continue

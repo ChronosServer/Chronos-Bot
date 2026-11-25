@@ -160,6 +160,24 @@ def parse_merges(raw) -> Merges:
                   display=display)
 
 
+def known_former_names(conn, merges, uuid, current=None) -> list:
+    """Every former name of uuid: merges.former_names (renames and merge
+    `names`) plus the merged-away accounts' own players.name; deduplicated
+    case-insensitively, without `current`, sorted. The one list behind
+    /player.aka and the slur filter."""
+    names = list(merges.former_names(uuid)) if merges else []
+    froms = merges.merged_from(uuid) if merges else []
+    if froms:
+        names += [n for (n,) in conn.execute(
+            f"SELECT name FROM players WHERE uuid IN ({','.join('?' * len(froms))}) "
+            "AND name IS NOT NULL", froms)]
+    out = {}
+    for n in names:
+        if not current or n.lower() != current.lower():
+            out.setdefault(n.lower(), n)
+    return sorted(out.values(), key=lambda n: (n.lower(), n))
+
+
 _api_merges = None
 
 

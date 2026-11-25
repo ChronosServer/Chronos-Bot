@@ -10,7 +10,7 @@ from api.routes.series import build_series
 from api.scope import (achievement_not_mirror_sql, is_blocked, is_fake_uuid, order_servers,
                        resolve_scope,
                        scoreboard_filter_sql, stat_filter_sql, tracked_sql)
-from api.merges import api_merges
+from api.merges import api_merges, known_former_names
 from api.settings import api_settings
 
 router = APIRouter()
@@ -25,7 +25,9 @@ def resolve_player(conn, ident: str):
         return m.target(ident)
     if ident.lower() in m.by_name:
         return m.by_name[ident.lower()]
-    renamed = m.rename_target(ident)  # a former name (player_merges.json renames)
+    # a former name (player_merges.json renames) that is still this player's
+    # today: a dated entry whose `until` has passed no longer claims the name
+    renamed = m.rename_target(ident, int(time.time()))
     if renamed:
         return renamed
     row = conn.execute(
@@ -38,18 +40,7 @@ def former_names(conn, uuid, current=None) -> list:
     """`aka`: the player's former names (player_merges.json renames and
     merged accounts' names, plus the merged accounts' own player names),
     case-insensitively deduplicated, without the current name, sorted."""
-    m = api_merges()
-    names = list(m.former_names(uuid))
-    froms = m.merged_from(uuid)
-    if froms:
-        names += [n for (n,) in conn.execute(
-            f"SELECT name FROM players WHERE uuid IN ({','.join('?' * len(froms))}) "
-            "AND name IS NOT NULL", froms)]
-    out = {}
-    for n in names:
-        if not current or n.lower() != current.lower():
-            out.setdefault(n.lower(), n)
-    return sorted(out.values(), key=lambda n: (n.lower(), n))
+    return known_former_names(conn, api_merges(), uuid, current)
 
 
 def _not_found():

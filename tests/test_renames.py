@@ -182,3 +182,91 @@ def test_import_resolves_rename(tmp_path, world, monkeypatch):
     assert conn.execute("SELECT uuid, raw_name, value FROM scoreboard_snapshots").fetchall() == [
         (V, "Diggus", 7)]
     conn.close()
+
+
+@pytest.fixture
+def imported_then_live(tmp_path, world, run_snapshot):
+    """Backups imported before the rename was listed: b1 has Q1306=10 (unresolved),
+    b2 (after an in-game stattransfer) has Diggus=15 and no Q1306; live Diggus=20."""
+    from conftest import make_backup
+    from tools import import_backups as ib
+    import snapshot
+    world.set_usercache("smp", {V: "Diggus"})
+    world.add_stats("smp", V, {"minecraft:mined": {"minecraft:stone": 1}})
+    world.set_scoreboard("smp", ["digs"], [("Diggus", "digs", 20)], {"t": ["Diggus"]})
+    run_snapshot(1_800_000_000)
+    stats = {V: {"minecraft:mined": {"minecraft:stone": 1}}}
+    b1 = make_backup(tmp_path, name="b1", last_played_ms=1_600_000_000_000, stats=stats,
+                     scoreboard=(["digs"], [("Q1306", "digs", 10)]), usercache={V: "Diggus"})
+    b2 = make_backup(tmp_path, name="b2", last_played_ms=1_700_000_000_000, stats=stats,
+                     scoreboard=(["digs"], [("Diggus", "digs", 15)]), usercache={V: "Diggus"})
+    conn = snapshot.connect_db(world.db_path)
+    ib.import_backups(conn, "smp", [ib.read_backup(b1, None), ib.read_backup(b2, None)],
+                      {}, {}, False)
+    conn.close()
+    return world
+
+
+def digs(world):
+    return q(world, "SELECT at, value FROM scoreboard_snapshots WHERE uuid=? AND objective='digs' "
+                    "ORDER BY at", V)
+
+
+def test_rename_fold_on_imported_server_warns_to_reimport(imported_then_live, run_snapshot,
+                                                         capsys):
+    m = mg.parse_merges({"renames": [{"uuid": V, "names": ["Q1306"]}]})
+    run_snapshot(1_800_000_900, merges=m)
+    out = capsys.readouterr().out
+    assert "--server smp --reimport-scoreboards" in out
+
+
+def test_reimport_after_fold_fixes_absent_old_name(imported_then_live, run_snapshot,
+                                                   tmp_path, monkeypatch):
+    import snapshot
+    from tools import import_backups as ib
+    w = imported_then_live
+    m = {"renames": [{"uuid": V, "names": ["Q1306"]}]}
+    run_snapshot(1_800_000_900, merges=mg.parse_merges(m))
+    # the fold alone carries Q1306's 10 past the transfer (no row says it went to 0)
+    assert digs(w) == [(1_600_000_000, 10), (1_700_000_000, 25), (1_800_000_000, 20)]
+    p = tmp_path / "m.json"
+    p.write_text(json.dumps(m), encoding="utf-8")
+    monkeypatch.setattr(mg, "MERGES_PATH", p)
+    conn = snapshot.connect_db(w.db_path)
+    backups, errors = ib.imported_backups(conn, "smp")
+    assert errors == []
+    ib.reimport_scoreboards(conn, "smp", backups, set(), dry_run=False)
+    conn.close()
+    assert digs(w) == [(1_600_000_000, 10), (1_700_000_000, 15), (1_800_000_000, 20)]
+
+
+def test_block_uses_merged_accounts_own_names(world, run_snapshot):
+    """aka shows a merged-away account's own player name, so the block checks it too."""
+    from api import names
+    names.BLOCKLIST_PATH.write_text("badword\n", encoding="utf-8")
+    world.set_usercache("cmp", {V: "Diggus", OLD: "B4dword_alt"})
+    world.add_stats("cmp", V, {"minecraft:mined": {"minecraft:stone": 6}})
+    world.add_stats("cmp", OLD, {"minecraft:mined": {"minecraft:stone": 1}})
+    run_snapshot(1000)
+    run_snapshot(2000, merges=mg.parse_merges({"merges": [{"from": OLD, "to": V}]}))
+    blocked = {u for (u,) in q(world, "SELECT uuid FROM blocked_players")}
+    assert V in blocked
+
+
+def test_dated_old_name_does_not_shadow_its_current_holder(world, run_snapshot, monkeypatch,
+                                                          tmp_path):
+    w2 = "dddddddd-0000-4000-8000-000000000009"
+    world.set_usercache("cmp", {U: "NotQuiteRat", w2: "Shared"})
+    for u in (U, w2):
+        world.add_stats("cmp", u, {"minecraft:mined": {"minecraft:stone": 5}})
+    run_snapshot(1000)
+    p = tmp_path / "m.json"
+    p.write_text(json.dumps({"renames": [{"uuid": U, "names": ["Shared"],
+                                          "until": "2021-12-31"}]}), encoding="utf-8")
+    monkeypatch.setattr(mg, "MERGES_PATH", p)
+    mg.reset_api_merges()
+    monkeypatch.setenv("CHRONOS_STATS_DB", world.db_path)
+    cache.clear()
+    with TestClient(create_app()) as c:
+        assert c.get("/api/stats/player/Shared").json()["uuid"] == w2
+    cache.clear()

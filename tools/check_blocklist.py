@@ -16,14 +16,14 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path[:0] = [str(ROOT)]
 
 from api import names  # noqa: E402
-from api.merges import load_merges  # noqa: E402
+from api.merges import known_former_names, load_merges  # noqa: E402
 
 
 def matches(conn, merges, terms, allow):
     """[(name, uuid or '', term, allowlisted)] sorted by name."""
     cands = {}
     for uuid, name in conn.execute("SELECT uuid, name FROM players"):
-        for n in ([name] if name else []) + (merges.former_names(uuid) if merges else []):
+        for n in ([name] if name else []) + known_former_names(conn, merges, uuid):
             cands.setdefault((n, uuid), None)
     for (raw,) in conn.execute("SELECT DISTINCT raw_name FROM scoreboard_snapshots "
                                "WHERE uuid IS NULL"):
