@@ -1,0 +1,20 @@
+[Unit]
+Description=Chronos stats API (FastAPI, read-only over the stats SQLite DB)
+After=local-fs.target network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/chronos/Chronos-Bot
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/opt/python/bin/python3 -m uvicorn api.main:create_app --factory --host 127.0.0.1 --port 8765 --workers 2
+Restart=always
+RestartSec=5
+# Refuses to start until bot/snapshot.py has applied the schema/indexes once;
+# Restart=always then just retries every 5s until that has happened.
+# Don't compete with the Minecraft servers for CPU/disk.
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7
+
+[Install]
+WantedBy=multi-user.target

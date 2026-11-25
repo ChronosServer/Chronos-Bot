@@ -1,0 +1,38 @@
+{
+  "_comment": "Old stat/item/block/entity key -> current key, per stat category; \"*\" applies to every category. Keys starting with \"_\" are ignored. _versions: the Java Edition release that renamed each old key.",
+  "_versions": {
+    "minecraft:play_one_minute": "1.17",
+    "minecraft:grass_path": "1.17",
+    "minecraft:grass": "1.20.3",
+    "minecraft:scute": "1.21.5",
+    "minecraft:pottery_shard_archer": "1.20 (experimental in 1.19.4)",
+    "minecraft:pottery_shard_arms_up": "1.20 (experimental in 1.19.4)",
+    "minecraft:pottery_shard_prize": "1.20 (experimental in 1.19.4)",
+    "minecraft:pottery_shard_skull": "1.20 (experimental in 1.19.4)",
+    "minecraft:boat": "1.21.2 (entity; killed/killed_by only - the boat item was already oak_boat)",
+    "minecraft:chest_boat": "1.21.2 (entity; killed/killed_by only)",
+    "minecraft:chain": "1.21.9",
+    "_verified": "Checked by diffing every-scoreboard dictionaries 1.16-26.1 against 26.2. Not mapped: potion (dictionary artifact, item still exists), creaking_transient (removed 1.21.4, no successor)."
+  },
+  "minecraft:custom": {
+    "minecraft:play_one_minute": "minecraft:play_time"
+  },
+  "minecraft:killed": {
+    "minecraft:boat": "minecraft:oak_boat",
+    "minecraft:chest_boat": "minecraft:oak_chest_boat"
+  },
+  "minecraft:killed_by": {
+    "minecraft:boat": "minecraft:oak_boat",
+    "minecraft:chest_boat": "minecraft:oak_chest_boat"
+  },
+  "*": {
+    "minecraft:grass_path": "minecraft:dirt_path",
+    "minecraft:grass": "minecraft:short_grass",
+    "minecraft:scute": "minecraft:turtle_scute",
+    "minecraft:pottery_shard_archer": "minecraft:archer_pottery_sherd",
+    "minecraft:pottery_shard_arms_up": "minecraft:arms_up_pottery_sherd",
+    "minecraft:pottery_shard_prize": "minecraft:prize_pottery_sherd",
+    "minecraft:pottery_shard_skull": "minecraft:skull_pottery_sherd",
+    "minecraft:chain": "minecraft:iron_chain"
+  }
+}

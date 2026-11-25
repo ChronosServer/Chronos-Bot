@@ -76,5 +76,212 @@
         ],
         "storage_regions": ["r.3.-3", "r.4.-3", "r.4.-4"],
         "dig_storage_regions": ["r.9.3"]
+    },
+    "stats_tracking": {
+        "db_path": "/opt/chronos/stats/chronos-stats.db",
+        "excluded_servers": [
+            "mirror",
+            "tour",
+            "snapshot",
+            "building2"
+        ],
+        "servers": {
+            "smp": {
+                "label": "SMP",
+                "group": "smp",
+                "track_stats": true,
+                "track_scoreboards": true,
+                "filters_bots": true
+            },
+            "cmp": {
+                "label": "CMP",
+                "group": "cmp",
+                "track_stats": true,
+                "track_scoreboards": true,
+                "filters_bots": false
+            },
+            "cmp2": {
+                "label": "CMP2",
+                "group": "cmp",
+                "track_stats": true,
+                "track_scoreboards": true,
+                "filters_bots": false
+            },
+            "cmp3": {
+                "label": "CMP3",
+                "group": "cmp",
+                "track_stats": true,
+                "track_scoreboards": true,
+                "filters_bots": false
+            },
+            "cmp4": {
+                "label": "CMP4",
+                "group": "cmp",
+                "track_stats": true,
+                "track_scoreboards": true,
+                "filters_bots": false
+            },
+            "building": {
+                "label": "BUILDING",
+                "group": "cmp",
+                "track_stats": true,
+                "track_scoreboards": true,
+                "filters_bots": false
+            }
+        },
+        "scope_groups": {
+            "cmps": "cmp"
+        },
+        "activity_stat": [
+            "minecraft:custom",
+            "minecraft:play_time"
+        ],
+        "milestones": {
+            "count_categories": [
+                "minecraft:mined",
+                "minecraft:used",
+                "minecraft:crafted",
+                "minecraft:broken",
+                "minecraft:picked_up",
+                "minecraft:dropped",
+                "minecraft:killed",
+                "minecraft:killed_by"
+            ],
+            "count_thresholds": [
+                1000,
+                10000,
+                100000,
+                1000000,
+                10000000
+            ],
+            "per_key": [
+                {
+                    "category": "minecraft:custom",
+                    "key": "minecraft:play_time",
+                    "thresholds": [
+                        100,
+                        500,
+                        1000,
+                        5000,
+                        10000
+                    ],
+                    "scale": 72000
+                },
+                {
+                    "category": "minecraft:custom",
+                    "key": "minecraft:walk_one_cm",
+                    "thresholds": [
+                        100,
+                        1000,
+                        10000
+                    ],
+                    "scale": 100000
+                },
+                {
+                    "category": "minecraft:custom",
+                    "key": "minecraft:deaths",
+                    "thresholds": [
+                        100,
+                        1000,
+                        10000
+                    ],
+                    "scale": 1
+                }
+            ]
+        },
+        "badges": {
+            "firsts": [
+                1,
+                10,
+                50
+            ],
+            "top1": [
+                1,
+                10,
+                50
+            ],
+            "big_numbers": [
+                1000000,
+                10000000
+            ],
+            "category_tiers": [
+                100000,
+                1000000,
+                10000000
+            ],
+            "veteran_hours": 1000,
+            "regular": {
+                "days": 20,
+                "window_days": 30
+            },
+            "night_owl": {
+                "min_buckets": 40,
+                "window_days": 30,
+                "share": 0.5,
+                "start_hour": 0,
+                "end_hour": 6
+            }
+        },
+        "rivalries": {
+            "min_value": 1000,
+            "max_gap_ratio": 0.02,
+            "active_days": 7,
+            "per_player": 5,
+            "per_key": 3
+        },
+        "spotlight": {
+            "outlier": {
+                "ratio": 10,
+                "min_holders": 10
+            },
+            "rare": {
+                "max_holders": 3
+            },
+            "recent_milestone_days": 7,
+            "recent_first_days": 30,
+            "mover": {
+                "top": 20,
+                "min_growth": 0.5,
+                "min_delta": 1000,
+                "window_days": 7
+            }
+        },
+        "mojang": {
+            "max_calls": 60,
+            "timeout_s": 3,
+            "max_seconds": 60,
+            "retry_after_days": 7
+        },
+        "snapshot": {
+            "dictionary_cache_hours": 24,
+            "dictionary_timeout_s": 15
+        },
+        "api": {
+            "range_presets": {
+                "1d": 86400,
+                "1w": 604800,
+                "1m": 2592000,
+                "6m": 15724800,
+                "1y": 31536000
+            },
+            "activity_bucket_s": 900,
+            "series_max_points": 500,
+            "leaderboard_max_limit": 200,
+            "feed_max_limit": 200,
+            "search_max_limit": 50,
+            "compare_min_players": 2,
+            "compare_max_players": 6,
+            "compare_max_keys": 20,
+            "series_max_players": 6,
+            "player_milestones_limit": 50,
+            "cache_max_bytes": 134217728,
+            "cache_max_body_bytes": 8388608,
+            "cache_max_entries": 2048,
+            "cache_max_age_s": 60,
+            "cache_stale_while_revalidate_s": 900,
+            "gzip_min_bytes": 1000,
+            "sqlite_mmap_bytes": 268435456,
+            "sqlite_cache_kib": 65536
+        }
     }
 }

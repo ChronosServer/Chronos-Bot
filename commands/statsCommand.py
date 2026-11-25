@@ -23,7 +23,28 @@ smp_rcon_port = data['server']['smp_rcon_port']
 rcon_pass = data['server']['rcon_pass']
 f.close()
 
-with open(f'dictionary-{minecraft_version}.json') as f:
+def _version_tuple(path):
+    # dictionaries/dictionary-1.21.10.json -> (1, 21, 10); non-numeric parts sort first
+    version = os.path.basename(path)[len('dictionary-'):-len('.json')]
+    return tuple(int(p) if p.isdigit() else -1 for p in version.split('.'))
+
+
+def _dictionary_path(version):
+    """dictionaries/dictionary-<version>.json, or the newest bundled one when
+    that version has none (warned in the console)."""
+    exact = os.path.join('dictionaries', f'dictionary-{version}.json')
+    if os.path.isfile(exact):
+        return exact
+    bundled = [os.path.join('dictionaries', f) for f in os.listdir('dictionaries')
+               if f.startswith('dictionary-') and f.endswith('.json')]
+    if not bundled:
+        raise FileNotFoundError(f'{exact} is missing and dictionaries/ has no dictionary-*.json')
+    newest = max(bundled, key=_version_tuple)
+    print(f'[warn] statsCommand: {exact} is missing; using {newest} instead')
+    return newest
+
+
+with open(_dictionary_path(minecraft_version)) as f:
     SCOREBOARD_DICT = json.load(f)
 
 SCOREBOARD_PATH = os.path.join(smp_path, smp_world_name, 'data', 'minecraft', 'scoreboard.dat')

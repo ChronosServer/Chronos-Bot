@@ -1,0 +1,18 @@
+[Unit]
+Description=Chronos stats snapshot (player stat files + scoreboards -> SQLite)
+# Mostly local file reads. Network use: the one-off dictionary fetch and Mojang
+# name lookups (3 s per call, at most 60 calls and ~60 s per run); both are
+# allowed to fail without failing the run.
+After=local-fs.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/chronos/Chronos-Bot
+ExecStart=/opt/python/bin/python3 bot/snapshot.py
+# A run normally takes seconds; anything past this is hung (e.g. a stuck
+# filesystem), so kill it rather than let it block every later timer tick.
+TimeoutStartSec=10min
+# Don't compete with the Minecraft servers for CPU/disk.
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7
