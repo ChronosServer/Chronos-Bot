@@ -338,12 +338,13 @@ then `python -m pytest tests -q` (Windows, Python 3.13 locally; server is 3.14).
 1. **Hide a server's data when its tracking toggle is off (decided, not implemented yet).**
    `track_stats` / `track_scoreboards` only stop the snapshot reading that server
    (`bot/snapshot.py run_once`); rows already collected stay, and nothing in `api/` or derive
-   checks the flags (only `/meta` reports them). Live case: the owner turned
-   `track_scoreboards` off on every CMP and `building` (2026-11-25, at deploy), after they
-   had been collected since 2026-11-24 — so their scoreboard values sit frozen at the last
-   reading but still show in `cmps`/`all` (summed with live SMP values for same-named
-   objectives), in `/search` objectives, `/leaderboard`, `/series`, `/totals`, `/player`,
-   and their scoreboard firsts/milestones stay in the feeds.
+   checks the flags (only `/meta` reports them). So turning a toggle off after data was
+   collected leaves that server's values frozen at the last reading but still shown in
+   `cmps`/`all` (summed with live values for same-named keys), in `/search`, `/leaderboard`,
+   `/series`, `/totals`, `/player`, and its firsts/milestones stay in the feeds.
+   Live state: the owner wants `track_scoreboards` off on every CMP and `building`, but
+   kept it ON for now (2026-11-25, at deploy) so their data isn't stale; turn it off only
+   after this fix is deployed.
    Agreed fix: **hide at read time, never delete** (turning a toggle back on brings the data
    back), the same pattern as the mirror filter. Add a servers-flag clause in `api/scope.py`
    (`EXISTS (SELECT 1 FROM servers WHERE key=<a>.server_key AND track_scoreboards=1)`, and
