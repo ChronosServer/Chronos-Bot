@@ -100,44 +100,82 @@ def _derive_scoreboard_totals(conn, key, run_at):
 
 
 BACKFILL_MARKER = "totals_backfilled"
-COUNTED_FP = "counted_fp:"  # meta key prefix + server key
+COUNTED_SET = "counted_set:"  # meta key prefix + server key: JSON sorted uuid list
+COUNTED_FP = "counted_fp:"    # legacy (sha1 only, no diff possible); read once, then dropped
 _FLUSH = 10_000
+_CHUNK = 500  # uuids per IN (...) list
 
 
-def counted_fingerprints(conn):
-    """{server: sha1 of its sorted counted uuids} for bot-filtering servers
-    (one query each; servers that never filter bots have none)."""
+def counted_sets(conn):
+    """{server: set of counted uuids} for bot-filtering servers (one query
+    each; servers that never filter bots have none)."""
     out = {}
     for key in _servers(conn):
         counted = counted_uuids(conn, key)
         if counted is not None:
-            out[key] = hashlib.sha1(",".join(sorted(counted)).encode()).hexdigest()
+            out[key] = set(counted)
     return out
 
 
-def _store_fingerprints(conn, fps):
+def _fingerprint(uuids):
+    return hashlib.sha1(",".join(sorted(uuids)).encode()).hexdigest()
+
+
+def _store_counted(conn, sets):
     conn.executemany(
         "INSERT INTO meta (key, value) VALUES (?, ?) "
         "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
-        [(COUNTED_FP + k, v) for k, v in fps.items()])
+        [(COUNTED_SET + k, json.dumps(sorted(v))) for k, v in sets.items()])
+    conn.execute("DELETE FROM meta WHERE key LIKE ?", (COUNTED_FP + "%",))
 
 
-def check_counted(conn):
+def _has_history_before(conn, key, uuids, run_at):
+    """Any stat/scoreboard history row on this server for these uuids before
+    run_at (seeks the per-player indexes)."""
+    uuids = sorted(uuids)
+    for i in range(0, len(uuids), _CHUNK):
+        part = uuids[i:i + _CHUNK]
+        marks = ",".join("?" * len(part))
+        for sql in (f"SELECT 1 FROM stat_snapshots INDEXED BY idx_stat_player "
+                    f"WHERE uuid IN ({marks}) AND server_key=? AND at<? LIMIT 1",
+                    f"SELECT 1 FROM scoreboard_snapshots INDEXED BY idx_scoreboard_player "
+                    f"WHERE uuid IN ({marks}) AND uuid IS NOT NULL AND server_key=? "
+                    f"AND at<? LIMIT 1"):
+            if conn.execute(sql, [*part, key, run_at]).fetchone():
+                return True
+    return False
+
+
+def check_counted(conn, run_at):
     """total_no_bots history uses TODAY's bot flags for all history, so a
     reclassification (a player's flag flips with no stat change) must
-    rebuild it, or the series steps at the flip run. When a bot-filtering
-    server's counted set differs from the stored fingerprint, the backfill
-    marker is cleared so this run's totals stage rebuilds the history.
-    No stored fingerprint (first run, or a DB from before fingerprints):
-    just store it. True when a rebuild was requested."""
-    fps = counted_fingerprints(conn)
-    stored = dict(conn.execute("SELECT key, value FROM meta WHERE key LIKE ?",
-                               (COUNTED_FP + "%",)).fetchall())
-    changed = any(stored.get(COUNTED_FP + k) not in (None, fp) for k, fp in fps.items())
-    if changed:
-        conn.execute("DELETE FROM meta WHERE key=?", (BACKFILL_MARKER,))
-    _store_fingerprints(conn, fps)
-    return changed
+    rebuild it, or the series steps at the flip run. Per bot-filtering
+    server, the counted uuid set is compared with the stored one; the
+    server's totals history needs a rebuild only when a uuid that flipped
+    (newly counted or uncounted) has history before run_at -- a brand-new
+    team member with no earlier rows changes nothing before run_at.
+    Legacy DB (sha1 fingerprint only): a differing fingerprint rebuilds that
+    server (the diff is unknown). Nothing stored (first run): just store.
+    Returns the sorted servers to rebuild; stores the current sets."""
+    sets = counted_sets(conn)
+    stored = dict(conn.execute("SELECT key, value FROM meta WHERE key LIKE ? OR key LIKE ?",
+                               (COUNTED_SET + "%", COUNTED_FP + "%")).fetchall())
+    rebuild = []
+    for k, cur in sets.items():
+        raw = stored.get(COUNTED_SET + k)
+        if raw is not None:
+            try:
+                old = set(json.loads(raw))
+            except (ValueError, TypeError):
+                old = None
+            if old is None:
+                rebuild.append(k)
+            elif old != cur and _has_history_before(conn, k, old ^ cur, run_at):
+                rebuild.append(k)
+        elif stored.get(COUNTED_FP + k) not in (None, _fingerprint(cur)):
+            rebuild.append(k)
+    _store_counted(conn, sets)
+    return sorted(rebuild)
 
 
 def _backfill_server(conn, key, run_at, emit_stat, emit_board):
@@ -233,28 +271,37 @@ def _backfill_server(conn, key, run_at, emit_stat, emit_board):
     return stats, boards
 
 
-def backfill_totals(conn, run_at):
+def _backfill(conn, run_at):
     """One-time rebuild of stat_totals / scoreboard_totals history from the
     raw snapshot history (which predates the first derive on the live DB),
     so totals series have no 0 -> total cliff on deploy day. Bot status is
     the CURRENT rule for every historical row (history of flags isn't
-    stored); check_counted reruns it when that rule's counted set changes. Emits only rows with at < run_at; the normal recompute then
-    writes this run's changes. Guarded by meta[BACKFILL_MARKER], committed
-    together with the rebuilt rows."""
-    if _backfill(conn, run_at):
-        conn.commit()
-
-
-def _backfill(conn, run_at):
-    """backfill_totals without the commit (rebuild_from_points runs it inside
-    its own transaction). True when it rebuilt anything."""
+    stored); check_counted rebuilds a server when its counted set changes
+    for a uuid with earlier history. Emits only rows with at < run_at; the
+    normal recompute then writes this run's changes. Guarded by
+    meta[BACKFILL_MARKER]; no commit (derive_totals commits it together with
+    the totals, rebuild_from_points inside its own transaction). True when
+    it rebuilt anything."""
     if conn.execute("SELECT 1 FROM meta WHERE key=? AND value='1'",
                     (BACKFILL_MARKER,)).fetchone():
         return False
     for tbl in ("stat_totals", "stat_totals_current",
                 "scoreboard_totals", "scoreboard_totals_current"):
-        conn.execute(f"DELETE FROM {tbl}")
-    for key in _servers(conn):
+        conn.execute(f"DELETE FROM {tbl}")  # incl. servers no longer provisioned
+    rebuild_totals(conn, run_at, _servers(conn))
+    conn.execute("INSERT INTO meta (key, value) VALUES (?, '1') "
+                 "ON CONFLICT(key) DO UPDATE SET value=excluded.value", (BACKFILL_MARKER,))
+    _store_counted(conn, counted_sets(conn))  # the classification used
+    return True
+
+
+def rebuild_totals(conn, run_at, servers):
+    """Replace these servers' totals history (rows at < run_at) and their
+    *_totals_current with a replay of their raw history. No commit."""
+    for key in servers:
+        for tbl in ("stat_totals", "stat_totals_current",
+                    "scoreboard_totals", "scoreboard_totals_current"):
+            conn.execute(f"DELETE FROM {tbl} WHERE server_key=?", (key,))
         srows, brows = [], []
 
         def emit_stat(k, at, t, n):
@@ -278,10 +325,6 @@ def _backfill(conn, run_at):
             "INSERT INTO scoreboard_totals_current (server_key, objective, total, "
             "total_no_bots) VALUES (?, ?, ?, ?)",
             [(key, o, t, n) for o, (t, n) in boards.items()])
-    conn.execute("INSERT INTO meta (key, value) VALUES (?, '1') "
-                 "ON CONFLICT(key) DO UPDATE SET value=excluded.value", (BACKFILL_MARKER,))
-    _store_fingerprints(conn, counted_fingerprints(conn))  # the classification used
-    return True
 
 
 def _flush_stat(conn, rows):
@@ -299,8 +342,11 @@ def _flush_board(conn, rows):
 
 
 def derive_totals(conn, run_at):
-    check_counted(conn)  # stored together with the totals (one commit)
-    backfill_totals(conn, run_at)
+    # Stored together with the totals (one commit). A full backfill (marker
+    # missing) covers every server, so the per-server rebuild is skipped then.
+    changed = check_counted(conn, run_at)
+    if not _backfill(conn, run_at) and changed:
+        rebuild_totals(conn, run_at, changed)
     for key in _servers(conn):
         _derive_stat_totals(conn, key, run_at)
         _derive_scoreboard_totals(conn, key, run_at)

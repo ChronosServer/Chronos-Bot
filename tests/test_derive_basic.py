@@ -150,7 +150,7 @@ def test_total_no_bots_history_rebuilt_when_flag_flips(world, run_snapshot, db):
                          {"t": ["Alice"]})
     run_snapshot(1900)
     assert totals(db)[0][2:] == (17, 12)
-    fp = q(db, "SELECT value FROM meta WHERE key='counted_fp:smp'")
+    fp = q(db, "SELECT value FROM meta WHERE key='counted_set:smp'")
     assert len(fp) == 1
     # BotGuy joins a team; no stat or score change
     world.set_scoreboard("smp", ["deaths"], [("Alice", "deaths", 2), ("BotGuy", "deaths", 4)],
@@ -161,7 +161,7 @@ def test_total_no_bots_history_rebuilt_when_flag_flips(world, run_snapshot, db):
                  "ORDER BY at") == [(1000, 15, 15), (1900, 17, 17)]
     assert q(db, "SELECT at, total, total_no_bots FROM scoreboard_totals WHERE server_key='smp' "
                  "AND objective='deaths' ORDER BY at") == [(1000, 5, 5), (1900, 6, 6)]
-    assert q(db, "SELECT value FROM meta WHERE key='counted_fp:smp'") != fp
+    assert q(db, "SELECT value FROM meta WHERE key='counted_set:smp'") != fp
     assert q(db, "SELECT value FROM meta WHERE key='totals_backfilled'") == [("1",)]
 
 
@@ -171,7 +171,7 @@ def test_unchanged_counted_set_does_not_rebuild_totals(world, run_snapshot, db):
     world.set_usercache("smp", {P: "Alice", BOT: "BotGuy"})
     world.set_scoreboard("smp", [], [], {"t": ["Alice"]})
     run_snapshot(1000)
-    fp = q(db, "SELECT value FROM meta WHERE key='counted_fp:smp'")
+    fp = q(db, "SELECT value FROM meta WHERE key='counted_set:smp'")
     assert fp  # first run: stored
     db.execute("DELETE FROM stat_totals WHERE at=1000")  # a rebuild would restore it
     db.commit()
@@ -179,9 +179,9 @@ def test_unchanged_counted_set_does_not_rebuild_totals(world, run_snapshot, db):
     run_snapshot(1900)
     assert q(db, "SELECT at, total, total_no_bots FROM stat_totals WHERE server_key='smp' "
                  "ORDER BY at") == [(1900, 25, 20)]
-    assert q(db, "SELECT value FROM meta WHERE key='counted_fp:smp'") == fp
+    assert q(db, "SELECT value FROM meta WHERE key='counted_set:smp'") == fp
     # servers that never filter bots get no fingerprint
-    assert q(db, "SELECT key FROM meta WHERE key LIKE 'counted_fp:%'") == [("counted_fp:smp",)]
+    assert q(db, "SELECT key FROM meta WHERE key LIKE 'counted_set:%'") == [("counted_set:smp",)]
 
 
 def test_counted_fingerprint_stored_without_rebuild_on_existing_db(world, run_snapshot, db):
@@ -191,12 +191,12 @@ def test_counted_fingerprint_stored_without_rebuild_on_existing_db(world, run_sn
     world.set_usercache("smp", {P: "Alice"})
     world.set_scoreboard("smp", [], [], {"t": ["Alice"]})
     run_snapshot(1000)
-    db.execute("DELETE FROM meta WHERE key LIKE 'counted_fp:%'")
+    db.execute("DELETE FROM meta WHERE key LIKE 'counted_set:%'")
     db.execute("DELETE FROM stat_totals")
     db.commit()
     run_snapshot(1900)
     assert q(db, "SELECT COUNT(*) FROM stat_totals")[0][0] == 0
-    assert q(db, "SELECT COUNT(*) FROM meta WHERE key='counted_fp:smp'")[0][0] == 1
+    assert q(db, "SELECT COUNT(*) FROM meta WHERE key='counted_set:smp'")[0][0] == 1
 
 
 def test_recovery_after_failed_derive_totals(world, run_snapshot, db, monkeypatch):
@@ -357,3 +357,58 @@ def test_scoreboard_backfill_skips_mirrors_and_unresolved(world, run_snapshot, d
     run_snapshot(1900, dictionary={"x": "laterMirror"})  # flagged a mirror later
     assert q(db, "SELECT objective, at, total, total_no_bots FROM scoreboard_totals "
                  "WHERE server_key='smp' ORDER BY objective, at") == [("deaths", 1000, 3, 3)]
+
+
+NEW = "cccccccc-0000-0000-0000-000000000003"
+
+
+def _flip_setup(world, run_snapshot):
+    world.add_stats("smp", P, pt(10))
+    world.add_stats("smp", BOT, pt(5))
+    world.add_stats("cmp", P, pt(3))
+    world.set_usercache("smp", {P: "Alice", BOT: "BotGuy", NEW: "Newbie"})
+    world.set_scoreboard("smp", [], [], {"t": ["Alice"]})
+    run_snapshot(1000)
+    world.add_stats("smp", P, pt(12))
+    world.add_stats("cmp", P, pt(4))
+    run_snapshot(1900)
+
+
+def test_new_member_without_history_does_not_rebuild(world, run_snapshot, db):
+    """A brand-new team member whose first rows come this run changes no
+    totals before run_at: no rebuild (a rebuild would restore the deleted row)."""
+    _flip_setup(world, run_snapshot)
+    db.execute("DELETE FROM stat_totals WHERE server_key='smp' AND at=1000")
+    db.commit()
+    world.add_stats("smp", NEW, pt(7))
+    world.set_scoreboard("smp", [], [], {"t": ["Alice", "Newbie"]})
+    run_snapshot(2800)
+    assert q(db, "SELECT at, total, total_no_bots FROM stat_totals WHERE server_key='smp' "
+                 "ORDER BY at") == [(1900, 17, 12), (2800, 24, 19)]
+    assert NEW in q(db, "SELECT value FROM meta WHERE key='counted_set:smp'")[0][0]
+
+
+def test_flip_with_history_rebuilds_only_that_server(world, run_snapshot, db):
+    _flip_setup(world, run_snapshot)
+    db.execute("DELETE FROM stat_totals WHERE server_key='cmp' AND at=1000")
+    db.commit()
+    world.set_scoreboard("smp", [], [], {"t": ["Alice", "BotGuy"]})  # BotGuy: history
+    run_snapshot(2800)
+    assert q(db, "SELECT at, total, total_no_bots FROM stat_totals WHERE server_key='smp' "
+                 "ORDER BY at") == [(1000, 15, 15), (1900, 17, 17)]
+    # cmp never filters bots: not rebuilt (the deleted row stays gone)
+    assert q(db, "SELECT at FROM stat_totals WHERE server_key='cmp' ORDER BY at") == [(1900,)]
+
+
+def test_legacy_fingerprint_change_rebuilds(world, run_snapshot, db):
+    """A DB from before counted sets (sha1 only): a differing fingerprint
+    rebuilds that server, and the legacy key is replaced by the set."""
+    _flip_setup(world, run_snapshot)
+    db.execute("DELETE FROM meta WHERE key='counted_set:smp'")
+    db.execute("INSERT INTO meta VALUES ('counted_fp:smp', 'stale')")
+    db.execute("DELETE FROM stat_totals WHERE server_key='smp' AND at=1000")
+    db.commit()
+    run_snapshot(2800)
+    assert q(db, "SELECT at FROM stat_totals WHERE server_key='smp' ORDER BY at") == [
+        (1000,), (1900,)]
+    assert q(db, "SELECT key FROM meta WHERE key LIKE 'counted_%'") == [("counted_set:smp",)]
