@@ -1,4 +1,5 @@
 import time
+from dataclasses import replace
 
 from fastapi import APIRouter, Depends, Request
 
@@ -146,14 +147,27 @@ def totals(request: Request, conn=Depends(db.get_db), kind: str = "stat",
     resolved = {n: resolve_scope(conn, n) for n in names}
     union = Scope("union", tuple(sorted({s for sc in resolved.values()
                                          for s in sc.servers})))
-    # inside the pre-live gap: one point, the total known at to_ts
-    r = timeq.parse_range(conn, union, range, from_, to, int(time.time())).for_values()
+    now = int(time.time())
+    # Each line is its own range (own tracking start / gap snapping), so
+    # SMP's imported history isn't cut at the CMPs' later start. Inside the
+    # pre-live gap: one point, the total known at to_ts.
+    per_scope = {n: timeq.parse_range(conn, sc, range, from_, to, now).for_values()
+                 for n, sc in resolved.items()}
+    starts = {n: (None if r.empty else r.effective_from) for n, r in per_scope.items()}
+    live = [v for v in starts.values() if v is not None]
+    if live:  # the axis: from the earliest line start
+        r = replace(next(iter(per_scope.values())), effective_from=min(live))
+    else:
+        r = timeq.parse_range(conn, union, range, from_, to, now).for_values()
     col = "total" if include_bots else "total_no_bots"
     out = {n: [] for n in names}
-    if not r.empty:
+    if live:
         per = _totals_events(conn, kind, category, key, union.servers, col, r)
         for n, sc in resolved.items():
+            if starts[n] is None:
+                continue
             ev = [e for s in sc.servers for e in per.get(s, [])]
             if ev:
-                out[n] = _step_sum(ev, r.effective_from, r.to_ts)
-    return {"effective_from": r.effective_from, "to": r.to_ts, "series": out}
+                out[n] = _step_sum(ev, starts[n], r.to_ts)
+    return {"effective_from": r.effective_from, "to": r.to_ts, "starts": starts,
+            "series": out}

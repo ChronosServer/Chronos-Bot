@@ -110,10 +110,11 @@ def totals_env(env, world):
 
 
 def test_totals_server_vs_server(totals_env):
-    # the common start is where every requested server has data (cmp: 1000900)
+    # each line starts at its own data (cmp: 1000900); effective_from = the earliest
     j = totals_env.get(T + "&scopes=smp,cmps&from=1000000&to=1001500").json()
-    assert j["effective_from"] == 1_000_900
-    assert j["series"]["smp"] == [[1_000_900, 9], [1_001_200, 12]]
+    assert j["starts"] == {"smp": 1_000_000, "cmps": 1_000_900}
+    assert j["effective_from"] == 1_000_000 and j["to"] == 1_001_500
+    assert j["series"]["smp"] == [[1_000_000, 5], [1_000_600, 9], [1_001_200, 12]]
     assert j["series"]["cmps"] == [[1_000_900, 2], [1_001_200, 4]]
     j = totals_env.get(T + "&scopes=smp&from=1000000&to=1001500").json()
     assert j["series"]["smp"] == [[1_000_000, 5], [1_000_600, 9], [1_001_200, 12]]
@@ -133,6 +134,7 @@ def test_totals_respects_include_bots(totals_env):
 def test_totals_empty_and_bad(totals_env):
     j = totals_env.get(T + "&scopes=smp,cmps&from=0&to=500").json()
     assert j["series"] == {"smp": [], "cmps": []}
+    assert j["starts"] == {"smp": None, "cmps": None}
     assert totals_env.get(T + "&scopes=nope").status_code == 400
     assert totals_env.get(T + "&scopes=").status_code == 400
 

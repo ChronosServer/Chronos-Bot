@@ -65,7 +65,8 @@ def test_compare_series_totals_agree(env):
     s = env.get(f"{A}/series?{PT}&uuids={P}&scope=all&range=1w").json()["series"][P]
     assert s[-1][1] - s[0][1] == 150
     t = env.get(f"{A}/totals?{PT}&scopes=all,smp,cmps&range=1w").json()
-    assert t["effective_from"] == L + 5
+    assert t["starts"] == {"all": L + 5, "smp": L, "cmps": L + 5}
+    assert t["effective_from"] == L
     gains = {k: v[-1][1] - v[0][1] for k, v in t["series"].items()}
     assert gains == {"all": 150, "smp": 100, "cmps": 50}
 
