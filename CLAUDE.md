@@ -60,6 +60,17 @@ above). Missing flag = bot (fail closed). Default-excluded from leaderboards, to
   resolve those names first (date-bounded). `/player.aka`, `/search`, `/leaderboard?q=` and
   `resolve_player` use former names. Merges stay a SUM (owner: stattransfer moved only
   scoreboard scores and reset the old name; stat files were never transferred).
+- **When a rename needs an entry, and what a missed one does.** Vanilla stats key by uuid,
+  so a rename never affects them; the display name is the newest usercache name; the backup
+  import links any old name that some backup usercache or the live `players` names know.
+  An entry is only needed when NO usercache knows the old name (the 7 listed on 2026-11-26).
+  A missed one: that player's scoreboard history before the rename stays under
+  `unresolved:<old name>` (hidden unless include_bots), so their scoreboard series jumps at
+  the stattransfer; no `aka`, old name not searchable; if the score was never stattransferred
+  the current total is too low. Adding it later is safe and loses nothing: add the entry,
+  push, `update.sh` (the snapshot folds it once and prints `[rename] WARNING`), then with the
+  timer stopped `tools/import_backups.py --server smp --reimport-scoreboards` (dry run first),
+  start the timer. Same for a missed new-account merge (`merges` entry instead).
 - New reads: `/rankings` (top1 | firsts | badges), `/totals.starts` (per-line start;
   `effective_from` = the earliest), `/leaderboard?q=`, `/search` space = `_`.
 - **Player heads** (`bot/heads.py`, last step of every snapshot run, `stats_tracking.heads`
@@ -311,7 +322,8 @@ tables) → SQLite → `api/` (FastAPI, read-only) → nginx `/api/stats/*` → 
   learns every entry's name (old ones too) for merging.
 - **Account merges (`player_merges.json`, repo root; owner's list).** Separate accounts
   counted as one player (first entry: LordHamster42 → hampter42, different uuids). Not
-  for renames: a rename is the same uuid and needs nothing. Entries by uuid + the
+  for renames (same uuid): those go in `renames`, and only when no usercache knows the old
+  name (see "Slur filter + renames" above). Entries by uuid + the
   from-account's scoreboard `names` (scoreboards key by name; SMP's usercache may not know
   the alt). `api/merges.py` parses it (chains resolve, bad file raises). The snapshot's
   first step (`bot/merge_players.apply_pending_merges`, before any server is read) folds a
