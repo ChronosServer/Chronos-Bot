@@ -74,7 +74,8 @@ documented in `docs/STATS_API.md`; the frontend builds only against what is docu
   5e6b97fb (UsernameAccount) <- EulerGauss; 38e6bba5 (ObiWan81_) <- Obi0081_, Obi81;
   69dcb78d (justlukie) <- lukepourquoi. Merges added: c273fdfb -> 76e49874 (names
   NotAless50_), 13b1d964 -> 79c7e2d6 (wRongo_), 6920e60b -> a53a264c (qstrql).
-  Alugia7 -> Algi_ is left out (owner handles it with stattransfer).
+  Alugia7 -> Algi_ added 2026-11-26 (owner: stattransfer moves only the live score; the
+  rename links the old name's history, same as the others).
 - `name_blocklist.txt`: one term per line, `#` comments. Seeded by me with racial/ethnic,
   homophobic/transphobic and ableist slurs and common spellings (LDNOOBW narrowed to slurs;
   not plain profanity). `name_allowlist.txt`: exempt names or uuids, one per line.

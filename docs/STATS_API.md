@@ -25,8 +25,8 @@ the data contract.
 7. **Former names**: `/player` gains `aka`; `/search`, `/leaderboard?q=` and `/player/<old
    name>` match former names. Renamed players' old scoreboard scores now count for the
    current name (NotQuiteRat_ -> NotQuiteRat, Q1306 -> DiggusMaximus123, EulerGauss ->
-   UsernameAccount, Obi0081_ and Obi81 -> ObiWan81_, lukepourquoi -> justlukie; Alugia7 ->
-   Algi_ is handled in-game with stattransfer), and replaced accounts are merged into the
+   UsernameAccount, Obi0081_ and Obi81 -> ObiWan81_, lukepourquoi -> justlukie, Alugia7 ->
+   Algi_), and replaced accounts are merged into the
    new one (NotAless50_ -> IBeatLIMBO, wRongo_ -> _wRongo, qstrql -> qstrqlw, plus the
    earlier LordHamster42 -> hampter42). Merged accounts are **added together** (not "the new account's value once
    it exists"): the in-game `stattransfer` moved only scoreboard scores and reset the old
