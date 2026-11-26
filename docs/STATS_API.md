@@ -141,8 +141,7 @@ are backend config: build the range picker from `/meta.settings.range_presets`
   once a day (`stats_tracking.heads`). **404 = use the fallback**: fake players
   (`is_fake`), slur-blocked players, accounts without a custom skin (the default
   Steve/Alex-style skins), and players not fetched yet. On a 404 keep the site's current
-  fallback (third-party head, then the letter square); never show a third-party head for a
-  fake or slur-blocked player (their names don't reach the site anyway).
+  fallback (third-party head, then the letter square).
 - **Item icons: `/cache/items/<id>.png`**, the bare id (`dropper.png`, `creeper_spawn_egg.png`,
   `player_head.png`): 64x64 PNG, pixel art, for **every item id** of the server's Minecraft
   version, rendered from the client jar like the inventory (blocks isometric, flat items
