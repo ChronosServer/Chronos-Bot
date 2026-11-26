@@ -742,6 +742,7 @@ def run_once(config=None, now_fn=time.time, dictionary=None, mojang_fetch=None, 
     # New player_merges.json entries fold the existing data together first,
     # so this run's summed values build on merged history.
     apply_pending_merges(conn, merges, run_at, settings.db_path)
+    injected_fetch = mojang_fetch
     if mojang_fetch is None:
         timeout = settings.mojang.timeout_s
 
@@ -845,7 +846,30 @@ def run_once(config=None, now_fn=time.time, dictionary=None, mojang_fetch=None, 
                    int((time.time() - t0) * 1000), now=run_at)
         print(f"[all] derive: ERROR {e}")
 
+    run_heads(conn, cfg, settings, run_at, injected_fetch)
     conn.close()
+
+
+def run_heads(conn, cfg, settings, run_at, fetch=None):
+    """Player heads into <server.website_path>/cache/heads (bot/heads.py).
+    Skipped without website_path; a failure is printed, never raised."""
+    website = cfg.get("server", {}).get("website_path")
+    if not website or not settings.heads.enabled:
+        return
+    if fetch is None:
+        timeout = settings.heads.timeout_s
+
+        def fetch(method, url, body=None):
+            return default_fetch(method, url, body, timeout=timeout)
+    try:
+        import heads
+        r = heads.update_heads(conn, os.path.join(website, "cache", "heads"), run_at,
+                               fetch, settings.heads)
+        print(f"[all] heads: written={r['written']} checked={r['checked']} "
+              f"removed={r['removed']}" + (f" stopped={r['stopped']}" if r["stopped"] else ""))
+    except Exception as e:
+        conn.rollback()
+        print(f"[all] heads: ERROR {type(e).__name__}: {e}")
 
 
 if __name__ == "__main__":

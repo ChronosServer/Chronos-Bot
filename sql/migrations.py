@@ -51,7 +51,14 @@ def _v5(conn):
                  "uuid TEXT PRIMARY KEY, name TEXT, term TEXT)")
 
 
-MIGRATIONS = [_v1, _v2, _v3, _v4, _v5]
+def _v6(conn):
+    # Player heads (bot/heads.py): when each uuid's Mojang profile was last
+    # checked and the skin url it had (NULL = no skin / unknown profile).
+    conn.execute("CREATE TABLE IF NOT EXISTS player_heads ("
+                 "uuid TEXT PRIMARY KEY, checked_at INTEGER NOT NULL, skin_url TEXT)")
+
+
+MIGRATIONS = [_v1, _v2, _v3, _v4, _v5, _v6]
 
 
 def migrate(conn: sqlite3.Connection) -> None:

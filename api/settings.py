@@ -77,6 +77,11 @@ DEFAULT_CONFIG = {
         "mover": {"top": 20, "min_growth": 0.5, "min_delta": 1000, "window_days": 7},
     },
     "mojang": {"max_calls": 60, "timeout_s": 3, "max_seconds": 60, "retry_after_days": 7},
+    # player heads (bot/heads.py): <server.website_path>/cache/heads/<uuid>.png,
+    # at most max_calls Mojang profile lookups / max_seconds per snapshot run,
+    # each player re-checked every refresh_hours
+    "heads": {"enabled": True, "max_calls": 60, "max_seconds": 30, "timeout_s": 5,
+              "refresh_hours": 24},
     # mirror_prefix: objective names matching it are every-scoreboard copies of
     # vanilla stats even when no bundled dictionary lists them ("" = off)
     "snapshot": {"dictionary_cache_hours": 24, "dictionary_timeout_s": 15,
@@ -230,6 +235,15 @@ class Mojang:
 
 
 @dataclass(frozen=True)
+class Heads:
+    enabled: bool
+    max_calls: int
+    max_seconds: float
+    timeout_s: float
+    refresh_hours: float
+
+
+@dataclass(frozen=True)
 class Snapshot:
     dictionary_cache_hours: float
     dictionary_timeout_s: float
@@ -272,6 +286,7 @@ class Settings:
     rivalries: Rivalries
     spotlight: Spotlight
     mojang: Mojang
+    heads: Heads
     snapshot: Snapshot
     api: Api
 
@@ -562,7 +577,7 @@ def load_settings(stats_tracking_cfg: Optional[dict]) -> Settings:
     act = raw["activity_stat"]
     if not (isinstance(act, list) and len(act) == 2 and all(isinstance(x, str) and x for x in act)):
         raise ValueError(f"{p}.activity_stat must be [category, stat_key]")
-    rv, mj, sn = raw["rivalries"], raw["mojang"], raw["snapshot"]
+    rv, mj, sn, hd = raw["rivalries"], raw["mojang"], raw["snapshot"], raw["heads"]
     return Settings(
         db_path=db_path,
         excluded_servers=_str_list(raw["excluded_servers"], f"{p}.excluded_servers"),
@@ -583,6 +598,12 @@ def load_settings(stats_tracking_cfg: Optional[dict]) -> Settings:
             timeout_s=_num(mj["timeout_s"], f"{p}.mojang.timeout_s", gt=0),
             max_seconds=_num(mj["max_seconds"], f"{p}.mojang.max_seconds", gt=0),
             retry_after_days=_num(mj["retry_after_days"], f"{p}.mojang.retry_after_days", gt=0)),
+        heads=Heads(
+            enabled=_bool(hd["enabled"], f"{p}.heads.enabled"),
+            max_calls=_int(hd["max_calls"], f"{p}.heads.max_calls", ge=0),
+            max_seconds=_num(hd["max_seconds"], f"{p}.heads.max_seconds", gt=0),
+            timeout_s=_num(hd["timeout_s"], f"{p}.heads.timeout_s", gt=0),
+            refresh_hours=_num(hd["refresh_hours"], f"{p}.heads.refresh_hours", gt=0)),
         snapshot=Snapshot(
             dictionary_cache_hours=_num(sn["dictionary_cache_hours"],
                                         f"{p}.snapshot.dictionary_cache_hours", ge=0),
