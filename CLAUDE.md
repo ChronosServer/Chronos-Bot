@@ -514,11 +514,29 @@ then `python -m pytest tests -q` (Windows, Python 3.13 locally; server is 3.14).
    0 score), not their stale value.
 
 ## Known follow-ups (open)
-None from the backend (stats round 2 incl. player heads and item icons done 2026-11-26 on
-branch `stats-round2`; the members-export name and archive picture cache requests are done,
-see syncCommand above). For the website: on the status page, `building` and `building2`
-go after `mirror` and before `snapshot` (owner's request; `server_status.json` stays
-alphabetical).
+Stats round 2 (incl. player heads and item icons) done 2026-11-26 on branch `stats-round2`;
+the members-export name and archive picture cache requests are done (see syncCommand
+above). For the website: on the status page, `building` and `building2` go after `mirror`
+and before `snapshot` (owner's request; `server_status.json` stays alphabetical).
+
+Small review findings left as they are (owner agreed 2026-11-26: no effect on the site
+today; fix when one starts to matter):
+- `/totals` when **every** requested scope has no data yet (a brand-new server asked for
+  alone): falls back to the union range, so `effective_from` can be 0 (axis at 1970) with
+  empty series. Fix: return `effective_from = to` (or null) when `live` is empty
+  (`api/routes/series.py`).
+- `/rankings?by=top1` is a read-time RANK() over all current values, `@cached`, never
+  timed on the live DB. If uncached calls go over ~1 s, precompute it in derive.
+- Editing a rename's `from`/`until` in `player_merges.json` after it was folded does
+  nothing (meta `renamed:<uuid>:<name>` is set); a changed range needs a DB restore from
+  the `pre-merge-*.db` backup, or a new name entry.
+- Firsts a player lost while slur-blocked (re-seeded to the next holder) don't come back
+  when they're allowlisted; badges/rivalries recompute, firsts don't.
+- Item icons drawn as a particle-texture fallback (reported by `render_items.py`): copper
+  golem statues, decorated pot, dragon head. `range_dispatch` without a fallback takes its
+  first entry (compass, clock: looks right).
+- Heads: no file for default-skin accounts (the site falls back); the face of the default
+  Steve/Alex skins could be rendered from the client jar if wanted.
 
 ## Website nav plan (for when Stats ships)
 Top-level nav gets one new "Stats ▾" dropdown (Overview / Explorer / Scoreboards /
