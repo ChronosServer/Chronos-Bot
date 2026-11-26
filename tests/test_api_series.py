@@ -135,6 +135,7 @@ def test_totals_empty_and_bad(totals_env):
     j = totals_env.get(T + "&scopes=smp,cmps&from=0&to=500").json()
     assert j["series"] == {"smp": [], "cmps": []}
     assert j["starts"] == {"smp": None, "cmps": None}
+    assert j["effective_from"] == j["to"] == 500  # never 0 (an axis at 1970)
     assert totals_env.get(T + "&scopes=nope").status_code == 400
     assert totals_env.get(T + "&scopes=").status_code == 400
 

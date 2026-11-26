@@ -280,6 +280,10 @@ change-only and can't tell "the old name is gone from this backup" (after an in-
 stattransfer) from "unchanged", so the fold alone keeps the old name's last backup value
 until the first live run; the reimport re-reads each backup with the rename applied, then
 re-derives the approximate firsts/milestones.
+Editing a folded entry's `from`/`until`/`case_sensitive` later changes nothing (the fold
+already happened; the meta value records the folded range). Every snapshot run then prints
+`[rename] WARNING: ... changed after it was folded`: put the old values back, or restore the
+`pre-merge-*.db` made before that fold (the next run folds it again with the new range).
 
 A name a server's own usercache doesn't know (a player renamed, then stattransferred there
 before rejoining it) is resolved through every server's usercache. Its live scores stored
@@ -301,7 +305,10 @@ next snapshot run (table `blocked_players`), no restart. Check what a list catch
   slur-blocked players or accounts merged into another (`player_merges.json`; an existing
   file is removed) or players without a skin. The run
   log line: `[all] heads: written=.. checked=.. removed=..`. At the defaults (60 per run, every 15 min)
-  a first fill of the ~3,000 players takes about 12 hours (in uuid order, so at random).
+  a first fill of the ~3,000 players takes about 12 hours (most recently active first, so
+  the leaderboard tops get theirs early). nginx needs the `/cache/heads/` location from
+  `deploy/nginx/chronos-stats-api.conf` (`try_files $uri =404`): without it a head not
+  downloaded yet answers the site's 404 page with status 200.
   Fetched over IPv4 only by default (`ipv4_only`): the live server's IPv6 always gets 429. Needs Pillow (`requirements.txt`); without it the step
   prints an error and the rest of the run is unaffected.
 - **Item icons** (`tools/render_items.py`, by hand, after every Minecraft version bump):

@@ -154,6 +154,17 @@ def test_budget_new_players_first(db, tmp_path):
     assert [c for c in f.calls if c.startswith(heads.PROFILE_URL)] == [heads.PROFILE_URL + hx(REAL2)]
 
 
+def test_never_checked_most_recently_active_first(db, tmp_path):
+    out = tmp_path / "heads"
+    # REAL sorts first by uuid; REAL2 was active more recently, so it goes first
+    lo, hi = sorted([REAL, REAL2])
+    db.execute("UPDATE players SET last_activity=5 WHERE uuid=?", (lo,))
+    db.execute("UPDATE players SET last_activity=9 WHERE uuid=?", (hi,))
+    f = Fetch()
+    run(db, out, f, max_calls=1)
+    assert [c for c in f.calls if c.startswith(heads.PROFILE_URL)] == [heads.PROFILE_URL + hx(hi)]
+
+
 def test_rate_limit_stops_the_run(db, tmp_path):
     out = tmp_path / "heads"
     f = Fetch(profiles={hx(REAL): (429, b""), hx(REAL2): (429, b"")})

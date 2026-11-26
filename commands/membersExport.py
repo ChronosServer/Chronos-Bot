@@ -110,8 +110,15 @@ class membersExport(commands.Cog):
             role_ids = {r.id for r in member.roles}
             # their own Discord name (profile display name, else username),
             # not the nickname they have on the Chronos server
-            entry = {'name': member.global_name or member.name,
-                     'avatar': str(member.display_avatar.url)}
+            # not the nickname they have on the Chronos server. id as a string
+            # (too big for a JS number): the site keys people on it, since
+            # members joke-rename each other. avatar = the account's own, not a
+            # per-server one (that can be set to look like someone else).
+            entry = {'id': str(member.id),
+                     'username': member.name,
+                     'global_name': member.global_name,
+                     'name': member.global_name or member.name,
+                     'avatar': str((member.avatar or member.default_avatar).url)}
             if ROLE_INACTIVE in role_ids:
                 inactive.append(entry)
             elif ROLE_MEMBER in role_ids:

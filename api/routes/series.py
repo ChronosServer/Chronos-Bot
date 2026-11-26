@@ -157,8 +157,9 @@ def totals(request: Request, conn=Depends(db.get_db), kind: str = "stat",
     live = [v for v in starts.values() if v is not None]
     if live:  # the axis: from the earliest line start
         r = replace(next(iter(per_scope.values())), effective_from=min(live))
-    else:
+    else:  # no scope has data yet: an empty axis at `to`, never 0 (1970)
         r = timeq.parse_range(conn, union, range, from_, to, now).for_values()
+        r = replace(r, effective_from=r.to_ts)
     col = "total" if include_bots else "total_no_bots"
     out = {n: [] for n in names}
     if live:

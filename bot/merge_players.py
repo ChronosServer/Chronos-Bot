@@ -25,8 +25,11 @@ same way, once per (uuid, name) (meta `renamed:<uuid>:<name>`): the name's
 unresolved scoreboard rows inside the entry's from/until are summed into the
 uuid's timeline; after `until` the name counts 0 for the uuid (from its first
 later row). Its `unresolved:<name>` current rows move to the uuid only when
-the entry covers now.
+the entry covers now. The meta value is the folded range (JSON from/until/
+case_sensitive); editing it in the file afterwards changes nothing, so
+check_rename_ranges warns every run until the file matches again.
 """
+import json
 import sqlite3
 import time
 from pathlib import Path
@@ -216,6 +219,37 @@ def pending_renames(conn, merges):
     return [r for r in merges.renames if f"{RENAMED}{r.uuid}:{r.name}" not in done]
 
 
+def _range_value(r):
+    return json.dumps({"from": r.from_ts, "until": r.until_ts, "exact": r.exact},
+                      sort_keys=True)
+
+
+def check_rename_ranges(conn, merges):
+    """Folded renames whose from/until/case_sensitive in the file no longer
+    match what was folded: a refold would need the pre-merge backup, so only
+    warn (every run, until the file is put back or the DB restored). A legacy
+    value '1' (folded before the range was stored) takes the file's range as
+    folded. Returns the warned (uuid, name) pairs; commits legacy updates."""
+    warned, legacy = [], []
+    for r in merges.renames:
+        key = f"{RENAMED}{r.uuid}:{r.name}"
+        row = conn.execute("SELECT value FROM meta WHERE key=?", (key,)).fetchone()
+        if not row:
+            continue
+        if row[0] == "1":
+            legacy.append((_range_value(r), key))
+        elif row[0] != _range_value(r):
+            warned.append((r.uuid, r.name))
+            print(f"[rename] WARNING: {r.display} ({r.uuid}): from/until/case_sensitive in "
+                  f"player_merges.json changed after it was folded ({row[0]}); the change does "
+                  "nothing. Put the old values back, or restore the pre-merge-*.db backup made "
+                  "before that fold (it is then folded again with the new range).")
+    if legacy:
+        conn.executemany("UPDATE meta SET value=? WHERE key=?", legacy)
+        conn.commit()
+    return warned
+
+
 def _fold_rename(conn, r, run_at):
     b = r.uuid
     row = conn.execute("SELECT name FROM players WHERE uuid=?", (b,)).fetchone()
@@ -225,8 +259,8 @@ def _fold_rename(conn, r, run_at):
     servers, n = _merge_scoreboards(conn, None, b, {r.display if r.exact else r.name}, b_name,
                                     r.from_ts, r.until_ts, move_current=r.covers(run_at),
                                     exact=r.exact)
-    conn.execute("INSERT INTO meta (key, value) VALUES (?, '1') ON CONFLICT(key) "
-                 "DO UPDATE SET value=excluded.value", (f"{RENAMED}{b}:{r.name}",))
+    conn.execute("INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT(key) "
+                 "DO UPDATE SET value=excluded.value", (f"{RENAMED}{b}:{r.name}", _range_value(r)))
     print(f"[rename] {r.display} -> {b}: {n} scoreboard history rows "
           f"(servers: {', '.join(sorted(servers)) or 'none'})")
     # Imported history is change-only and never says "this name is gone from
@@ -244,6 +278,7 @@ def _fold_rename(conn, r, run_at):
 def apply_pending_merges(conn, merges, run_at, db_path, *, backup=True):
     """Folds every not-yet-applied merge and rename in. One transaction;
     returns the list of (from, to) merges applied."""
+    check_rename_ranges(conn, merges)
     todo = pending(conn, merges)
     renames = pending_renames(conn, merges)
     if not todo and not renames:

@@ -140,12 +140,14 @@ def _write(out_dir, uuid, img):
 
 
 def _due(conn, out_dir, now, refresh_s, skip=()):
-    """(uuid, stored skin url) to check, never-checked first, then oldest."""
+    """(uuid, stored skin url) to check: never-checked first (most recently
+    active first, so leaderboard tops get theirs early), then oldest check."""
     rows = conn.execute(
         "SELECT p.uuid, h.checked_at, h.skin_url FROM players p "
         "LEFT JOIN player_heads h ON h.uuid = p.uuid "
         "WHERE NOT EXISTS (SELECT 1 FROM blocked_players b WHERE b.uuid = p.uuid) "
-        "ORDER BY h.checked_at IS NOT NULL, h.checked_at, p.uuid").fetchall()
+        "ORDER BY h.checked_at IS NOT NULL, h.checked_at, "
+        "p.last_activity IS NULL, p.last_activity DESC, p.uuid").fetchall()
     out = []
     for uuid, checked, url in rows:
         if is_fake_uuid(uuid) or uuid in skip:

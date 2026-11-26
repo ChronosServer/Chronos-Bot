@@ -142,10 +142,32 @@ def test_rename_fold_sums_unresolved_rows(renamed_history, run_snapshot):
                 "ORDER BY at", U) == [(1000, 1348102), (100_000, 9384201), (200_000, 10304631)]
     assert q(w, "SELECT COUNT(*) FROM scoreboard_snapshots WHERE uuid IS NULL") == [(0,)]
     assert q(w, "SELECT participant_key, value FROM scoreboard_current") == [(U, 10304631)]
-    assert q(w, "SELECT value FROM meta WHERE key=?", f"renamed:{U}:notquiterat_") == [("1",)]
+    assert json.loads(q(w, "SELECT value FROM meta WHERE key=?", f"renamed:{U}:notquiterat_")[0][0])         == {"from": None, "until": None, "exact": False}
     before = q(w, "SELECT * FROM scoreboard_snapshots ORDER BY id")
     run_snapshot(400_000, merges=rename())
     assert q(w, "SELECT * FROM scoreboard_snapshots ORDER BY id") == before
+
+
+def test_rename_range_edited_after_fold_warns(renamed_history, run_snapshot, capsys):
+    import merge_players
+    w = renamed_history
+    run_snapshot(300_000, merges=rename())
+    before = q(w, "SELECT * FROM scoreboard_snapshots ORDER BY id")
+    capsys.readouterr()
+    run_snapshot(400_000, merges=rename(until="1970-01-01"))
+    assert "changed after it was folded" in capsys.readouterr().out
+    assert q(w, "SELECT * FROM scoreboard_snapshots WHERE at < 400000 ORDER BY id") == before
+    run_snapshot(500_000, merges=rename())  # put back: quiet again
+    assert "changed after it was folded" not in capsys.readouterr().out
+    # a legacy '1' (folded before ranges were stored) adopts the file's range
+    c = sqlite3.connect(w.db_path)
+    try:
+        c.execute("UPDATE meta SET value='1' WHERE key=?", (f"renamed:{U}:notquiterat_",))
+        c.commit()
+        assert merge_players.check_rename_ranges(c, rename(until="1970-01-01")) == []
+        assert merge_players.check_rename_ranges(c, rename()) == [(U, "notquiterat_")]
+    finally:
+        c.close()
 
 
 def test_rename_date_bounds_leave_later_rows(renamed_history, run_snapshot):
