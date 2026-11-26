@@ -269,7 +269,8 @@ key by name, so its old scores sit unlinked):
               "until": "2024-06-30", "note": "OldName_ -> NewName"}]}
 ```
 `from`/`until` are optional (UTC dates, inclusive): when the name was this player's (for a
-name someone else used later). The next snapshot run folds the name's existing scoreboard
+name someone else used later). `"case_sensitive": true` matches the exact spelling only (when
+a Carpet bot uses the same name in another case, e.g. `NotAless50` vs the bot `notaless50`). The next snapshot run folds the name's existing scoreboard
 history into the player once (meta `renamed:<uuid>:<name>`, same DB backup as merges); from
 then on the live snapshot and the import count that name for the player. The website lists
 former names as "aka" and finds the player by them. On a server with imported backups, then
@@ -279,6 +280,11 @@ change-only and can't tell "the old name is gone from this backup" (after an in-
 stattransfer) from "unchanged", so the fold alone keeps the old name's last backup value
 until the first live run; the reimport re-reads each backup with the rename applied, then
 re-derives the approximate firsts/milestones.
+
+A name a server's own usercache doesn't know (a player renamed, then stattransferred there
+before rejoining it) is resolved through every server's usercache. Its live scores stored
+unlinked before that are folded into the player on the next run (`[names] ... now resolves
+to ...`, with a DB backup); backup-era rows of a name are never folded this way.
 
 ### Slur filter (`name_blocklist.txt`, `name_allowlist.txt`)
 One term per line at the repo root. A player whose name (or a former name) contains a term,

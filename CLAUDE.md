@@ -60,6 +60,15 @@ above). Missing flag = bot (fail closed). Default-excluded from leaderboards, to
   resolve those names first (date-bounded). `/player.aka`, `/search`, `/leaderboard?q=` and
   `resolve_player` use former names. Merges stay a SUM (owner: stattransfer moved only
   scoreboard scores and reset the old name; stat files were never transferred).
+- `"case_sensitive": true` on a rename matches the exact spelling only: needed when a
+  Carpet bot uses the same name in other case (`NotAless50`, IBeatLIMBO's old name, vs the
+  bot `notaless50`, a v3 uuid). Default is any case.
+- **Split first live run** (live DB only): the first scoreboard run's rows are at F
+  (13:50:55) but its snapshot_runs row at L (13:50:58), and history_fill's 0 rows are at
+  L. A fold (merge/rename/resolved name) summing an already-gone name made a spike at F
+  (old backup value + live value; 54 rows, all renamed/merged players).
+  `history_fill.collapse_split_first_run` gives F the L value and drops the L row; it runs
+  after every fold and once per DB (meta `first_run_split_collapsed`).
 - **When a rename needs an entry, and what a missed one does.** Vanilla stats key by uuid,
   so a rename never affects them; the display name is the newest usercache name; the backup
   import links any old name that some backup usercache or the live `players` names know.
@@ -317,7 +326,12 @@ tables) → SQLite → `api/` (FastAPI, read-only) → nginx `/api/stats/*` → 
   per uuid (`snapshot.load_usercache` / `newest_names`; `statsCommand.load_usercache`),
   never "last in file" (that put `NotQuiteRat_` back as the live name). `players.name`
   (display) is the newest across **all** servers' usercaches; participant resolution
-  stays per server (newest name only). The SMP team check counts a uuid as teamed if
+  is per server (newest name only), and a scoreboard name its own server's usercache
+  doesn't know falls back to every server's usercache entries (`global_name_map`, exact
+  spelling; fixed 2026-11-26: Algi_ was stattransferred on SMP while SMP's usercache only
+  knew Alugia7, so the account dropped to 0). Live rows stored as `unresolved:<name>`
+  are folded into the uuid once the name resolves (`merge_players.fold_resolved_names`,
+  each run; only rows since live tracking, never backup-era rows). The SMP team check counts a uuid as teamed if
   **any** of its usercache names is in a team (team lists hold names). The backup import
   learns every entry's name (old ones too) for merging.
 - **Account merges (`player_merges.json`, repo root; owner's list).** Separate accounts

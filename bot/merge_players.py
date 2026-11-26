@@ -31,6 +31,8 @@ import sqlite3
 import time
 from pathlib import Path
 
+from history_fill import collapse_split_first_run
+
 META = "merged:"
 RENAMED = "renamed:"
 
@@ -112,23 +114,25 @@ def _merge_stats(conn, a, b):
 
 
 def _merge_scoreboards(conn, a, b, names, b_name, from_ts=None, until_ts=None,
-                       move_current=True):
+                       move_current=True, exact=False):
     """a=None: a rename (only B's rows and the names' unresolved rows).
     from_ts/until_ts bound which unresolved name rows are folded (rows
     outside stay unresolved; after until_ts a name counts 0 from its first
-    later row). move_current: add the names' unresolved current rows."""
+    later row). move_current: add the names' unresolved current rows.
+    exact: names match their exact spelling (else lowercased, any case)."""
     names = sorted(names)
     marks = ",".join("?" * len(names))
     lo = -1 if from_ts is None else from_ts
     hi = 2 ** 62 if until_ts is None else until_ts
-    name_sql = (f" OR (uuid IS NULL AND lower(raw_name) IN ({marks}) AND at BETWEEN ? AND ?)"
+    col = "raw_name" if exact else "lower(raw_name)"
+    name_sql = (f" OR (uuid IS NULL AND {col} IN ({marks}) AND at BETWEEN ? AND ?)"
                 if names else "")
     name_p = [*names, lo, hi] if names else []
     rows = {}
     for sk, o, at, v, u, raw in conn.execute(
             "SELECT server_key, objective, at, value, uuid, raw_name FROM scoreboard_snapshots "
             f"WHERE uuid IN (?, ?){name_sql} ORDER BY at, id", (a, b, *name_p)):
-        src = u if u else "name:" + raw.lower()
+        src = u if u else "name:" + (raw if exact else raw.lower())
         rows.setdefault((sk, o), {}).setdefault(src, []).append((at, v))
     if names and until_ts is not None:
         # the name is someone else's after until_ts: it stops counting for B
@@ -137,7 +141,7 @@ def _merge_scoreboards(conn, a, b, names, b_name, from_ts=None, until_ts=None,
                 if src.startswith("name:") and series[-1][1]:
                     nxt = conn.execute(
                         "SELECT MIN(at) FROM scoreboard_snapshots WHERE server_key=? AND "
-                        "objective=? AND uuid IS NULL AND lower(raw_name)=? AND at>?",
+                        f"objective=? AND uuid IS NULL AND {col}=? AND at>?",
                         (sk, o, src[5:], until_ts)).fetchone()[0]
                     if nxt is not None:
                         series.append((nxt, 0))
@@ -157,7 +161,7 @@ def _merge_scoreboards(conn, a, b, names, b_name, from_ts=None, until_ts=None,
         written += len(merged)
     keys = ([a] if a else []) + ([r[0] for r in conn.execute(
         "SELECT DISTINCT participant_key FROM scoreboard_current WHERE participant_key LIKE "
-        "'unresolved:%'") if r[0][len("unresolved:"):].lower() in set(names)]
+        "'unresolved:%'") if _key_name(r[0], exact) in set(names)]
         if move_current else [])
     for pk in keys:
         for sk, o, v, upd, seen in conn.execute(
@@ -172,6 +176,11 @@ def _merge_scoreboards(conn, a, b, names, b_name, from_ts=None, until_ts=None,
             servers.add(sk)
         conn.execute("DELETE FROM scoreboard_current WHERE participant_key=?", (pk,))
     return servers, written
+
+
+def _key_name(participant_key, exact):
+    n = participant_key[len("unresolved:"):]
+    return n if exact else n.lower()
 
 
 def _merge_derived(conn, a, b):
@@ -213,8 +222,9 @@ def _fold_rename(conn, r, run_at):
     b_name = row[0] if row and row[0] else r.display
     conn.execute("INSERT OR IGNORE INTO players (uuid, name, name_resolved, first_seen, "
                  "last_observed) VALUES (?, NULL, 0, ?, ?)", (b, run_at, run_at))
-    servers, n = _merge_scoreboards(conn, None, b, {r.name}, b_name, r.from_ts, r.until_ts,
-                                    move_current=r.covers(run_at))
+    servers, n = _merge_scoreboards(conn, None, b, {r.display if r.exact else r.name}, b_name,
+                                    r.from_ts, r.until_ts, move_current=r.covers(run_at),
+                                    exact=r.exact)
     conn.execute("INSERT INTO meta (key, value) VALUES (?, '1') ON CONFLICT(key) "
                  "DO UPDATE SET value=excluded.value", (f"{RENAMED}{b}:{r.name}",))
     print(f"[rename] {r.display} -> {b}: {n} scoreboard history rows "
@@ -260,6 +270,58 @@ def apply_pending_merges(conn, merges, run_at, db_path, *, backup=True):
                   f"(servers: {', '.join(sorted(s1 | s2)) or 'none'})")
         for r in renames:
             touched |= _fold_rename(conn, r, run_at)
+        for sk in sorted(touched):  # no spike at a split first live run
+            collapse_split_first_run(conn, sk)
+        if touched:
+            derive.rebuild_totals(conn, run_at, sorted(touched))
+        conn.commit()
+    except BaseException:
+        conn.rollback()
+        raise
+    return todo
+
+
+def fold_resolved_names(conn, resolve, run_at, db_path, *, backup=True):
+    """Live scoreboard names stored unresolved (`unresolved:<name>`) that now
+    resolve (resolve(name) -> uuid or None; e.g. Algi_ on SMP once another
+    server's usercache knows it, after a stattransfer to the new name): their
+    rows since live tracking started are summed into the uuid's timeline (as
+    a rename fold, exact spelling) and their current rows move to it. Rows
+    from before live tracking (backups) stay: a name can change hands, old
+    names need a `renames` entry. Returns [(name, uuid)] folded; commits."""
+    from history_fill import SPLIT_WINDOW_S, live_start
+    todo = []
+    for (pk,) in conn.execute("SELECT DISTINCT participant_key FROM scoreboard_current "
+                              "WHERE participant_key LIKE 'unresolved:%' ORDER BY 1").fetchall():
+        name = pk[len("unresolved:"):]
+        u = resolve(name)
+        if u:
+            todo.append((name, u))
+    if not todo:
+        return []
+    starts = [live_start(conn, sk, "scoreboards") for (sk,) in conn.execute(
+        "SELECT key FROM servers WHERE provisioned=1").fetchall()]
+    starts = [s for s in starts if s is not None]
+    if not starts:
+        return []
+    from_ts = min(starts) - SPLIT_WINDOW_S
+    if backup:
+        print(f"[names] DB backup: {backup_db(conn, db_path)}")
+    import derive  # bot/ is on sys.path when the snapshot runs
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        touched = set()
+        for name, u in todo:
+            conn.execute("INSERT OR IGNORE INTO players (uuid, name, name_resolved, first_seen, "
+                         "last_observed) VALUES (?, NULL, 0, ?, ?)", (u, run_at, run_at))
+            row = conn.execute("SELECT name FROM players WHERE uuid=?", (u,)).fetchone()
+            servers, n = _merge_scoreboards(conn, None, u, {name}, (row and row[0]) or name,
+                                            from_ts, None, move_current=True, exact=True)
+            touched |= servers
+            print(f"[names] {name} now resolves to {u}: {n} scoreboard history rows "
+                  f"(servers: {', '.join(sorted(servers)) or 'none'})")
+        for sk in sorted(touched):
+            collapse_split_first_run(conn, sk)
         if touched:
             derive.rebuild_totals(conn, run_at, sorted(touched))
         conn.commit()

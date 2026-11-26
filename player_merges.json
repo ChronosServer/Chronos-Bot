@@ -49,6 +49,14 @@
   ],
   "renames": [
     {
+      "uuid": "76e49874-1786-4d4c-9527-4dfd741c989d",
+      "names": [
+        "NotAless50"
+      ],
+      "case_sensitive": true,
+      "note": "NotAless50 -> NotAless50_ (merged into IBeatLIMBO). Exact case: the Carpet bot notaless50 is not this player (owner, 2026-11-26)"
+    },
+    {
       "uuid": "43c80944-4099-43e3-948a-5f183a1ca0d4",
       "names": [
         "Alugia7"

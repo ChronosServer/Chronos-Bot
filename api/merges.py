@@ -10,7 +10,9 @@ merged away and merged into from itself.
 "until": "YYYY-MM-DD"} (dates optional, UTC, both inclusive): scoreboard
 entries under a former name of ONE account (scoreboards key by name; a name
 in no usercache can't be tied to its uuid otherwise). The dates bound when
-the name was this uuid's, for a name later used by someone else."""
+the name was this uuid's, for a name later used by someone else.
+"case_sensitive": true matches the names' exact spelling only (a Carpet bot
+spawned as `notaless50` is not the player `NotAless50`); default: any case."""
 import calendar
 import json
 import time
@@ -28,6 +30,10 @@ class Rename:
     display: str         # as written in the file
     from_ts: int = None  # None = unbounded
     until_ts: int = None
+    exact: bool = False  # case_sensitive: match `display` exactly
+
+    def matches(self, name):
+        return name == self.display if self.exact else (name or "").lower() == self.name
 
     def covers(self, at):
         return at is None or ((self.from_ts is None or at >= self.from_ts)
@@ -48,9 +54,8 @@ class Merges:
     def rename_target(self, name, at=None):
         """The uuid a former name belonged to at `at` (any time if None), or
         None. Merged-away uuids resolve to their target."""
-        n = (name or "").lower()
         for r in self.renames:
-            if r.name == n and r.covers(at):
+            if r.matches(name) and r.covers(at):
                 return self.target(r.uuid)
         return None
 
@@ -107,10 +112,13 @@ def _parse_renames(entries, merge_names):
         lo, hi = _date(e.get("from"), f"{where}.from"), _date(e.get("until"), f"{where}.until", True)
         if lo is not None and hi is not None and lo > hi:
             raise ValueError(f"player_merges.json {where}: from is after until")
+        exact = e.get("case_sensitive", False)
+        if not isinstance(exact, bool):
+            raise ValueError(f"player_merges.json {where}.case_sensitive must be true or false")
         for n in names:
             if n.lower() in merge_names:
                 raise ValueError(f"player_merges.json {where}: {n!r} is also a merge name")
-            r = Rename(u, n.lower(), n, lo, hi)
+            r = Rename(u, n.lower(), n, lo, hi, exact)
             for o in out:
                 if o.name == r.name and o.uuid != u and _overlap(o, r):
                     raise ValueError(f"player_merges.json {where}: {n!r} belongs to two "

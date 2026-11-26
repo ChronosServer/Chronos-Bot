@@ -38,8 +38,9 @@ from sql.migrations import migrate  # noqa: E402
 from api.settings import DEFAULTS, load_settings  # noqa: E402
 from mojang import MojangClient, default_fetch  # noqa: E402
 from api.merges import load_merges  # noqa: E402
-from merge_players import apply_pending_merges  # noqa: E402
-from history_fill import ensure_filled  # noqa: E402
+from merge_players import apply_pending_merges, fold_resolved_names  # noqa: E402
+from history_fill import (SPLIT_META, collapse_split_first_run,  # noqa: E402
+                          ensure_filled)
 from ignored_keys import apply_ignored  # noqa: E402
 SCHEMA_PATH = REPO_ROOT / "sql" / "schema.sql"
 CONFIG_PATH = REPO_ROOT / "config.json"
@@ -210,6 +211,17 @@ def newest_names(entries):
         if u not in out or exp >= out[u][1]:
             out[u] = (n, exp)
     return out
+
+
+def global_name_map(entries):
+    """name -> uuid over every server's usercache entries ((uuid, name,
+    expires) triples); a name held by two uuids goes to the newest entry.
+    Exact spelling, like scoreboard names."""
+    best = {}
+    for u, n, exp in entries:
+        if n and (n not in best or (exp or 0) > best[n][1]):
+            best[n] = (u, exp or 0)
+    return {n: u for n, (u, _) in best.items()}
 
 
 def load_usercache(server_root):
@@ -482,8 +494,11 @@ def read_scoreboard_nbt(path):
 
 
 def run_scoreboard_snapshot(conn, server_key, world_path, usercache, dictionary, now,
-                            merges=None, mirror_re=None):
-    """mirror_re: compiled settings.snapshot.mirror_prefix (None: dictionary only)."""
+                            merges=None, mirror_re=None, global_names=None):
+    """mirror_re: compiled settings.snapshot.mirror_prefix (None: dictionary only).
+    global_names: name -> uuid from every server's usercache (global_name_map),
+    for names this server's usercache doesn't know (a player renamed and
+    stattransferred here before rejoining this server)."""
     data = load_scoreboard_dat(world_path)
     objectives_tag = nbt_list(data, "Objectives")
     scores_tag = nbt_list(data, "PlayerScores")
@@ -566,6 +581,8 @@ def run_scoreboard_snapshot(conn, server_key, world_path, usercache, dictionary,
             player_uuid, kind = renamed, "player"
         else:
             player_uuid, kind = _resolve_participant(raw_name, name_to_uuid, known_stat_uuids)
+            if not player_uuid and global_names and raw_name in global_names:
+                player_uuid, kind = global_names[raw_name], "player"
         # player_merges.json: a merged account's entries (by uuid, or by one
         # of its listed names) are summed into the target player.
         if merges and not renamed:
@@ -713,6 +730,26 @@ def record_run(conn, server_key, kind, ok, error, entries_read, rows_written, du
     conn.commit()
 
 
+def collapse_split_once(conn, run_at):
+    """history_fill.collapse_split_first_run on every server, once per DB
+    (meta first_run_split_collapsed); totals of the fixed servers rebuilt."""
+    if conn.execute("SELECT 1 FROM meta WHERE key=?", (SPLIT_META,)).fetchone():
+        return
+    fixed = {}
+    for (key,) in conn.execute("SELECT key FROM servers WHERE provisioned=1").fetchall():
+        n = collapse_split_first_run(conn, key)
+        if n:
+            fixed[key] = n
+    if fixed:
+        import derive
+        derive.rebuild_totals(conn, run_at, sorted(fixed))
+        print("[fill] split first run, fold spikes removed: " + ", ".join(
+            f"{k} {n}" for k, n in sorted(fixed.items())))
+    conn.execute("INSERT INTO meta (key, value) VALUES (?, '1') ON CONFLICT(key) "
+                 "DO UPDATE SET value='1'", (SPLIT_META,))
+    conn.commit()
+
+
 def run_once(config=None, now_fn=time.time, dictionary=None, mojang_fetch=None, merges=None):
     """merges: api.merges.Merges (default: player_merges.json)."""
     cfg = config if config is not None else load_config()
@@ -742,6 +779,26 @@ def run_once(config=None, now_fn=time.time, dictionary=None, mojang_fetch=None, 
     # New player_merges.json entries fold the existing data together first,
     # so this run's summed values build on merged history.
     apply_pending_merges(conn, merges, run_at, settings.db_path)
+
+    # usercache.json is per-server, sitting at the server's root directory
+    # (sibling of the world folder) -- NOT shared across servers, and NOT
+    # inside the world dir itself. Participant resolution is per server; a
+    # scoreboard name no usercache of its own server knows falls back to
+    # every server's usercaches (global_names). The DISPLAY name
+    # (players.name) is the newest one across every server's usercache, so a
+    # server the player hasn't joined since a rename can't put the old name back.
+    entries = {}
+    for key in settings.servers:
+        root = cfg.get("server", {}).get(f"{key}_path")
+        if key not in excluded and root:
+            entries[key] = load_usercache_entries(root)
+    all_entries = [e for es in entries.values() for e in es]
+    display = {u: n for u, (n, _) in newest_names(all_entries).items()}
+    global_names = global_name_map(all_entries)
+    # Live names stored unresolved that now resolve: fold them in once.
+    fold_resolved_names(conn, global_names.get, run_at, settings.db_path)
+    # Once per DB: the split first live run's fold spikes (history_fill).
+    collapse_split_once(conn, run_at)
     injected_fetch = mojang_fetch
     if mojang_fetch is None:
         timeout = settings.mojang.timeout_s
@@ -755,20 +812,6 @@ def run_once(config=None, now_fn=time.time, dictionary=None, mojang_fetch=None, 
     mirrors, mirror_error = mirror_names(conn, version, settings, dictionary)
     mirror_re = (re.compile(settings.snapshot.mirror_prefix)
                  if settings.snapshot.mirror_prefix else None)
-
-    # usercache.json is per-server, sitting at the server's root directory
-    # (sibling of the world folder) -- NOT shared across servers, and NOT
-    # inside the world dir itself. Participant resolution stays per server;
-    # only the DISPLAY name (players.name) is the newest one across every
-    # server's usercache, so a server the player hasn't joined since a
-    # rename can't put the old name back.
-    entries = {}
-    for key in settings.servers:
-        root = cfg.get("server", {}).get(f"{key}_path")
-        if key not in excluded and root:
-            entries[key] = load_usercache_entries(root)
-    display = {u: n for u, (n, _) in newest_names(
-        [e for es in entries.values() for e in es]).items()}
 
     for key, s in settings.servers.items():
         if key in excluded:
@@ -809,7 +852,8 @@ def run_once(config=None, now_fn=time.time, dictionary=None, mojang_fetch=None, 
             t0 = time.time()
             try:
                 result = run_scoreboard_snapshot(conn, key, world_path, usercache, mirrors, now,
-                                                 merges=merges, mirror_re=mirror_re)
+                                                 merges=merges, mirror_re=mirror_re,
+                                                 global_names=global_names)
                 record_run(conn, key, "scoreboards", True, None,
                            result["entries_read"], result["rows_written"],
                            int((time.time() - t0) * 1000), now=now)

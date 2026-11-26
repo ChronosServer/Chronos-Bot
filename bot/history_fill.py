@@ -75,3 +75,34 @@ def ensure_filled(conn):
     out = fill_all(conn)
     conn.commit()
     return out
+
+
+SPLIT_META = "first_run_split_collapsed"
+SPLIT_WINDOW_S = 60
+
+
+def collapse_split_first_run(conn, server_key, L=None):
+    """The live DB's first scoreboard run wrote its rows a few seconds before
+    the time its snapshot_runs row says (F = 13:50:55, L = 13:50:58 on smp,
+    from older code). The fill's 0 rows sit at L, so a key with rows at both
+    F and L is one a fold summed with a name/alt that was already gone: at F
+    the sum still held that name's stale backup value (a spike), at L the
+    right one. Both rows describe the same run: give F the L value and drop
+    the L row. Idempotent; returns the keys fixed. No commit."""
+    if L is None:
+        L = live_start(conn, server_key, "scoreboards")
+    if L is None:
+        return 0
+    pairs = conn.execute(
+        "SELECT l.id, l.value, l.objective, l.uuid, l.raw_name FROM scoreboard_snapshots l "
+        "WHERE l.server_key=? AND l.at=? AND EXISTS (SELECT 1 FROM scoreboard_snapshots f "
+        "  WHERE f.server_key=l.server_key AND f.objective=l.objective AND f.uuid IS l.uuid "
+        "  AND (l.uuid IS NOT NULL OR f.raw_name=l.raw_name) AND f.at>=? AND f.at<?)",
+        (server_key, L, L - SPLIT_WINDOW_S, L)).fetchall()
+    for lid, value, obj, uuid, raw in pairs:
+        conn.execute(
+            "UPDATE scoreboard_snapshots SET value=? WHERE server_key=? AND objective=? "
+            "AND uuid IS ? AND (? IS NOT NULL OR raw_name=?) AND at>=? AND at<?",
+            (value, server_key, obj, uuid, uuid, raw, L - SPLIT_WINDOW_S, L))
+        conn.execute("DELETE FROM scoreboard_snapshots WHERE id=?", (lid,))
+    return len(pairs)

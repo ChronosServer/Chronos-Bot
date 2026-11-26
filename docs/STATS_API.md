@@ -27,7 +27,7 @@ the data contract.
    current name (NotQuiteRat_ -> NotQuiteRat, Q1306 -> DiggusMaximus123, EulerGauss ->
    UsernameAccount, Obi0081_ and Obi81 -> ObiWan81_, lukepourquoi -> justlukie, Alugia7 ->
    Algi_), and replaced accounts are merged into the
-   new one (NotAless50_ -> IBeatLIMBO, wRongo_ -> _wRongo, qstrql -> qstrqlw, plus the
+   new one (NotAless50 -> NotAless50_ -> IBeatLIMBO, wRongo_ -> _wRongo, qstrql -> qstrqlw, plus the
    earlier LordHamster42 -> hampter42). Merged accounts are **added together** (not "the new account's value once
    it exists"): the in-game `stattransfer` moved only scoreboard scores and reset the old
    name, and never touched stat files, so the old account's vanilla stats are its own.
