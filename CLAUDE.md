@@ -571,6 +571,11 @@ today; fix when one starts to matter):
   first entry (compass, clock: looks right).
 - Heads: no file for default-skin accounts (the site falls back); the face of the default
   Steve/Alex skins could be rendered from the client jar if wanted.
+- Heads nginx: a not-yet-downloaded `/cache/heads/<uuid>.png` answers the site's "Not found"
+  page with **200** instead of a 404 (items already 404 properly; STATS_API.md promises 404).
+  The site copes (image fails to decode → Crafatar fallback). Fix with the next nginx touch:
+  `try_files $uri =404;` in the heads location, like items. Check: `curl -s -o /dev/null -w
+  "%{http_code}\n" https://www.chronosmc.com/cache/heads/00000000-0000-0000-0000-000000000000.png`.
 
 ## Website nav plan (for when Stats ships)
 Top-level nav gets one new "Stats ▾" dropdown (Overview / Explorer / Scoreboards /
