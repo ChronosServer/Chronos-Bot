@@ -140,9 +140,9 @@ are backend config: build the range picker from `/meta.settings.range_presets`
   of Mojang lookups per run): new players within a few runs, every player re-checked about
   once a day (`stats_tracking.heads`). **404 = use the fallback**: fake players
   (`is_fake`), slur-blocked players, accounts without a custom skin (the default
-  Steve/Alex-style skins), and players not fetched yet. Don't call Mojang/Crafatar from the
-  browser for a uuid that 404s here only because it isn't fetched yet; a fallback letter
-  square or a third-party head is fine.
+  Steve/Alex-style skins), and players not fetched yet. On a 404 keep the site's current
+  fallback (third-party head, then the letter square); never show a third-party head for a
+  fake or slur-blocked player (their names don't reach the site anyway).
 - **Item icons: `/cache/items/<id>.png`**, the bare id (`dropper.png`, `creeper_spawn_egg.png`,
   `player_head.png`): 64x64 PNG, pixel art, for **every item id** of the server's Minecraft
   version, rendered from the client jar like the inventory (blocks isometric, flat items

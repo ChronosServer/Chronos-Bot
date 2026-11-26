@@ -43,7 +43,7 @@ player/stat/scoreboard can be viewed over 1 day / 1 week / 1 month / 6 months
 Core:
 - **Stat Explorer** — search/browse any vanilla stat or custom scoreboard,
   across any server/scope, with autocomplete for both stat names and player
-  names, player head icons (via Crafatar), sortable leaderboards.
+  names, player head icons (our own `/cache/heads/<uuid>.png`, see STATS_API.md "Images"), sortable leaderboards.
 - **Scoreboards** — separate from vanilla stats view; vanilla-mirrored
   objectives hidden here (already captured via stat snapshots) to avoid
   showing the same number twice under two different names.

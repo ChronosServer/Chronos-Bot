@@ -282,7 +282,7 @@ tables) → SQLite → `api/` (FastAPI, read-only) → nginx `/api/stats/*` → 
 | `deploy/` | systemd units (snapshot, timer, api) + nginx snippet; `update.sh` (git-pull updater, see Deploy) + `check_config.py` |
 | `bot/merge_players.py`, `api/merges.py`, `player_merges.json` | account merges (alt → main): the one-time fold, the parser, the owner's list |
 | `bot/history_fill.py` | the 0 rows a server's first live run implies (keys only in backups) |
-| `tests/` | pytest, 404 tests, synthetic worlds built through the real snapshot write path, no network; tests never read the repo's config.json or player_merges.json (autouse fixtures; `api_config` writes a config) |
+| `tests/` | pytest, 508 tests, synthetic worlds built through the real snapshot write path, no network; tests never read the repo's config.json or player_merges.json (autouse fixtures; `api_config` writes a config) |
 | `docs/STATS_PLAN.md` | agreed scope, hard rules, build order/status |
 | `docs/STATS_API.md` | the HTTP contract for the website (copy into the website repo) |
 | `docs/STATS_DATABASE.md` | operator guide: config, first setup, upgrade, health checks, backup, reset |
@@ -514,10 +514,11 @@ then `python -m pytest tests -q` (Windows, Python 3.13 locally; server is 3.14).
    0 score), not their stale value.
 
 ## Known follow-ups (open)
-None from the stats backend. Bot-side requests queued by the owner (2026-11-25): the
-members export should use each member's Discord username, not their Chronos server
-nickname; and archive pictures should be cached (they disappear after a while; Discord
-attachment URLs expire).
+None from the backend (stats round 2 incl. player heads and item icons done 2026-11-26 on
+branch `stats-round2`; the members-export name and archive picture cache requests are done,
+see syncCommand above). For the website: on the status page, `building` and `building2`
+go after `mirror` and before `snapshot` (owner's request; `server_status.json` stays
+alphabetical).
 
 ## Website nav plan (for when Stats ships)
 Top-level nav gets one new "Stats ▾" dropdown (Overview / Explorer / Scoreboards /
