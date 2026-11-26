@@ -537,7 +537,7 @@ then `python -m pytest tests -q` (Windows, Python 3.13 locally; server is 3.14).
    bumping `server.minecraft_version`.
 
 4. **Tracking toggle off hides that server's data** (`api.scope.tracked_sql`; fixed
-   2026-11-25, not deployed yet). Read time only, never deleted: `stat_filter_sql` /
+   2026-11-25, live). Read time only, never deleted: `stat_filter_sql` /
    `scoreboard_filter_sql` add an `EXISTS (servers ... track_*=1)` clause by default
    (`track="stats"` / `"scoreboards"`; `track="category"` for rows with a category column:
    firsts, milestones, spotlight; `scoreboard` → `track_scoreboards`, else `track_stats`).
@@ -545,8 +545,8 @@ then `python -m pytest tests -q` (Windows, Python 3.13 locally; server is 3.14).
    milestones, `/meta.categories`. **Derive passes `track=None`** and keeps computing on the
    frozen rows: hiding there would write a fake drop to 0 into totals history (and a jump
    back when re-enabled). Badges already awarded stay visible. A toggle change takes effect
-   at the next snapshot run (it syncs `servers`). Owner can now turn `track_scoreboards`
-   off on the CMPs + `building` once this is deployed.
+   at the next snapshot run (it syncs `servers`). The owner can turn `track_scoreboards`
+   off on the CMPs + `building` (a config edit).
 5. **Import: renamed players' old-name scoreboard entries** (fixed 2026-11-25; owner's
    decision: **match by uuid, sum under the latest name**). In `_scoreboard_rows`, every raw
    name that resolves to a uuid (any backup's usercache, or the live `players` names) is
@@ -575,16 +575,16 @@ syncCommand above). For the website (handed `docs/STATS_API.md`): heads from
 `/cache/heads/<uuid>.png` first, Crafatar only on a 404 (the site still used Crafatar on
 2026-11-26); on the status page, `building` and `building2` go after `mirror` and before
 `snapshot` (owner's request; `server_status.json` stays alphabetical).
-Fixed 2026-11-26 (small follow-ups round, not deployed yet): `/totals` with no data in any
+Fixed and deployed 2026-11-26 (small follow-ups round): `/totals` with no data in any
 scope returns `effective_from = to` (was 0, an axis at 1970); heads go never-checked first,
 most recently active (`players.last_activity` DESC) first; nginx `/cache/heads/` location
-with `try_files $uri =404` added to `deploy/nginx/chronos-stats-api.conf` (owner pastes it
-into the server's site config); a rename's from/until/case_sensitive edited after its fold
+with `try_files $uri =404` in `deploy/nginx/chronos-stats-api.conf`, installed in the
+server's site config (a missing head now answers 404); a rename's from/until/case_sensitive edited after its fold
 now warns every run (`merge_players.check_rename_ranges`; meta `renamed:` value = the folded
 range as JSON, legacy `1` adopts the file's range); members.json / archive.json carry
 Discord ids (see syncCommand above).
 
-Bot review (2026-11-26, not deployed yet), fixed: `/status` failed whenever the SMP was
+Bot review (deployed 2026-11-26), fixed: `/status` failed whenever the SMP was
 offline (storage check didn't catch a refused connection); `/stattransfer` blocked the
 loop, said "transferred" when the SMP was offline, and now uses one RCON connection, stops
 at the first error and then does NOT reset the old name; `/tps` failed on a level.dat being
@@ -599,8 +599,8 @@ server back / never back) and `/whitelist` were run against a local fake RCON se
 `type=listening` was dropped from `discord.Game`, which ignores it).
 
 Left as they are (not small; owner agreed 2026-11-26: no effect on the site today):
-- `/rankings?by=top1` is a read-time RANK() over all current values, `@cached`, never
-  timed on the live DB. If uncached calls go over ~1 s, precompute it in derive.
+- `/rankings?by=top1` is a read-time RANK() over all current values, `@cached`. Timed on
+  the live DB 2026-11-26: ~0.5 s uncached, so no precompute. Revisit if it goes over ~1 s.
 - Firsts a player lost while slur-blocked (re-seeded to the next holder) don't come back
   when they're allowlisted; badges/rivalries recompute, firsts don't.
 - Item icons drawn as a particle-texture fallback (reported by `render_items.py`): copper
