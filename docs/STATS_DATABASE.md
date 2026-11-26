@@ -301,7 +301,8 @@ next snapshot run (table `blocked_players`), no restart. Check what a list catch
   slur-blocked players or accounts merged into another (`player_merges.json`; an existing
   file is removed) or players without a skin. The run
   log line: `[all] heads: written=.. checked=.. removed=..`. At the defaults (60 per run, every 15 min)
-  a first fill of ~2,000 players takes about 8 hours. Needs Pillow (`requirements.txt`); without it the step
+  a first fill of the ~3,000 players takes about 12 hours (in uuid order, so at random).
+  Fetched over IPv4 only by default (`ipv4_only`): the live server's IPv6 always gets 429. Needs Pillow (`requirements.txt`); without it the step
   prints an error and the rest of the run is unaffected.
 - **Item icons** (`tools/render_items.py`, by hand, after every Minecraft version bump):
   downloads the client jar for `server.minecraft_version` from Mojang (sha1-checked, kept as

@@ -543,10 +543,15 @@ then `python -m pytest tests -q` (Windows, Python 3.13 locally; server is 3.14).
    0 score), not their stale value.
 
 ## Known follow-ups (open)
-Stats round 2 (incl. player heads and item icons) done 2026-11-26 on branch `stats-round2`;
-the members-export name and archive picture cache requests are done (see syncCommand
-above). For the website: on the status page, `building` and `building2` go after `mirror`
-and before `snapshot` (owner's request; `server_status.json` stays alphabetical).
+Stats round 2 (incl. player heads and item icons) done, merged to `master` and live
+2026-11-26; the members-export name and archive picture cache requests are done (see
+syncCommand above). For the website (handed `docs/STATS_API.md`): heads from
+`/cache/heads/<uuid>.png` first, Crafatar only on a 404 (the site still used Crafatar on
+2026-11-26); on the status page, `building` and `building2` go after `mirror` and before
+`snapshot` (owner's request; `server_status.json` stays alphabetical).
+- Heads are fetched in uuid order (never-checked first): the first fill of ~3k players takes
+  ~12 h and the leaderboard tops get theirs at random. If that matters, order never-checked
+  players by `players.last_activity` DESC in `heads._due`.
 
 Small review findings left as they are (owner agreed 2026-11-26: no effect on the site
 today; fix when one starts to matter):
