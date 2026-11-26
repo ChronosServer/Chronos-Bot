@@ -72,7 +72,7 @@ above). Missing flag = bot (fail closed). Default-excluded from leaderboards, to
 - **When a rename needs an entry, and what a missed one does.** Vanilla stats key by uuid,
   so a rename never affects them; the display name is the newest usercache name; the backup
   import links any old name that some backup usercache or the live `players` names know.
-  An entry is only needed when NO usercache knows the old name (the 7 listed on 2026-11-26).
+  An entry is only needed when NO usercache knows the old name (the `renames` in `player_merges.json`).
   A missed one: that player's scoreboard history before the rename stays under
   `unresolved:<old name>` (hidden unless include_bots), so their scoreboard series jumps at
   the stattransfer; no `aka`, old name not searchable; if the score was never stattransferred
