@@ -51,8 +51,8 @@ stays alphabetical, so the site orders it.
   - `404 {"error": "player not found"}`.
   - `422 {"detail": [...]}`: a param has the wrong type or is out of range, e.g. a
     non-integer `from`.
-- Player heads: `https://crafatar.com/avatars/<uuid>?size=32&overlay` (works for every
-  uuid, named or not).
+- Player heads: **our own `/cache/heads/<uuid>.png` first** (see Images); only on a 404 fall
+  back to `https://crafatar.com/avatars/<uuid>?size=32&overlay`, then the letter square.
 - `/leaderboard` and `/rankings` share the row shape `{rank, uuid, name, value}`; ties share
   a rank (1, 1, 3).
 - `name` can be `null`: about 1.6k old players have no known name yet (lookups fill
