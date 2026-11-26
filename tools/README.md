@@ -269,3 +269,9 @@ the timer and the service, then run
 
 To check the result, see `/api/stats/meta`: `tracking_started_at.smp` should now be the
 1.16 backup's date.
+
+## Item icons (`tools/render_items.py`)
+A separate tool, documented in `docs/STATS_DATABASE.md` ("Player heads and item icons"):
+renders every item id of `server.minecraft_version` from the client jar into
+`<website_path>/cache/items/<id>.png`. Run it after each Minecraft version bump
+(`--dry-run` first).

@@ -13,6 +13,11 @@ the data contract.
    1b. **Slur filter**: players whose name or a former name contains a slur are gone from the
    whole API, even with `include_bots=true`; `/player` and `/compare` answer 404. They stay
    inside whole-server `/totals` lines (no name is shown there).
+2. **Player heads on our server**: `/cache/heads/<uuid>.png` (see Images below). No file
+   (404) for fake players, slur-blocked players, players without a skin and players not
+   fetched yet: keep the site's fallback.
+3. **Item icons from the game files**: `/cache/items/<id>.png` now exists for every item id
+   of the server's version, rendered like the inventory (see Images below).
 4. **New `GET /rankings?by=top1|firsts|badges`** for "Top players".
 5. **`/totals`**: new `starts` (one per line), and `effective_from` is now the **earliest**
    line start (it was the latest), so each line begins at its own data.
@@ -126,8 +131,27 @@ are backend config: build the range picker from `/meta.settings.range_presets`
 - Everything else is a plain count. Format big numbers compactly (1.2M) with the
   exact value in a tooltip.
 - Stat keys look like `category=minecraft:mined`, `key=minecraft:stone`. Display them
-  without the namespace and with spaces ("Mined · Stone"). For item icons use whatever
-  the site already uses (the site has `/cache/items/*.png`).
+  without the namespace and with spaces ("Mined · Stone"). Item icons: see Images.
+
+### Images (static files, not under `/api/stats/`)
+- **Player heads: `/cache/heads/<uuid>.png`**, the uuid exactly as the API returns it (lowercase,
+  with dashes). 64x64 PNG, pixel art (draw with `image-rendering: pixelated`): the skin's 8x8
+  face with the hat layer on top. Written by the snapshot (every 15 min, a bounded number
+  of Mojang lookups per run): new players within a few runs, every player re-checked about
+  once a day (`stats_tracking.heads`). **404 = use the fallback**: fake players
+  (`is_fake`), slur-blocked players, accounts without a custom skin (the default
+  Steve/Alex-style skins), and players not fetched yet. Don't call Mojang/Crafatar from the
+  browser for a uuid that 404s here only because it isn't fetched yet; a fallback letter
+  square or a third-party head is fine.
+- **Item icons: `/cache/items/<id>.png`**, the bare id (`dropper.png`, `creeper_spawn_egg.png`,
+  `player_head.png`): 64x64 PNG, pixel art, for **every item id** of the server's Minecraft
+  version, rendered from the client jar like the inventory (blocks isometric, flat items
+  flat; chests, shulker boxes, heads, beds, banners, shields and the conduit as their 3D
+  models). Not exact (drawn as their particle texture): copper golem statues, the decorated
+  pot, the dragon head. A stat key `minecraft:stone` -> `stone.png`. Ids that no longer exist
+  in the current version (renamed in an update, e.g. `grass` -> `short_grass`) have no
+  icon, so the site needs its own override for those; the operator's render report lists the
+  Storage names concerned.
 
 ---
 

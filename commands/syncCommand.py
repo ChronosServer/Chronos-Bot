@@ -27,10 +27,8 @@ _bot_cfg = _cfg['bot']
 _server_cfg = _cfg['server']
 
 DATA_DIR = os.path.join(_server_cfg['website_path'], 'data')
-ITEM_CACHE_DIR = os.path.join(_server_cfg['website_path'], 'cache', 'items')
 STATE_FILE = 'sync_state.json'
 ARCHIVE_CHANNEL_ID = int(_bot_cfg.get('archive_channel_id') or 0)  # 0 = no forum archive
-MC_ASSETS = f"https://raw.githubusercontent.com/InventivetalentDev/minecraft-assets/{_server_cfg['minecraft_version']}/assets/minecraft/textures"
 
 # how often things refresh, and the most time each step may take before it is abandoned
 STATUS_EVERY_SECONDS = 300      # server online/offline list (one RCON ping per server each time)
@@ -38,7 +36,6 @@ HEAVY_EVERY_HOURS = 8           # storage scan + forum archive
 STEP_TIMEOUT = {'storage': 900, 'archive': 3600, 'status': 60}
 
 os.makedirs(DATA_DIR, exist_ok=True)
-os.makedirs(ITEM_CACHE_DIR, exist_ok=True)
 
 MS_REGIONS = _server_cfg['storage_regions']
 DIG_REGIONS = _server_cfg['dig_storage_regions']
@@ -100,35 +97,6 @@ async def run_step(bot, name, factory, timeout):
 
 
 # ---------- storage ----------
-
-def _fetch_texture(url, dest):
-    try:
-        r = requests.get(url, timeout=5)
-        if r.status_code == 200:
-            with open(dest, 'wb') as f:
-                f.write(r.content)
-            return True
-    except Exception:
-        pass
-    return False
-
-
-def cache_item_textures(item_ids):
-    for raw_id in item_ids:
-        id_ = raw_id.replace('minecraft:', '')
-        dest = os.path.join(ITEM_CACHE_DIR, f'{id_}.png')
-        if os.path.exists(dest):
-            continue
-        urls = [
-            f'{MC_ASSETS}/item/{id_}.png',
-            f'{MC_ASSETS}/block/{id_}.png',
-            f'{MC_ASSETS}/block/{id_}_top.png',
-            f'{MC_ASSETS}/block/{id_}_side.png',
-        ]
-        for url in urls:
-            if _fetch_texture(url, dest):
-                break
-
 
 def _cache_regions(region_names):
     for name in region_names:
@@ -203,8 +171,8 @@ def sync_storage(region_lock):
     if not ms and not dig:
         raise RuntimeError('storage scan found no items at all, keeping the old files')
 
-    # cache textures for all unique items
-    cache_item_textures(set(ms.keys()) | set(dig.keys()))
+    # Item icons (<website_path>/cache/items/<id>.png) are rendered from the
+    # client jar by tools/render_items.py, not fetched here.
 
     for fname, counts in (('ms_storage.json', ms), ('dig_storage.json', dig)):
         if not counts:

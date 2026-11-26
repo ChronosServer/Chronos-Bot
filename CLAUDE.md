@@ -62,6 +62,17 @@ above). Missing flag = bot (fail closed). Default-excluded from leaderboards, to
   scoreboard scores and reset the old name; stat files were never transferred).
 - New reads: `/rankings` (top1 | firsts | badges), `/totals.starts` (per-line start;
   `effective_from` = the earliest), `/leaderboard?q=`, `/search` space = `_`.
+- **Player heads** (`bot/heads.py`, last step of every snapshot run, `stats_tracking.heads`
+  limits, table `player_heads` from migration v6): `<server.website_path>/cache/heads/<uuid>.png`,
+  64x64 face + hat from the Mojang session-server skin; none for fake / blocked / skinless.
+  Not recorded in `snapshot_runs` (that would move `data_version` for nothing).
+- **Item icons** (`tools/render_items.py` + `tools/item_icons.py`, run by hand per MC
+  version): every id in the client jar's `assets/minecraft/items/` rendered to
+  `<website_path>/cache/items/<id>.png` (own small rasterizer, Pillow only for PNG I/O; block
+  models through `display.gui`, face rotation clockwise, side shading top 1.0 / left 0.8 /
+  right 0.6; chests, shulker boxes, heads, banners, shield, conduit drawn as entity boxes;
+  copper golem statues, decorated pot, dragon head = particle fallback, reported). The bot's
+  storage sync no longer scrapes textures from GitHub.
 
 ## Discord bot layout
 - **`main.py`:**
@@ -265,7 +276,7 @@ tables) → SQLite → `api/` (FastAPI, read-only) → nginx `/api/stats/*` → 
 | `api/cache.py` | `@cached`: key = path + declared params + data_version; ETag (includes a settings fingerprint)/304; LRU bounds from `api.cache_*` (default ≤128 MiB, bodies >8 MiB not cached) |
 | `api/db.py` | read-only connections; `data_version` = live `MAX(snapshot_runs.id)`; `REQUIRED_INDEXES` startup check |
 | `api/routes/*` | meta, leaderboard, series/totals, player/compare, search/keys, feeds (milestones, firsts, rivalries, activity, spotlight) |
-| `sql/schema.sql`, `sql/migrations.py` | schema (CREATE IF NOT EXISTS) then migrations by `PRAGMA user_version` (now 4: v3 adds `approximate` on firsts/milestones and the `imports` table; v4 adds `servers.position`) |
+| `sql/schema.sql`, `sql/migrations.py` | schema (CREATE IF NOT EXISTS) then migrations by `PRAGMA user_version` (now 6: v3 adds `approximate` on firsts/milestones and the `imports` table; v4 adds `servers.position`; v5 `blocked_players`; v6 `player_heads`) |
 | `tools/` | `import_backups.py` (old world backups into history), `stat_renames.json` (old->new stat keys, editable), `README.md` (operator guide) |
 | `dictionaries/` | bundled every-scoreboard `dictionary-<version>.json`, 1.16-26.2 (34 files; 1.19.1/.3/.4 missing); mirror-objective lists for the snapshot and the import |
 | `deploy/` | systemd units (snapshot, timer, api) + nginx snippet; `update.sh` (git-pull updater, see Deploy) + `check_config.py` |
