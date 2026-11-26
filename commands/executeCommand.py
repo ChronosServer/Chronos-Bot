@@ -1,3 +1,4 @@
+import asyncio
 import discord
 from discord import app_commands
 from discord.ext import commands
@@ -18,6 +19,14 @@ f.close()
 
 SERVERS = Literal[tuple(RCON_PORTS)]
 
+MAX_REPLY = 4000  # an embed description holds 4096 characters
+
+
+def run_rcon(rcon_port, command):
+    # blocking socket: called in a thread so the bot doesn't stall
+    with Client('127.0.0.1', int(rcon_port), passwd=rcon_pass, timeout=1.5) as client:
+        return client.run(command)
+
 class execute(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
@@ -37,15 +46,16 @@ class execute(commands.Cog):
         await ctx.defer()
         rcon_port = RCON_PORTS[server]
         try:
-            with Client('127.0.0.1', int(rcon_port), passwd=rcon_pass, timeout=1.5) as client:
-                response = client.run(command)
+            response = await asyncio.to_thread(run_rcon, rcon_port, command)
             if response:
-                await ctx.send(embed=discord.Embed(description=f"`{response}`").set_footer(text='Chronos™'))
+                if len(response) > MAX_REPLY:  # e.g. `help`: too long for one embed
+                    response = response[:MAX_REPLY] + f'... ({len(response):,} characters, cut)'
+                await ctx.send(embed=discord.Embed(description=f"```{response.replace('```', '`` `')}```").set_footer(text='Chronos™'))
             else:
                 await ctx.send(embed=discord.Embed(description=f"Command ran on `{server}` (no output).").set_footer(text='Chronos™'))
         except socket.timeout:
             await ctx.send(embed=discord.Embed(description="Couldn't reach the server in time").set_footer(text='Chronos™'))
-        except ConnectionRefusedError:
+        except ConnectionError:
             await ctx.send(embed=discord.Embed(description=f"Couldn't reach `{server}` — server is offline or RCON is unavailable").set_footer(text='Chronos™'))
 
 async def setup(bot):

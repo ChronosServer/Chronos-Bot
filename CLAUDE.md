@@ -121,6 +121,20 @@ above). Missing flag = bot (fail closed). Default-excluded from leaderboards, to
   - Each command file reads `config.json` at import time with a relative path, so run
     the bot from the repo root.
   - `examples/exampleCommand.py` is the template for a new command.
+  - **Never block the event loop** (bot review, 2026-11-26): RCON sockets, big NBT
+    reads (`scoreboard.dat`), directory walks and `psutil.cpu_percent(interval=...)`
+    go through `asyncio.to_thread` (`defaultRconLibrary.defaultRcon` already does).
+    `/stattransfer` used to send ~9,300 RCON commands on the loop and froze the bot.
+  - **Every command answers.** `main.on_command_error` unwraps the error
+    (`HybridCommandError` → `app_commands.CommandInvokeError` → original) and replies
+    "Something went wrong (`<type>`)" with the traceback in the console; before, a slash
+    command that raised stayed on "thinking..." forever. Library helpers that a command
+    `asyncio.gather`s per server (`status_check`, `storage_check`, `tps_check`, the
+    `/online` list) never raise, so one dead server can't fail the whole reply.
+  - Discord limits: embed description ≤ 4096 chars, ≤ 25 fields, files ≤
+    `guild.filesize_limit` (10 MB unboosted). Split long lists over several embeds and
+    check a file's size before sending it (`/region`, `/structure`, crash reports: an
+    alert without the file + its server path when too big).
 - **`Chronos-Library/`:** shared helpers (`defaultRconLibrary`, `restartLibrary`,
   `statusLibrary`, `tpsLibrary`, `filesizeLibrary`, `confirmLibrary`). Commands import
   them via `sys.path.append('./Chronos-Library/')`.
@@ -128,7 +142,11 @@ above). Missing flag = bot (fail closed). Default-excluded from leaderboards, to
   - RCON (`server.<key>_rcon_port` + shared `rcon_pass`): execute, whitelist, color,
     online, status, tps, restart.
   - Direct file reads: `stats` reads the SMP `scoreboard.dat`, `players/stats/` and
-    `usercache.json`. `storage` copies the region files listed in
+    `usercache.json`. Its stat leaderboards list **every stat file** (the real-player
+    rule above), named by the newest usercache name, else the stats DB's
+    `players.name` (`stats_tracking.db_path`, read-only, optional), else the uuid; bots
+    off = the SMP team rule, teamed if any of the uuid's usercache names or its DB name
+    is in a team (it used to walk usercache only and missed ~1,100 players). `storage` copies the region files listed in
     `server.storage_regions` / `dig_storage_regions` into `./region-cache` and scans
     them with `nbt`. `region` and `structure` serve world files.
   - Website files: `webserver` writes to `server.webserver_path`; `syncCommand` and
@@ -160,6 +178,14 @@ What they write to `<website_path>/data/`:
   and `author_avatar` are cached. Live result: 376 links cached (292 MB), 13 such text links.
 - `members.json` (membersExport): every 1 h. `name` = the member's own Discord name
   (`global_name`, else username), not their server nickname (owner's request, 2026-11-25).
+  Each entry also has `id` (Discord user id, a **string**: too big for a JS number),
+  `username`, `global_name` (null if none); `avatar` is the account's own, not a per-server
+  one (members joke-rename each other; the site keys people on `id`, 2026-11-26).
+- `archive.json` posts and every `messages` entry carry `author_id` (string),
+  `author_username`, `author_global_name` next to `author` / `author_avatar`. A saved thread
+  without `author_id` is fetched once more instead of reused. The archive sync saves its
+  progress to `sync_state.json` every 20 fetched threads, so a run cut off by the 1-hour
+  step timeout continues where it stopped next time instead of starting over.
 
 Loop state is kept in `sync_state.json`. nginx only serves these files by name (see the
 `location ~ ^/data/(…)\.json$` whitelist in the site config). A new data file must be
@@ -304,7 +330,7 @@ tables) → SQLite → `api/` (FastAPI, read-only) → nginx `/api/stats/*` → 
 | `deploy/` | systemd units (snapshot, timer, api) + nginx snippet; `update.sh` (git-pull updater, see Deploy) + `check_config.py` |
 | `bot/merge_players.py`, `api/merges.py`, `player_merges.json` | account merges (alt → main): the one-time fold, the parser, the owner's list |
 | `bot/history_fill.py` | the 0 rows a server's first live run implies (keys only in backups) |
-| `tests/` | pytest, 520 tests, synthetic worlds built through the real snapshot write path, no network; tests never read the repo's config.json or player_merges.json (autouse fixtures; `api_config` writes a config) |
+| `tests/` | pytest, 522 tests (stats only; the Discord commands have none), synthetic worlds built through the real snapshot write path, no network; tests never read the repo's config.json or player_merges.json (autouse fixtures; `api_config` writes a config) |
 | `docs/STATS_PLAN.md` | agreed scope, hard rules, build order/status |
 | `docs/STATS_API.md` | the HTTP contract for the website (copy into the website repo) |
 | `docs/STATS_DATABASE.md` | operator guide: config, first setup, upgrade, health checks, backup, reset |
@@ -549,21 +575,32 @@ syncCommand above). For the website (handed `docs/STATS_API.md`): heads from
 `/cache/heads/<uuid>.png` first, Crafatar only on a 404 (the site still used Crafatar on
 2026-11-26); on the status page, `building` and `building2` go after `mirror` and before
 `snapshot` (owner's request; `server_status.json` stays alphabetical).
-- Heads are fetched in uuid order (never-checked first): the first fill of ~3k players takes
-  ~12 h and the leaderboard tops get theirs at random. If that matters, order never-checked
-  players by `players.last_activity` DESC in `heads._due`.
+Fixed 2026-11-26 (small follow-ups round, not deployed yet): `/totals` with no data in any
+scope returns `effective_from = to` (was 0, an axis at 1970); heads go never-checked first,
+most recently active (`players.last_activity` DESC) first; nginx `/cache/heads/` location
+with `try_files $uri =404` added to `deploy/nginx/chronos-stats-api.conf` (owner pastes it
+into the server's site config); a rename's from/until/case_sensitive edited after its fold
+now warns every run (`merge_players.check_rename_ranges`; meta `renamed:` value = the folded
+range as JSON, legacy `1` adopts the file's range); members.json / archive.json carry
+Discord ids (see syncCommand above).
 
-Small review findings left as they are (owner agreed 2026-11-26: no effect on the site
-today; fix when one starts to matter):
-- `/totals` when **every** requested scope has no data yet (a brand-new server asked for
-  alone): falls back to the union range, so `effective_from` can be 0 (axis at 1970) with
-  empty series. Fix: return `effective_from = to` (or null) when `live` is empty
-  (`api/routes/series.py`).
+Bot review (2026-11-26, not deployed yet), fixed: `/status` failed whenever the SMP was
+offline (storage check didn't catch a refused connection); `/stattransfer` blocked the
+loop, said "transferred" when the SMP was offline, and now uses one RCON connection, stops
+at the first error and then does NOT reset the old name; `/tps` failed on a level.dat being
+saved; `/execute` output over 4096 chars, `/webserver list` over 25 files and big region /
+structure files failed without a reply; the crash watcher died for good on any error but
+"folder not found"; `/restart reload_bots` waits up to another `max_restart_time` for RCON and
+reports whether the bots were respawned (and checks the server is up before starting);
+`/whitelist` .txt with a BOM; `/calc` huge results; `/storage` item names are lowercased
+with spaces → `_`; `/structure` creates a missing structure folder. Checked before the push: every cog loads, and `/stattransfer`, `/restart` (plain + reload_bots,
+server back / never back) and `/whitelist` were run against a local fake RCON server
+(partial failure → no reset, offline/cancel → nothing sent). The bot status stays "Playing <status>" (owner, 2026-11-26; the unused
+`type=listening` was dropped from `discord.Game`, which ignores it).
+
+Left as they are (not small; owner agreed 2026-11-26: no effect on the site today):
 - `/rankings?by=top1` is a read-time RANK() over all current values, `@cached`, never
   timed on the live DB. If uncached calls go over ~1 s, precompute it in derive.
-- Editing a rename's `from`/`until` in `player_merges.json` after it was folded does
-  nothing (meta `renamed:<uuid>:<name>` is set); a changed range needs a DB restore from
-  the `pre-merge-*.db` backup, or a new name entry.
 - Firsts a player lost while slur-blocked (re-seeded to the next holder) don't come back
   when they're allowlisted; badges/rivalries recompute, firsts don't.
 - Item icons drawn as a particle-texture fallback (reported by `render_items.py`): copper
@@ -571,11 +608,6 @@ today; fix when one starts to matter):
   first entry (compass, clock: looks right).
 - Heads: no file for default-skin accounts (the site falls back); the face of the default
   Steve/Alex skins could be rendered from the client jar if wanted.
-- Heads nginx: a not-yet-downloaded `/cache/heads/<uuid>.png` answers the site's "Not found"
-  page with **200** instead of a 404 (items already 404 properly; STATS_API.md promises 404).
-  The site copes (image fails to decode → Crafatar fallback). Fix with the next nginx touch:
-  `try_files $uri =404;` in the heads location, like items. Check: `curl -s -o /dev/null -w
-  "%{http_code}\n" https://www.chronosmc.com/cache/heads/00000000-0000-0000-0000-000000000000.png`.
 
 ## Website nav plan (for when Stats ships)
 Top-level nav gets one new "Stats ▾" dropdown (Overview / Explorer / Scoreboards /

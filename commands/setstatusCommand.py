@@ -23,7 +23,7 @@ class setstatus(commands.Cog):
     async def setstatus(self, ctx, *, statusname: str = None):
         statusname = statusname or default_status
         await self.bot.change_presence(status=discord.Status.online,
-                                       activity=discord.Game(name=statusname, type=discord.ActivityType.listening))
+                                       activity=discord.Game(name=statusname))  # shows "Playing <status>" (owner: keep it)
         embed = discord.Embed(title=f'Changed bot status to {statusname}')
         embed.set_footer(text='Chronos™')
         await ctx.send(embed=embed)

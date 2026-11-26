@@ -20,7 +20,13 @@ class calc(commands.Cog):
         except Exception as e:
             await ctx.send(embed=discord.Embed(description=f"Couldn't evaluate `{expression}`: {e}").set_footer(text='Chronos™'))
             return
-        embed = discord.Embed(description=str(result))
+        try:
+            text = str(result)
+        except ValueError:  # an int over 4,300 digits can't be printed
+            text = 'The result is too big to show.'
+        if len(text) > 4000:
+            text = text[:4000] + f'... ({len(text):,} characters, cut)'
+        embed = discord.Embed(description=text)
         embed.set_footer(text='Chronos™')
         await ctx.send(embed=embed)
 

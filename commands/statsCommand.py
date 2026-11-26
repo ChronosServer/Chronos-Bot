@@ -4,6 +4,7 @@ from discord import app_commands
 from discord.ext import commands
 import json
 import os
+import sqlite3
 import sys
 from typing import Literal
 from nbt import nbt
@@ -21,6 +22,8 @@ trial_member_role = int(data['bot']['trial_member_role'])
 inactive_member_role = int(data['bot']['inactive_member_role'])
 smp_rcon_port = data['server']['smp_rcon_port']
 rcon_pass = data['server']['rcon_pass']
+# the stats DB knows names of players that usercache.json forgot (optional)
+STATS_DB_PATH = (data.get('stats_tracking') or {}).get('db_path')
 f.close()
 
 def _version_tuple(path):
@@ -68,20 +71,42 @@ TARGETS_BY_CATEGORY = {
 
 
 def load_usercache():
-    # One entry per NAME: a renamed player has one per name they used. The
-    # newest expiresOn ("2026-12-01 00:00:00 +0000", sorts as text) wins,
-    # never just the last entry in the file.
-    with open(USERCACHE_PATH) as f:
-        cache = json.load(f)
-    out = {}
+    """(uuid -> newest name, uuid -> every name). One entry per NAME: a
+    renamed player has one per name they used. The newest expiresOn
+    ("2026-12-01 00:00:00 +0000", sorts as text) wins, never just the last
+    entry in the file."""
+    try:
+        with open(USERCACHE_PATH) as f:
+            cache = json.load(f)
+    except FileNotFoundError:
+        cache = []
+    newest, every = {}, {}
     for entry in sorted(cache, key=lambda e: e.get('expiresOn') or ''):
-        out[entry['uuid']] = entry['name']
-    return out
+        newest[entry['uuid']] = entry['name']
+        every.setdefault(entry['uuid'], set()).add(entry['name'])
+    return newest, every
+
+
+def stats_db_names():
+    """uuid -> name from the stats DB's players table (newest name across
+    every server's usercache, Mojang-resolved). Empty when there's no DB."""
+    if not STATS_DB_PATH or not os.path.isfile(STATS_DB_PATH):
+        return {}
+    try:
+        conn = sqlite3.connect(f'file:{STATS_DB_PATH}?mode=ro', uri=True, timeout=2)
+        try:
+            return {u: n for u, n in conn.execute('SELECT uuid, name FROM players WHERE name IS NOT NULL')}
+        finally:
+            conn.close()
+    except sqlite3.Error as e:
+        print(f'[warn] statsCommand: stats DB not readable: {e}')
+        return {}
 
 
 def get_team_players(scoreboards):
     members = set()
-    for team in scoreboards['Teams']:
+    # Paper leaves the tag out when there are no teams (missing = empty)
+    for team in scoreboards['Teams'] if 'Teams' in scoreboards else []:
         if 'Players' not in team:
             continue
         for player in team['Players']:
@@ -102,7 +127,7 @@ def autocomplete_choices(options, current, limit=25):
 
 def scoreboard_entries(name, include_bots):
     scoreboards = nbt.NBTFile(SCOREBOARD_PATH)['data']
-    objectives = {s['Name'].value for s in scoreboards['Objectives']}
+    objectives = _objectives(scoreboards)
     resolved = SCOREBOARD_DICT.get(name, name)
 
     if resolved not in objectives:
@@ -111,7 +136,7 @@ def scoreboard_entries(name, include_bots):
     team_players = None if include_bots else get_team_players(scoreboards)
     entries = [
         (entry['Name'].value, entry['Score'].value)
-        for entry in scoreboards['PlayerScores']
+        for entry in (scoreboards['PlayerScores'] if 'PlayerScores' in scoreboards else [])
         if entry['Objective'].value == resolved
         and 'Score' in entry
         and entry['Score'].value != 0
@@ -129,20 +154,28 @@ def player_stat_entries(category, name, include_bots):
     stat_key = f'minecraft:{name}' if ':' not in name else name
     mc_category = f'minecraft:{category}'
     team_players = None if include_bots else get_team_players(nbt.NBTFile(SCOREBOARD_PATH)['data'])
-    uuid_to_name = load_usercache()
+    newest, every = load_usercache()
+    db_names = stats_db_names()
 
+    # Every stat file is a real join (CLAUDE.md: usercache alone misses ~1,100
+    # SMP players), so the files are the list, not usercache. Bots off = the
+    # SMP team rule: teamed if ANY of the uuid's names (usercache, stats DB
+    # display name) is in a team.
     entries = []
-    for uuid, player_name in uuid_to_name.items():
-        if team_players is not None and player_name not in team_players:
+    for fname in os.listdir(STATS_PATH):
+        if not fname.endswith('.json'):
             continue
-        stat_file = os.path.join(STATS_PATH, f'{uuid}.json')
-        if not os.path.exists(stat_file):
-            continue
-        with open(stat_file) as f:
-            try:
-                data = json.load(f)
-            except json.JSONDecodeError:
+        uuid = fname[:-len('.json')]
+        player_name = newest.get(uuid) or db_names.get(uuid) or uuid
+        if team_players is not None:
+            names = set(every.get(uuid, ())) | {n for n in (newest.get(uuid), db_names.get(uuid)) if n}
+            if not names & team_players:
                 continue
+        try:
+            with open(os.path.join(STATS_PATH, fname)) as f:
+                data = json.load(f)
+        except (OSError, json.JSONDecodeError):
+            continue
         value = data.get('stats', {}).get(mc_category, {}).get(stat_key, 0)
         if value != 0:
             entries.append((player_name, value))
@@ -154,10 +187,16 @@ def player_stat_entries(category, name, include_bots):
     return f'minecraft:{category}.{stat_key} — Rankings', entries, None
 
 
+def _objectives(scoreboards):
+    if 'Objectives' not in scoreboards:  # Paper omits an empty tag
+        return set()
+    return {s['Name'].value for s in scoreboards['Objectives']}
+
+
 def resolve_objective(name):
     # returns the real objective for a full or truncated name, or None if it doesn't exist
     scoreboards = nbt.NBTFile(SCOREBOARD_PATH)['data']
-    objectives = {s['Name'].value for s in scoreboards['Objectives']}
+    objectives = _objectives(scoreboards)
     resolved = SCOREBOARD_DICT.get(name, name)
     return resolved if resolved in objectives else None
 

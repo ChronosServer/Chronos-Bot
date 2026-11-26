@@ -37,6 +37,37 @@ DIM_LABEL = {
     'the_nether': 'minecraft:the_nether',
 }
 GAMEMODES = ['survival', 'creative', 'spectator', 'adventure']
+COME_BACK_POLL_S = 10  # after max_restart_time: check every 10 s whether it is up
+
+
+async def arcon(port, cmd):
+    # RCON blocks (up to 1.5 s per call): in a thread, never on the event loop
+    return await asyncio.to_thread(rcon, port, rcon_pass, cmd)
+
+
+async def stop_server(port):
+    # the server may close the connection while answering 'stop': that is the
+    # stop working, not an error (it used to end the command before the respawn)
+    try:
+        await arcon(port, 'stop')
+    except OSError:
+        pass
+
+
+async def wait_until_up(port, extra_s):
+    """True once the server answers RCON again, checking every
+    COME_BACK_POLL_S for up to extra_s seconds."""
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + extra_s
+    while True:
+        try:
+            if await arcon(port, 'list') is not None:
+                return True
+        except Exception:
+            pass  # still starting up (connection reset, ...)
+        if loop.time() >= deadline:
+            return False
+        await asyncio.sleep(COME_BACK_POLL_S)
 
 
 class restart(commands.Cog):
@@ -63,24 +94,32 @@ class restart(commands.Cog):
         if not await confirm(ctx, f'{action}? Everyone on it will be kicked.'):
             return
 
+        # 'list' doubles as the online check: None = no RCON answer
+        list_response = await arcon(rcon_port, 'list')
+        if list_response is None:
+            await ctx.send(embed=discord.Embed(
+                description=f"`{server}` doesn't answer RCON (offline?), nothing was done."
+            ).set_footer(text='Chronos™'))
+            return
+
         if not reload_bots:
             await ctx.send(embed=discord.Embed(description=f'Restarting `{server}`...').set_footer(text='Chronos™'))
-            rcon(rcon_port, rcon_pass, 'kick @a')
+            await arcon(rcon_port, 'kick @a')
             await asyncio.sleep(2.5)
-            rcon(rcon_port, rcon_pass, 'stop')
+            await stop_server(rcon_port)
             return
 
         with open(os.path.join(server_path, 'whitelist.json'), 'r') as f:
             whitelist = json.load(f)
         whitelisted = {p['name'] for p in whitelist}
 
-        player_list = handle_list(rcon(rcon_port, rcon_pass, 'list')) or []
+        player_list = handle_list(list_response) or []
         fake_players = [p for p in player_list if p not in whitelisted]
         real_players = [p for p in player_list if p in whitelisted]
 
         fake_player_dims = {}
         for dim in DIMENSIONS:
-            rcon(rcon_port, rcon_pass, f'execute in {dim} run say @a[distance=0..]')
+            await arcon(rcon_port, f'execute in {dim} run say @a[distance=0..]')
             await asyncio.sleep(0.05)
             in_dim = read_log(server_path)
             for fp in fake_players:
@@ -89,7 +128,7 @@ class restart(commands.Cog):
 
         fake_player_modes = {}
         for gm in GAMEMODES:
-            rcon(rcon_port, rcon_pass, f'say @a[gamemode={gm}]')
+            await arcon(rcon_port, f'say @a[gamemode={gm}]')
             await asyncio.sleep(0.05)
             in_gm = read_log(server_path)
             for fp in fake_players:
@@ -98,9 +137,9 @@ class restart(commands.Cog):
 
         fake_player_reload_commands = []
         for fp in fake_players:
-            coords_raw = rcon(rcon_port, rcon_pass, f'execute at {fp} run tp {fp} ~ ~ ~')
-            rot0_raw   = rcon(rcon_port, rcon_pass, f'execute as {fp} run data get entity {fp} Rotation[0] 1')
-            rot1_raw   = rcon(rcon_port, rcon_pass, f'execute as {fp} run data get entity {fp} Rotation[1] 1')
+            coords_raw = await arcon(rcon_port, f'execute at {fp} run tp {fp} ~ ~ ~')
+            rot0_raw   = await arcon(rcon_port, f'execute as {fp} run data get entity {fp} Rotation[0] 1')
+            rot1_raw   = await arcon(rcon_port, f'execute as {fp} run data get entity {fp} Rotation[1] 1')
 
             if not all([coords_raw, rot0_raw, rot1_raw]):
                 print(f"Skipping {fp}: couldn't get position/rotation data")
@@ -120,13 +159,36 @@ class restart(commands.Cog):
         ).set_footer(text='Chronos™'))
 
         for rp in real_players:
-            rcon(rcon_port, rcon_pass, f'kick {rp} SERVER RESTARTING')
+            await arcon(rcon_port, f'kick {rp} SERVER RESTARTING')
         await asyncio.sleep(2.5)
-        rcon(rcon_port, rcon_pass, 'stop')
+        await stop_server(rcon_port)
 
+        # wait the configured time, then up to as long again for RCON to answer;
+        # respawning into a server that isn't up yet silently did nothing
         await asyncio.sleep(max_restart_time)
+
+        async def reply(embed):
+            # a slash command's reply window is 15 minutes, a restart can outlive it
+            try:
+                await ctx.send(embed=embed)
+            except discord.HTTPException:
+                await ctx.channel.send(embed=embed)
+
+        if not await wait_until_up(rcon_port, max_restart_time):
+            print(f'restart {server}: not back up, bot spawn commands:')
+            for command in fake_player_reload_commands:
+                print('  ' + command)
+            await reply(discord.Embed(
+                description=f'`{server}` was not back up {2 * max_restart_time:.0f} s after the stop, '
+                            f'so the {len(fake_player_reload_commands)} bot(s) were **not** respawned. '
+                            'Their spawn commands are in the bot console.'
+            ).set_footer(text='Chronos™'))
+            return
         for command in fake_player_reload_commands:
-            rcon(rcon_port, rcon_pass, command)
+            await arcon(rcon_port, command)
+        await reply(discord.Embed(
+            description=f'`{server}` is back up, {len(fake_player_reload_commands)} bot(s) respawned.'
+        ).set_footer(text='Chronos™'))
 
 
 async def setup(bot):

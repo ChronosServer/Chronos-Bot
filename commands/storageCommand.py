@@ -152,6 +152,8 @@ class storage(commands.Cog):
             regions = ms_regions + dig_regions
             storage_label = 'Main Storage & Dig Storage'
 
+        # "Diamond Block" / "DIAMOND_BLOCK" -> minecraft:diamond_block
+        item = '_'.join(item.strip().lower().split())
         target = None if item == 'top' else (item if ':' in item else f'minecraft:{item}')
 
         # copying and scanning the region files is heavy, so it runs in a thread

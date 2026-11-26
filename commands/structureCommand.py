@@ -63,6 +63,7 @@ class structure(commands.Cog):
             if not filename.endswith('.nbt'):
                 await ctx.send(embed=discord.Embed(description='Only `.nbt` files can be uploaded.').set_footer(text='Chronos™'))
                 return
+            os.makedirs(structure_path, exist_ok=True)  # a world that never saved a structure has none
             await file.save(fp=os.path.join(structure_path, filename))
             embed = discord.Embed(title=f'{filename} has successfully been uploaded to {server.upper()}')
             embed.add_field(name='Structure filesize is', value=get_size_format(file.size), inline=False)
@@ -80,13 +81,22 @@ class structure(commands.Cog):
             if not os.path.isfile(filepath):
                 await ctx.send(embed=discord.Embed(description=f'Structure `{name}` was not found on {server.upper()}.').set_footer(text='Chronos™'))
                 return
-            embed = discord.Embed(title=f'Structure {name}', description=f'Filesize is {get_size_format(get_file_size(filepath))}')
+            size = get_file_size(filepath)
+            embed = discord.Embed(title=f'Structure {name}', description=f'Filesize is {get_size_format(size)}')
             embed.set_footer(text='Chronos™')
             await ctx.send(embed=embed)
+            if size > ctx.guild.filesize_limit:  # Discord would refuse it
+                await ctx.send(embed=discord.Embed(
+                    description=f'⚠️ Too big for the {ctx.guild.filesize_limit / 1048576:.0f} MB upload limit of this server.'
+                ).set_footer(text='Chronos™'))
+                return
             await ctx.send(file=discord.File(filepath))
 
         elif action == 'list':
-            strucfiles = os.listdir(structure_path)
+            if not os.path.isdir(structure_path):
+                await ctx.send(embed=discord.Embed(description=f'{server.upper()} has no structure folder yet.').set_footer(text='Chronos™'))
+                return
+            strucfiles = sorted(os.listdir(structure_path))
             if not strucfiles:
                 await ctx.send(embed=discord.Embed(description='No structure files found.').set_footer(text='Chronos™'))
                 return

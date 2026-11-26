@@ -1,3 +1,4 @@
+import asyncio
 import discord
 from discord import app_commands
 from discord.ext import commands
@@ -15,6 +16,12 @@ colors = data['server']['colors']
 f.close()
 
 COLORS = Literal[tuple(colors)]
+
+
+def run_rcon(command):
+    # blocking socket: called in a thread so the bot doesn't stall
+    with Client('127.0.0.1', int(smp_rcon_port), passwd=rcon_pass, timeout=1.5) as client:
+        return client.run(command)
 
 # color command
 class color(commands.Cog):
@@ -47,9 +54,11 @@ class color(commands.Cog):
             if color is None or player is None:
                 await ctx.send(embed=discord.Embed(description='Provide both a color and a player.').set_footer(text='Chronos™'))
                 return
+            if any(c.isspace() for c in player):
+                await ctx.send(embed=discord.Embed(description='Player names cannot contain spaces.').set_footer(text='Chronos™'))
+                return
             try:
-                with Client('127.0.0.1', int(smp_rcon_port), passwd=rcon_pass, timeout=1.5) as client:
-                    response = client.run('team join ' + color + ' ' + player)
+                response = await asyncio.to_thread(run_rcon, 'team join ' + color + ' ' + player)
                 embed = discord.Embed(
                     description = response or f'Changed the color of {player} to {color}.'
                 )
@@ -61,7 +70,7 @@ class color(commands.Cog):
                 )
                 embed.set_footer(text='Chronos™')
                 await ctx.send(embed=embed)
-            except ConnectionRefusedError:
+            except ConnectionError:
                 embed = discord.Embed(
                     description = "Couldn't reach the SMP — server is offline or RCON is unavailable"
                 )

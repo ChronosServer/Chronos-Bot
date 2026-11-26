@@ -80,10 +80,21 @@ class region(commands.Cog):
         embed.set_footer(text='Chronos™')
         await ctx.send(embed=embed)
 
-        if region_exists:
-            await ctx.send(file=discord.File(region_path))
-        if entities_exists:
-            await ctx.send(file=discord.File(entities_path))
+        # Discord refuses files over the server's upload limit (10 MB without
+        # boosts); a big region file would otherwise fail with no reply
+        limit = ctx.guild.filesize_limit
+        for label, path, exists in (('Region', region_path, region_exists),
+                                    ('Entities', entities_path, entities_exists)):
+            if not exists:
+                continue
+            size = os.path.getsize(path)
+            if size > limit:
+                await ctx.send(embed=discord.Embed(
+                    description=f'⚠️ {label} file is {size / 1048576:.1f} MB, over the '
+                                f'{limit / 1048576:.0f} MB upload limit of this server, so it can\'t be sent.'
+                ).set_footer(text='Chronos™'))
+                continue
+            await ctx.send(file=discord.File(path))
 
 
 async def setup(bot):

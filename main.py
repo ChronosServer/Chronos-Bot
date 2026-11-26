@@ -1,10 +1,12 @@
 import discord
 import discord.utils
+from discord import app_commands
 from discord.ext import commands
 from discord import client
 import json
 import os
 import asyncio
+import traceback
 from datetime import datetime, timezone
 
 # reads config
@@ -74,13 +76,21 @@ async def watch_folders():
 
     while True:
         for label, folder in crash_report_paths.items():
+            # one bad folder (permissions, a disk error) must never stop the watcher:
+            # an exception here would end the task for good, without a word
             try:
                 current = set(os.listdir(folder))
             except FileNotFoundError:
                 continue
+            except Exception as e:
+                print(f"Crash watcher: can't list {folder} ({label}): {e!r}")
+                continue
             new_files = current - seen[folder]
             for filename in new_files:
-                await send_crash_alert(folder, filename, label)
+                try:
+                    await send_crash_alert(folder, filename, label)
+                except Exception as e:
+                    print(f"Crash watcher: alert for {filename} ({label}) failed: {e!r}")
             seen[folder] = current
         await asyncio.sleep(5)
 
@@ -102,13 +112,27 @@ async def send_crash_alert(folder, filename, server_name):
     embed.set_footer(text="Chronos™")
 
     try:
-        await channel.send(embed=embed, file=discord.File(filepath))
+        size = os.path.getsize(filepath)
+    except OSError:
+        size = None
+    limit = channel.guild.filesize_limit if getattr(channel, 'guild', None) else 10 * 1024 * 1024
+    if size is not None and size <= limit:
+        try:
+            await channel.send(embed=embed, file=discord.File(filepath))
+            return
+        except Exception as e:
+            print(f"Failed to send crash alert with the file: {e}")
+    # too big to upload (or the upload failed): the alert itself still goes out
+    reason = 'too big to upload' if size is not None and size > limit else "couldn't be attached"
+    embed.description += f"\n**The file {reason}**, it is on the server: `{filepath}`"
+    try:
+        await channel.send(embed=embed)
     except Exception as e:
         print(f"Failed to send crash alert: {e}")
 
 @client.event
 async def on_ready():
-    await client.change_presence(status=discord.Status.online, activity=discord.Game(name=default_status, type=discord.ActivityType.listening))
+    await client.change_presence(status=discord.Status.online, activity=discord.Game(name=default_status))  # shows "Playing <status>" (owner: keep it)
     print(f"Crash report map: {crash_report_paths}")
     print(f"Crash log channel: {client.get_channel(crash_report_log_id)}")
 
@@ -121,21 +145,35 @@ async def load_extensions():
             print(f'Unable to load ' + filename)
     print('All extensions have been loaded')
 
+def _unwrap(error):
+    # text commands: CommandInvokeError(original); slash (hybrid):
+    # HybridCommandError(app_commands.CommandInvokeError(original))
+    while getattr(error, 'original', None) is not None:
+        error = error.original
+    return error
+
+
 @client.event
 async def on_command_error(ctx, error):
+    original = _unwrap(error)
     if isinstance(error, commands.errors.CommandNotFound):
         error_msg = 'Command not found'
     elif isinstance(error, commands.errors.CheckFailure):
         error_msg = 'Insufficient permission'
-    elif isinstance(error, commands.errors.UserInputError):
+    elif isinstance(error, commands.errors.UserInputError) or isinstance(original, app_commands.TransformerError):
         error_msg = 'Invalid usage'
-    elif isinstance(error, commands.errors.CommandInvokeError):
-        raise error.original  # re-raise the underlying exception
     else:
-        raise error
+        # Anything else is a bug or an unreachable server. Always answer: a
+        # slash command that never replies stays on "thinking..." forever.
+        print(f"Command {ctx.command} failed:")
+        traceback.print_exception(type(original), original, original.__traceback__)
+        error_msg = f'Something went wrong (`{type(original).__name__}`). The details are in the bot console.'
     embed = discord.Embed(description=error_msg)
     embed.set_footer(text='Chronos™')
-    await ctx.send(embed=embed)
+    try:
+        await ctx.send(embed=embed)
+    except discord.HTTPException as e:
+        print(f"Couldn't send the error reply: {e}")
 
 # command to reload cogs
 @client.hybrid_command(name='reload', description='Reload the bot (admin only)', help='Reload the bot, Usage: `!!reload` (Admin Only)')

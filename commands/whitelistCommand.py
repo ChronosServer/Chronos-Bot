@@ -33,7 +33,9 @@ def rcon_whitelist(rcon_port, action, player):
     except socket_error as e:
         if e.errno == errno.ECONNREFUSED:
             return 'refused'
-        raise
+        return 'error'
+    except Exception:  # wrong password, packet mismatch, ...: this server failed, not the batch
+        return 'error'
 
 
 def rcon_whitelist_list(rcon_port):
@@ -45,7 +47,9 @@ def rcon_whitelist_list(rcon_port):
     except socket_error as e:
         if e.errno == errno.ECONNREFUSED:
             return 'refused'
-        raise
+        return 'error'
+    except Exception:
+        return 'error'
 
 
 def parse_whitelist_list(response):
@@ -53,6 +57,8 @@ def parse_whitelist_list(response):
         return None, 'Timed out'
     if response == 'refused':
         return None, 'Server offline or RCON unavailable'
+    if response == 'error':
+        return None, 'RCON error (see the bot console)'
     if response is None:
         return None, 'No response'
     if 'no whitelisted players' in response.lower():
@@ -187,7 +193,13 @@ class whitelist(commands.Cog):
                 await ctx.send(embed=discord.Embed(description='Attachment must be a `.txt` file.').set_footer(text='Chronos™'))
                 return
             content = await file.read()
-            players = [line.strip() for line in content.decode('utf-8').splitlines() if line.strip()]
+            try:
+                # utf-8-sig: Notepad's byte-order mark would stick to the first name
+                text = content.decode('utf-8-sig')
+            except UnicodeDecodeError:
+                await ctx.send(embed=discord.Embed(description='The `.txt` file is not UTF-8 text.').set_footer(text='Chronos™'))
+                return
+            players = [line.strip() for line in text.splitlines() if line.strip()]
         elif player:
             players = [player]
         else:

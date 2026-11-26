@@ -19,6 +19,15 @@ RCON_PORTS = {
 f.close()
 
 
+def safe_list(port):
+    # never raises: one broken connection must not fail the whole gather
+    try:
+        return rcon(port, rcon_pass, 'list')
+    except Exception as e:
+        print(f'online: port {port}: {e!r}')
+        return None
+
+
 class online(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
@@ -35,7 +44,7 @@ class online(commands.Cog):
         lines = []
 
         # query every server at the same time, in threads, so one dead server can't stall the rest
-        responses = await asyncio.gather(*(asyncio.to_thread(rcon, port, rcon_pass, 'list') for port in RCON_PORTS.values()))
+        responses = await asyncio.gather(*(asyncio.to_thread(safe_list, port) for port in RCON_PORTS.values()))
 
         for server, response in zip(RCON_PORTS, responses):
             if response is None:

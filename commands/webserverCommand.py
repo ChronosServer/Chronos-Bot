@@ -4,6 +4,7 @@ from discord.ext import commands
 import json
 import os
 import sys
+import urllib.parse
 from typing import Literal
 sys.path.append('./Chronos-Library/')
 from filesizeLibrary import get_size_format, get_file_size
@@ -45,7 +46,7 @@ class webserver(commands.Cog):
             await file.save(fp=os.path.join(webserver_path, file.filename))
             embed = discord.Embed(title=f'{file.filename} has successfully been uploaded to the webserver')
             embed.add_field(name='Size', value=get_size_format(file.size), inline=False)
-            embed.add_field(name='Link', value=f'https://www.chronosmc.com/files/webserver/{file.filename}', inline=False)
+            embed.add_field(name='Link', value=f'https://www.chronosmc.com/files/webserver/{urllib.parse.quote(file.filename)}', inline=False)
             embed.set_footer(text='Chronos™')
             await ctx.send(embed=embed)
 
@@ -69,13 +70,27 @@ class webserver(commands.Cog):
             await ctx.send(embed=embed)
 
         elif action == 'list':
-            files = os.listdir(webserver_path)
-            embed = discord.Embed(title='List of files on the webserver')
+            files = sorted(os.listdir(webserver_path))
+            if not files:
+                await ctx.send(embed=discord.Embed(description='No files on the webserver.').set_footer(text='Chronos™'))
+                return
+            # one line per file, split over several embeds: an embed holds at most
+            # 25 fields / 4096 description characters, more files used to fail
+            lines = []
             for item in files:
                 size = get_size_format(get_file_size(os.path.join(webserver_path, item)))
-                embed.add_field(name=item, value=f'{size} — https://www.chronosmc.com/files/webserver/{item}', inline=False)
-            embed.set_footer(text='Chronos™')
-            await ctx.send(embed=embed)
+                lines.append(f'**{item}** ({size})\nhttps://www.chronosmc.com/files/webserver/{urllib.parse.quote(item)}')
+            chunks, current = [], ''
+            for line in lines:
+                if current and len(current) + len(line) + 1 > 4000:
+                    chunks.append(current)
+                    current = ''
+                current = f'{current}\n{line}' if current else line
+            chunks.append(current)
+            for idx, chunk in enumerate(chunks):
+                embed = discord.Embed(title='List of files on the webserver' if idx == 0 else None, description=chunk)
+                embed.set_footer(text='Chronos™')
+                await ctx.send(embed=embed)
 
     @webserver.autocomplete('filename')
     async def webserver_filename_autocomplete(self, interaction: discord.Interaction, current: str):

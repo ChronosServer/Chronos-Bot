@@ -1,3 +1,4 @@
+import asyncio
 import discord
 from discord.ext import commands
 import psutil
@@ -19,6 +20,33 @@ def fmt_tb(b):
     return round(b / 1099511627776, 2)
 
 
+def read_hardware():
+    cpu_percent = psutil.cpu_percent(interval=0.5)
+    cpu_cores = psutil.cpu_count(logical=False)
+    cpu_threads = psutil.cpu_count(logical=True)
+    load1, load5, load15 = os.getloadavg()
+
+    vm = psutil.virtual_memory()
+    swap = psutil.swap_memory()
+
+    disk = psutil.disk_usage('/')
+    disk_io = psutil.disk_io_counters()  # None when the kernel shows no disks
+
+    net = psutil.net_io_counters()
+
+    uptime_seconds = datetime.datetime.now().timestamp() - psutil.boot_time()
+    uptime = str(datetime.timedelta(seconds=int(uptime_seconds)))
+
+    temps = psutil.sensors_temperatures() if hasattr(psutil, 'sensors_temperatures') else {}
+    cpu_temp = None
+    for key in ('coretemp', 'k10temp', 'cpu_thermal'):
+        if key in temps:
+            cpu_temp = round(temps[key][0].current, 1)
+            break
+    return (cpu_percent, cpu_cores, cpu_threads, load1, load5, load15, vm, swap, disk,
+            disk_io, net, uptime, cpu_temp)
+
+
 class hardware(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
@@ -30,28 +58,9 @@ class hardware(commands.Cog):
     )
     async def hardware(self, ctx):
         await ctx.defer()
-        cpu_percent = psutil.cpu_percent(interval=0.5)
-        cpu_cores = psutil.cpu_count(logical=False)
-        cpu_threads = psutil.cpu_count(logical=True)
-        load1, load5, load15 = os.getloadavg()
-
-        vm = psutil.virtual_memory()
-        swap = psutil.swap_memory()
-
-        disk = psutil.disk_usage('/')
-        disk_io = psutil.disk_io_counters()
-
-        net = psutil.net_io_counters()
-
-        uptime_seconds = datetime.datetime.now().timestamp() - psutil.boot_time()
-        uptime = str(datetime.timedelta(seconds=int(uptime_seconds)))
-
-        temps = psutil.sensors_temperatures()
-        cpu_temp = None
-        for key in ('coretemp', 'k10temp', 'cpu_thermal'):
-            if key in temps:
-                cpu_temp = round(temps[key][0].current, 1)
-                break
+        # psutil.cpu_percent(interval=0.5) sleeps: in a thread, not on the event loop
+        (cpu_percent, cpu_cores, cpu_threads, load1, load5, load15, vm, swap, disk,
+         disk_io, net, uptime, cpu_temp) = await asyncio.to_thread(read_hardware)
 
         embed = discord.Embed(title='Hardware Usage')
 
@@ -79,7 +88,8 @@ class hardware(commands.Cog):
             name='Disk',
             value=(
                 f'**{fmt_gb(disk.used)} Gb ({fmt_tb(disk.used)} Tb) / {fmt_gb(disk.total)} Gb ({fmt_tb(disk.total)} Tb) ({disk.percent}%)**\n'
-                f'I/O since boot: ↑ {fmt_gb(disk_io.write_bytes)} Gb ({fmt_tb(disk_io.write_bytes)} Tb)  ↓ {fmt_gb(disk_io.read_bytes)} Gb ({fmt_tb(disk_io.read_bytes)} Tb)'
+                + (f'I/O since boot: ↑ {fmt_gb(disk_io.write_bytes)} Gb ({fmt_tb(disk_io.write_bytes)} Tb)  ↓ {fmt_gb(disk_io.read_bytes)} Gb ({fmt_tb(disk_io.read_bytes)} Tb)'
+                   if disk_io else 'I/O since boot: not available')
             ),
             inline=False
         )

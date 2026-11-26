@@ -347,6 +347,11 @@ async def fetch_thread_messages(thread):
 
         messages.append({
             'id': str(msg.id),
+            # who wrote it, by Discord user id (a string: too big for a JS
+            # number); nicknames are joke-renamed, so the site keys on the id
+            'author_id': str(msg.author.id),
+            'author_username': msg.author.name,
+            'author_global_name': msg.author.global_name,
             'author': msg.author.display_name,
             'author_avatar': str(msg.author.display_avatar.url),
             'content': msg.content,
@@ -383,7 +388,9 @@ async def sync_archive(bot, full=False):
 
         # unchanged thread (no new messages) whose files are all cached locally:
         # reuse the saved copy instead of refetching it
+        # (a copy saved before author_id existed is fetched once more)
         if (cached and not full and cached.get('last_message_id') == last_id
+                and 'author_id' in cached
                 and not needs_media_refresh(cached, media_failed)):
             cached['title'] = thread.name
             cached['tags'] = tags
@@ -408,6 +415,9 @@ async def sync_archive(bot, full=False):
             'id': tid,
             'title': thread.name,
             'tags': tags,
+            'author_id': first.get('author_id'),
+            'author_username': first.get('author_username'),
+            'author_global_name': first.get('author_global_name'),
             'author': first.get('author', ''),
             'author_avatar': first.get('author_avatar', ''),
             'timestamp': thread.created_at.isoformat(),
@@ -420,6 +430,14 @@ async def sync_archive(bot, full=False):
         }
         await asyncio.to_thread(localize_post, post, media_failed)  # downloads: off the event loop
         posts.append(post)
+        # Keep progress: a run cut off by the step timeout (e.g. the one-time
+        # refetch of every thread) would otherwise redo everything next time.
+        # The saved list = threads done this run + the old copies of the rest.
+        existing[tid] = post
+        if fetched % 20 == 0:
+            state['archive'] = list(existing.values())
+            state['archive_media_failed'] = sorted(media_failed)
+            save_state(state)
         await asyncio.sleep(0.25)
 
     posts.sort(key=lambda x: x['timestamp'], reverse=True)
