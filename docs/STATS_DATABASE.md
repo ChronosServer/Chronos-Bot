@@ -128,7 +128,7 @@ The full block with every key at its default:
   },
   "mojang": {"max_calls": 60, "timeout_s": 3, "max_seconds": 60, "retry_after_days": 7},
   "heads": {"enabled": true, "max_calls": 60, "max_seconds": 30, "timeout_s": 5,
-            "refresh_hours": 24},
+            "refresh_hours": 24, "ipv4_only": true},
   "snapshot": {"dictionary_cache_hours": 24, "dictionary_timeout_s": 15,
                "mirror_prefix": "^(m|u|c|b|p|d|k|kb|z)-",
                "ignored_stat_keys": ["minecraft:air", "minecraft:cave_air", "minecraft:void_air"]},
@@ -170,7 +170,7 @@ entries above show the per-server defaults, not a server list you get for free.)
 | `rivalries` | Leader value ≥ `min_value`, gap ≤ `max_gap_ratio` × leader, both active within `active_days`, at most `per_player` per player and `per_key` per stat. The gap comparison window stays 7 days (it is what `gap_7d_ago` means). |
 | `spotlight` | Outlier (≥ `ratio` × median with ≥ `min_holders` holders), rare (≤ `max_holders` holders), how recent a milestone/first must be, and movers (top `top` gains over `window_days`, gain ≥ `min_delta` and ≥ `min_growth` × the start value). |
 | `mojang` | Name lookups per run: at most `max_calls` calls, `timeout_s` per call, `max_seconds` in total; every result (also failures) is cached for `retry_after_days`. |
-| `heads` | Player heads (`<server.website_path>/cache/heads/<uuid>.png`), the last step of every snapshot run: at most `max_calls` Mojang profile lookups and `max_seconds` per run, `timeout_s` per call; players never checked go first, then everyone again every `refresh_hours`. A rate limit, a network error or any Mojang error answer ends that run's step and changes nothing (existing heads stay); only "no such profile" or "no skin" removes a head. `enabled: false` turns it off. Skipped when `server.website_path` is missing. |
+| `heads` | Player heads (`<server.website_path>/cache/heads/<uuid>.png`), the last step of every snapshot run: at most `max_calls` Mojang profile lookups and `max_seconds` per run, `timeout_s` per call; players never checked go first, then everyone again every `refresh_hours`. A rate limit, a network error or any Mojang error answer ends that run's step and changes nothing (existing heads stay); only "no such profile" or "no skin" removes a head. `enabled: false` turns it off. `ipv4_only` (default true): connect over IPv4 only (Mojang's session server answers 429 to every request from the live server's IPv6, which the Minecraft servers share; found 2026-11-26). Skipped when `server.website_path` is missing. |
 | `snapshot` | How long the scoreboard dictionary from GitHub is cached, and its fetch timeout. `mirror_prefix`: a regular expression; objectives whose name matches it are every-scoreboard copies of vanilla stats (`m-stone`, `z-play_one_m+748`, `u-moss`) even when no bundled dictionary lists them, so their scores aren't stored and their firsts/milestones are hidden. `""` turns it off (dictionary only). `ignored_stat_keys`: stat keys that aren't real items (default: the three air blocks), in every category: never stored, and rows stored before are deleted once on the next run (again whenever the list changes). |
 | `api` | Range presets, activity bucket size, the hard caps on `limit`, compare and series sizes, the `/player` milestone count, series points, the response cache (size, entries, `Cache-Control` max-age / stale-while-revalidate), gzip threshold and SQLite read pragmas. |
 

@@ -297,3 +297,33 @@ def test_snapshot_without_website_path_skips_heads(world, run_snapshot):
     c = sqlite3.connect(world.db_path)
     assert c.execute("SELECT COUNT(*) FROM player_heads").fetchone()[0] == 0
     c.close()
+
+
+def test_ipv4_connection_resolves_ipv4_only(monkeypatch):
+    """Mojang's session server rate-limits the live server's IPv6 (shared
+    with the MC servers) but not its IPv4 (2026-11-26)."""
+    import socket
+    asked = []
+
+    def fake_getaddrinfo(host, port, family=0, type=0, *a, **k):
+        asked.append(family)
+        return []
+    monkeypatch.setattr(heads.socket, "getaddrinfo", fake_getaddrinfo)
+    with pytest.raises(OSError):
+        heads._ipv4_create_connection(("sessionserver.mojang.com", 443), 1)
+    assert asked == [socket.AF_INET]
+
+
+def test_snapshot_heads_use_the_ipv4_fetch_by_default(monkeypatch, tmp_path):
+    import snapshot
+    made = []
+    monkeypatch.setattr(heads, "ipv4_fetch", lambda timeout: made.append(timeout) or Fetch())
+    settings = load_settings({})
+    c = sqlite3.connect(":memory:")
+    snapshot.run_heads(c, {"server": {"website_path": str(tmp_path)}}, settings, 1)
+    assert made == [settings.heads.timeout_s]
+    made.clear()
+    off = load_settings({"heads": {"ipv4_only": False}})
+    monkeypatch.setattr(snapshot, "default_fetch", lambda *a, **k: (0, b""))
+    snapshot.run_heads(c, {"server": {"website_path": str(tmp_path)}}, off, 1)
+    assert made == []

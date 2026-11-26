@@ -169,3 +169,12 @@ def test_fold_leaves_rows_from_before_live_tracking(algi, run_snapshot):
         (10, "Algi_", 99)]
     assert q(algi, "SELECT participant_key, value FROM scoreboard_current "
                    "WHERE objective='digs'") == [(A, 31)]
+
+
+def test_team_check_knows_a_name_from_another_servers_usercache(algi, run_snapshot):
+    """Algi_ joined a team on SMP; SMP's usercache only knows Alugia7, a CMP's
+    knows Algi_ (and Mojang lookups may be failing): still a team member."""
+    algi.set_usercache("cmp", {A: "Algi_"})
+    algi.set_scoreboard("smp", ["digs"], [("Algi_", "digs", 50)], {"t": ["Algi_"]})
+    run_snapshot(1000)
+    assert q(algi, "SELECT is_bot FROM player_flags WHERE server_key='smp' AND uuid=?", A) == [(0,)]

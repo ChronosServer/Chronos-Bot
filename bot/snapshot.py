@@ -684,12 +684,18 @@ def run_team_check(conn, server_key, world_path, now, usercache, mojang=None,
                 teamed.add(str(name).lower())
 
     name_by_uuid = {u: n for u, n in usercache.items() if n}
-    for u, n in conn.execute("SELECT uuid, name FROM players WHERE name IS NOT NULL"):
+    display = conn.execute("SELECT uuid, name FROM players WHERE name IS NOT NULL").fetchall()
+    for u, n in display:
         name_by_uuid.setdefault(u, n)
 
     names_of = {u: {n.lower()} for u, n in name_by_uuid.items()}
     for u, ns in (all_names or {}).items():
         names_of.setdefault(u, set()).update(n.lower() for n in ns)
+    # players.name is the newest name across every server's usercache: a
+    # player renamed (and team-joined under the new name) before rejoining
+    # this server is known by it here too (Algi_, 2026-11-26).
+    for u, n in display:
+        names_of[u].add(n.lower())
 
     if mojang is not None:
         known_names = set().union(*names_of.values()) if names_of else set()
@@ -900,13 +906,15 @@ def run_heads(conn, cfg, settings, run_at, fetch=None, merges=None):
     website = cfg.get("server", {}).get("website_path")
     if not website or not settings.heads.enabled:
         return
+    import heads
     if fetch is None:
         timeout = settings.heads.timeout_s
-
-        def fetch(method, url, body=None):
-            return default_fetch(method, url, body, timeout=timeout)
+        if settings.heads.ipv4_only:
+            fetch = heads.ipv4_fetch(timeout)
+        else:
+            def fetch(method, url, body=None):
+                return default_fetch(method, url, body, timeout=timeout)
     try:
-        import heads
         r = heads.update_heads(conn, os.path.join(website, "cache", "heads"), run_at,
                                fetch, settings.heads, skip=set(merges.to_of) if merges else ())
         print(f"[all] heads: written={r['written']} checked={r['checked']} "

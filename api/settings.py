@@ -79,9 +79,10 @@ DEFAULT_CONFIG = {
     "mojang": {"max_calls": 60, "timeout_s": 3, "max_seconds": 60, "retry_after_days": 7},
     # player heads (bot/heads.py): <server.website_path>/cache/heads/<uuid>.png,
     # at most max_calls Mojang profile lookups / max_seconds per snapshot run,
-    # each player re-checked every refresh_hours
+    # each player re-checked every refresh_hours; ipv4_only: Mojang rate-limits
+    # the live server's IPv6 (shared with the MC servers), not its IPv4
     "heads": {"enabled": True, "max_calls": 60, "max_seconds": 30, "timeout_s": 5,
-              "refresh_hours": 24},
+              "refresh_hours": 24, "ipv4_only": True},
     # mirror_prefix: objective names matching it are every-scoreboard copies of
     # vanilla stats even when no bundled dictionary lists them ("" = off)
     "snapshot": {"dictionary_cache_hours": 24, "dictionary_timeout_s": 15,
@@ -241,6 +242,7 @@ class Heads:
     max_seconds: float
     timeout_s: float
     refresh_hours: float
+    ipv4_only: bool
 
 
 @dataclass(frozen=True)
@@ -603,7 +605,8 @@ def load_settings(stats_tracking_cfg: Optional[dict]) -> Settings:
             max_calls=_int(hd["max_calls"], f"{p}.heads.max_calls", ge=0),
             max_seconds=_num(hd["max_seconds"], f"{p}.heads.max_seconds", gt=0),
             timeout_s=_num(hd["timeout_s"], f"{p}.heads.timeout_s", gt=0),
-            refresh_hours=_num(hd["refresh_hours"], f"{p}.heads.refresh_hours", gt=0)),
+            refresh_hours=_num(hd["refresh_hours"], f"{p}.heads.refresh_hours", gt=0),
+            ipv4_only=_bool(hd["ipv4_only"], f"{p}.heads.ipv4_only")),
         snapshot=Snapshot(
             dictionary_cache_hours=_num(sn["dictionary_cache_hours"],
                                         f"{p}.snapshot.dictionary_cache_hours", ge=0),

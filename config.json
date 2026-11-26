@@ -257,7 +257,8 @@
             "max_calls": 60,
             "max_seconds": 30,
             "timeout_s": 5,
-            "refresh_hours": 24
+            "refresh_hours": 24,
+            "ipv4_only": true
         },
         "snapshot": {
             "dictionary_cache_hours": 24,

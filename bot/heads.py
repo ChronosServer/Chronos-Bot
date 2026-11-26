@@ -12,10 +12,14 @@ State per uuid in player_heads (migration v6). Never raises on network
 trouble; the caller still guards it (a failure here must not fail the run).
 """
 import base64
+import http.client
 import io
 import json
 import os
+import socket
 import time
+import urllib.error
+import urllib.request
 
 from PIL import Image, UnidentifiedImageError
 
@@ -23,6 +27,58 @@ from api.scope import is_fake_uuid
 
 PROFILE_URL = "https://sessionserver.mojang.com/session/minecraft/profile/"
 SIZE = 64
+
+
+def _ipv4_create_connection(address, timeout=socket._GLOBAL_DEFAULT_TIMEOUT,
+                            source_address=None, *args, **kwargs):
+    """socket.create_connection over IPv4 addresses only."""
+    host, port = address
+    err = None
+    for af, st, proto, _, addr in socket.getaddrinfo(host, port, socket.AF_INET,
+                                                     socket.SOCK_STREAM):
+        sock = socket.socket(af, st, proto)
+        try:
+            if timeout is not socket._GLOBAL_DEFAULT_TIMEOUT:
+                sock.settimeout(timeout)
+            if source_address:
+                sock.bind(source_address)
+            sock.connect(addr)
+            return sock
+        except OSError as e:
+            err = e
+            sock.close()
+    raise err or OSError(f"no IPv4 address for {host}")
+
+
+class _IPv4HTTPSConnection(http.client.HTTPSConnection):
+    def __init__(self, *a, **k):
+        super().__init__(*a, **k)
+        self._create_connection = _ipv4_create_connection
+
+
+class _IPv4HTTPSHandler(urllib.request.HTTPSHandler):
+    def https_open(self, req):
+        return self.do_open(_IPv4HTTPSConnection, req, context=self._context)
+
+
+def ipv4_fetch(timeout):
+    """fetch(method, url, body) -> (status, bytes) over IPv4 only, status 0 on
+    any error (like mojang.default_fetch). Mojang's session server rate-limits
+    the live server's IPv6 address (shared with the Minecraft servers' skin
+    lookups) on every request, not its IPv4 (stats_tracking.heads.ipv4_only)."""
+    opener = urllib.request.build_opener(_IPv4HTTPSHandler())
+
+    def fetch(method, url, body=None):
+        req = urllib.request.Request(url, data=body, method=method,
+                                     headers={"User-Agent": "chronos-stats"})
+        try:
+            with opener.open(req, timeout=timeout) as r:
+                return r.status, r.read()
+        except urllib.error.HTTPError as e:
+            return e.code, b""
+        except Exception:
+            return 0, b""
+    return fetch
 
 
 def face_from_skin(data: bytes) -> Image.Image:

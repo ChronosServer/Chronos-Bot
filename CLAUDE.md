@@ -86,6 +86,8 @@ above). Missing flag = bot (fail closed). Default-excluded from leaderboards, to
   limits, table `player_heads` from migration v6): `<server.website_path>/cache/heads/<uuid>.png`,
   64x64 face + hat from the Mojang session-server skin; none for fake / blocked / skinless.
   Not recorded in `snapshot_runs` (that would move `data_version` for nothing).
+  Fetched over IPv4 only (`heads.ipv4_only`, default true): the live server's IPv6 is
+  always `OVER_LIMIT` (429) at the session server, its IPv4 isn't.
 - **Item icons** (`tools/render_items.py` + `tools/item_icons.py`, run by hand per MC
   version): every id in the client jar's `assets/minecraft/items/` rendered to
   `<website_path>/cache/items/<id>.png` (own small rasterizer, Pillow only for PNG I/O; block
@@ -302,7 +304,7 @@ tables) → SQLite → `api/` (FastAPI, read-only) → nginx `/api/stats/*` → 
 | `deploy/` | systemd units (snapshot, timer, api) + nginx snippet; `update.sh` (git-pull updater, see Deploy) + `check_config.py` |
 | `bot/merge_players.py`, `api/merges.py`, `player_merges.json` | account merges (alt → main): the one-time fold, the parser, the owner's list |
 | `bot/history_fill.py` | the 0 rows a server's first live run implies (keys only in backups) |
-| `tests/` | pytest, 517 tests, synthetic worlds built through the real snapshot write path, no network; tests never read the repo's config.json or player_merges.json (autouse fixtures; `api_config` writes a config) |
+| `tests/` | pytest, 520 tests, synthetic worlds built through the real snapshot write path, no network; tests never read the repo's config.json or player_merges.json (autouse fixtures; `api_config` writes a config) |
 | `docs/STATS_PLAN.md` | agreed scope, hard rules, build order/status |
 | `docs/STATS_API.md` | the HTTP contract for the website (copy into the website repo) |
 | `docs/STATS_DATABASE.md` | operator guide: config, first setup, upgrade, health checks, backup, reset |
@@ -332,7 +334,8 @@ tables) → SQLite → `api/` (FastAPI, read-only) → nginx `/api/stats/*` → 
   knew Alugia7, so the account dropped to 0). Live rows stored as `unresolved:<name>`
   are folded into the uuid once the name resolves (`merge_players.fold_resolved_names`,
   each run; only rows since live tracking, never backup-era rows). The SMP team check counts a uuid as teamed if
-  **any** of its usercache names is in a team (team lists hold names). The backup import
+  **any** of its usercache names, or its display name (`players.name`, newest across all
+  servers), is in a team (team lists hold names). The backup import
   learns every entry's name (old ones too) for merging.
 - **Account merges (`player_merges.json`, repo root; owner's list).** Separate accounts
   counted as one player (first entry: LordHamster42 → hampter42, different uuids). Not
