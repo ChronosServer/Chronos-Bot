@@ -47,6 +47,6 @@ trannie
 shemale
 
 # ableist
-retard
-spaz
-mongoloid
+# retard
+# spaz
+# mongoloid
