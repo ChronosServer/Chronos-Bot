@@ -23,12 +23,19 @@ the data contract.
    line start (it was the latest), so each line begins at its own data.
 6. **`/leaderboard?q=`**: name filter; rows keep their real rank.
 7. **Former names**: `/player` gains `aka`; `/search`, `/leaderboard?q=` and `/player/<old
-   name>` match former names. Renamed players' old scoreboard scores and replaced accounts
-   (NotAless50_ -> IBeatLIMBO, wRongo_ -> _wRongo, qstrql -> qstrqlw) now count for the
-   current player. Merged accounts are **added together** (not "the new account's value once
+   name>` match former names. Renamed players' old scoreboard scores now count for the
+   current name (NotQuiteRat_ -> NotQuiteRat, Q1306 -> DiggusMaximus123, EulerGauss ->
+   UsernameAccount, Obi0081_ and Obi81 -> ObiWan81_, lukepourquoi -> justlukie; Alugia7 ->
+   Algi_ is handled in-game with stattransfer), and replaced accounts are merged into the
+   new one (NotAless50_ -> IBeatLIMBO, wRongo_ -> _wRongo, qstrql -> qstrqlw, plus the
+   earlier LordHamster42 -> hampter42). Merged accounts are **added together** (not "the new account's value once
    it exists"): the in-game `stattransfer` moved only scoreboard scores and reset the old
    name, and never touched stat files, so the old account's vanilla stats are its own.
 8. **`/search`**: a space matches `_` ("redstone block" finds `minecraft:redstone_block`).
+
+Not part of the Stats API, but for the site: on the **status page**, list `building` and
+`building2` after `mirror` and before `snapshot` (owner's request). `data/server_status.json`
+stays alphabetical, so the site orders it.
 
 ## Basics
 
