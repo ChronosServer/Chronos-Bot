@@ -242,3 +242,13 @@ def test_download_jar_unknown_version(tmp_path):
     fetch, _ = _fake_mojang(b"x")
     with pytest.raises(SystemExit, match="not in Mojang"):
         render_items.download_jar("1.0", str(tmp_path), fetch)
+
+
+def test_oversized_model_is_centred_and_fitted():
+    # a quad hanging low out of the slot (like a banner): y -1.3 .. 0.1
+    q = ii.Quad([(-0.2, 0.1, 0), (-0.2, -1.3, 0), (0.2, -1.3, 0), (0.2, 0.1, 0)],
+                [(0, 0), (0, 1), (1, 1), (1, 0)], Image.new("RGBA", (4, 4), RED))
+    box = ii.rasterize([q]).getbbox()
+    assert box[1] <= 1 and box[3] >= 63          # fills the height
+    assert abs((box[0] + box[2]) / 2 - 32) <= 1  # stays horizontally centred
+

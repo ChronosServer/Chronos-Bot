@@ -176,6 +176,52 @@ def test_no_skin_removes_the_file(db, tmp_path):
     assert not (out / f"{REAL}.png").exists() and (out / f"{REAL2}.png").exists()
 
 
+@pytest.mark.parametrize("answer", [(500, b""), (503, b"busy"), (403, b""), (200, b"<html>")])
+def test_server_error_keeps_the_head_and_stops(db, tmp_path, answer):
+    out = tmp_path / "heads"
+    run(db, out, Fetch())
+    later = 1_000_000 + 25 * 3600
+    f = Fetch(profiles={hx(REAL): answer, hx(REAL2): answer})
+    r = run(db, out, f, now=later)
+    assert r["stopped"] and len(f.calls) == 1
+    assert (out / f"{REAL}.png").exists() and (out / f"{REAL2}.png").exists()
+    # not marked: still due next run
+    assert db.execute("SELECT COUNT(*) FROM player_heads WHERE checked_at = ?",
+                      (later,)).fetchone()[0] == 0
+
+
+def test_skin_server_error_keeps_the_head(db, tmp_path):
+    out = tmp_path / "heads"
+    run(db, out, Fetch())
+    (out / f"{REAL}.png").unlink()
+    f = Fetch(skin=(503, b""))
+    r = run(db, out, f, now=1_000_000 + 60)
+    assert r["stopped"]
+    row = db.execute("SELECT skin_url FROM player_heads WHERE uuid = ?", (REAL,)).fetchone()
+    assert row[0] == SKIN_URL  # unchanged, so it is retried
+
+
+def test_each_player_committed(db, tmp_path):
+    out = tmp_path / "heads"
+    run(db, out, Fetch())
+    assert not db.in_transaction
+
+
+def test_skipped_uuids_get_no_head(db, tmp_path):
+    out = tmp_path / "heads"
+    f = Fetch()
+    heads.update_heads(db, str(out), 1_000_000, f, cfg(), clock=lambda: 0.0, skip={REAL2})
+    assert not any(hx(REAL2) in c for c in f.calls)
+    assert not (out / f"{REAL2}.png").exists()
+
+
+def test_skipped_uuid_file_removed(db, tmp_path):
+    out = tmp_path / "heads"
+    run(db, out, Fetch())
+    heads.update_heads(db, str(out), 1_000_060, Fetch(), cfg(), clock=lambda: 0.0, skip={REAL2})
+    assert not (out / f"{REAL2}.png").exists() and (out / f"{REAL}.png").exists()
+
+
 def test_unknown_profile_marks_checked(db, tmp_path):
     out = tmp_path / "heads"
     run(db, out, Fetch(profiles={hx(REAL): (204, b""), hx(REAL2): (404, b"")}))
@@ -191,6 +237,22 @@ def test_blocked_player_file_removed_and_not_fetched(db, tmp_path):
     run(db, out, f, now=1_000_000 + 25 * 3600)
     assert not (out / f"{REAL}.png").exists()
     assert not any(hx(REAL) in c for c in f.calls)
+
+
+def test_snapshot_skips_merged_away_accounts(world, run_snapshot, monkeypatch):
+    from api.merges import parse_merges
+    world.config["server"]["website_path"] = str(world.root / "www")
+    world.set_usercache("cmp", {REAL: "Realo", REAL2: "Alt"})
+    for u in (REAL, REAL2):
+        world.add_stats("cmp", u, {"minecraft:mined": {"minecraft:stone": 1}})
+    run_snapshot(1_000_000, mojang_fetch=Fetch())   # before the merge: both get a head
+    d = world.root / "www" / "cache" / "heads"
+    assert (d / f"{REAL2}.png").exists()
+    merges = parse_merges({"merges": [{"from": REAL2, "to": REAL, "names": ["Alt"]}]})
+    f = Fetch()
+    run_snapshot(1_000_000 + 25 * 3600, mojang_fetch=f, merges=merges)
+    assert (d / f"{REAL}.png").exists() and not (d / f"{REAL2}.png").exists()
+    assert not any(hx(REAL2) in c for c in f.calls)
 
 
 def test_broken_skin_marks_checked_without_file(db, tmp_path):

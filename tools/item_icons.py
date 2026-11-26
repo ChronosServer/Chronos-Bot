@@ -10,10 +10,11 @@ and draws the icon the way the inventory does:
   sorted, nearest-neighbour texture sampling, back faces culled, shaded by
   the face's on-screen direction (top 1.0, left 0.8, right 0.6, bottom 0.5)
   when gui_light is "side";
-- minecraft:special items: chests, shulker boxes and mob/player heads as
-  entity boxes (the game's ModelPart cube UV layout); every other special
-  (banner, shield, conduit, decorated pot, copper golem statue, dragon head)
-  falls back to its base model's particle texture and is reported.
+- minecraft:special items: chests, shulker boxes, mob/player heads, banners,
+  the shield and the conduit as entity boxes (the game's ModelPart cube UV
+  layout); the rest (copper golem statues, decorated pot, dragon head) fall
+  back to their base model's particle texture and are reported.
+- a model reaching out of the slot (banners) is centred and scaled to fit.
 Pure Python + Pillow (PNG reading/writing only).
 """
 import io
@@ -589,12 +590,19 @@ def rasterize(quads, size=SIZE):
     """Depth-sorted, alpha-blended nearest-neighbour fill of the quads.
     View space: x right, y up, z toward the viewer; [-0.5, 0.5] = the icon."""
     frags = {}
-    # A model larger than the slot (banners) is scaled down to fit, around
-    # the icon's centre; everything else is drawn at the game's size.
-    reach = max((max(abs(v[0]), abs(v[1])) for q in quads for v in q.verts), default=0.5)
-    fit = 0.5 / reach if reach > 0.5 else 1.0
+    # A model reaching out of the slot (banners) is centred on its own extent
+    # and scaled to fit; everything else is drawn at the game's size/place.
+    xs_all = [v[0] for q in quads for v in q.verts] or [0.0]
+    ys_all = [v[1] for q in quads for v in q.verts] or [0.0]
+    ox = oy = 0.0
+    fit = 1.0
+    if max(max(map(abs, xs_all)), max(map(abs, ys_all))) > 0.5:
+        ox, oy = (min(xs_all) + max(xs_all)) / 2, (min(ys_all) + max(ys_all)) / 2
+        half = max(max(xs_all) - min(xs_all), max(ys_all) - min(ys_all)) / 2
+        fit = min(1.0, 0.5 / half) if half > 0 else 1.0
     for seq, q in enumerate(quads):
-        px = [((v[0] * fit + 0.5) * size, (0.5 - v[1] * fit) * size, v[2]) for v in q.verts]
+        px = [(((v[0] - ox) * fit + 0.5) * size, (0.5 - (v[1] - oy) * fit) * size, v[2])
+              for v in q.verts]
         img = q.image
         W, H = img.width, img.height
         pix = img.load()

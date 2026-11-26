@@ -846,11 +846,11 @@ def run_once(config=None, now_fn=time.time, dictionary=None, mojang_fetch=None, 
                    int((time.time() - t0) * 1000), now=run_at)
         print(f"[all] derive: ERROR {e}")
 
-    run_heads(conn, cfg, settings, run_at, injected_fetch)
+    run_heads(conn, cfg, settings, run_at, injected_fetch, merges)
     conn.close()
 
 
-def run_heads(conn, cfg, settings, run_at, fetch=None):
+def run_heads(conn, cfg, settings, run_at, fetch=None, merges=None):
     """Player heads into <server.website_path>/cache/heads (bot/heads.py).
     Skipped without website_path; a failure is printed, never raised."""
     website = cfg.get("server", {}).get("website_path")
@@ -864,7 +864,7 @@ def run_heads(conn, cfg, settings, run_at, fetch=None):
     try:
         import heads
         r = heads.update_heads(conn, os.path.join(website, "cache", "heads"), run_at,
-                               fetch, settings.heads)
+                               fetch, settings.heads, skip=set(merges.to_of) if merges else ())
         print(f"[all] heads: written={r['written']} checked={r['checked']} "
               f"removed={r['removed']}" + (f" stopped={r['stopped']}" if r["stopped"] else ""))
     except Exception as e:

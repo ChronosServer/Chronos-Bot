@@ -12,7 +12,8 @@ nbt==1.5.1
 # Player heads (bot/heads.py) and item icons (tools/render_items.py)
 pillow==13.0.0
 
-# Stats API (api/) - on the live server install ONLY these three, never `pip install -r`
+# Stats API (api/). On the live server deploy/update.sh shows `pip install --dry-run -r`
+# first and asks; the == pins also move the bot's packages, so read that list.
 fastapi==0.165.0
 uvicorn[standard]==0.54.0
 orjson==3.13.0

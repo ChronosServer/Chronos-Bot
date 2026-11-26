@@ -48,15 +48,18 @@ def face_from_skin(data: bytes) -> Image.Image:
 
 
 def skin_url(body: bytes):
-    """The SKIN url in a session-server profile, or None."""
+    """The SKIN url in a session-server profile; None = the profile has no
+    skin. ValueError if the body is not a profile (an error page)."""
     try:
-        for prop in json.loads(body).get("properties", []):
+        profile = json.loads(body)
+        props = profile["properties"]
+        for prop in props:
             if prop.get("name") == "textures":
                 tex = json.loads(base64.b64decode(prop["value"]))
                 url = tex.get("textures", {}).get("SKIN", {}).get("url")
                 return url if isinstance(url, str) and url else None
-    except (ValueError, TypeError, KeyError, AttributeError):
-        return None
+    except (ValueError, TypeError, KeyError, AttributeError) as e:
+        raise ValueError(f"not a profile: {e}") from None
     return None
 
 
@@ -80,7 +83,7 @@ def _write(out_dir, uuid, img):
     os.replace(tmp, dest)
 
 
-def _due(conn, out_dir, now, refresh_s):
+def _due(conn, out_dir, now, refresh_s, skip=()):
     """(uuid, stored skin url) to check, never-checked first, then oldest."""
     rows = conn.execute(
         "SELECT p.uuid, h.checked_at, h.skin_url FROM players p "
@@ -89,7 +92,7 @@ def _due(conn, out_dir, now, refresh_s):
         "ORDER BY h.checked_at IS NOT NULL, h.checked_at, p.uuid").fetchall()
     out = []
     for uuid, checked, url in rows:
-        if is_fake_uuid(uuid):
+        if is_fake_uuid(uuid) or uuid in skip:
             continue
         if (checked is None or checked <= now - refresh_s
                 or (url and not os.path.exists(head_path(out_dir, uuid)))):
@@ -98,23 +101,31 @@ def _due(conn, out_dir, now, refresh_s):
 
 
 def _mark(conn, uuid, now, url):
+    """Record a check; committed at once, so no write lock is held across
+    the next HTTP calls."""
     conn.execute("INSERT INTO player_heads (uuid, checked_at, skin_url) VALUES (?, ?, ?) "
                  "ON CONFLICT(uuid) DO UPDATE SET checked_at = excluded.checked_at, "
                  "skin_url = excluded.skin_url", (uuid, now, url))
+    conn.commit()
 
 
-def update_heads(conn, out_dir, now, fetch, settings, clock=time.monotonic) -> dict:
-    """One bounded pass; commits. fetch(method, url, body) -> (status, bytes),
-    status 0 = network error. settings: a Settings.heads block."""
+def update_heads(conn, out_dir, now, fetch, settings, clock=time.monotonic, skip=()) -> dict:
+    """One bounded pass. fetch(method, url, body) -> (status, bytes), status
+    0 = network error. settings: a Settings.heads block. skip: uuids that get
+    no head (accounts merged into another). Only a real answer changes
+    anything: 204/404 = no such profile, a profile without a skin = no skin;
+    any other status (5xx, 403, 429, an error page) ends the step and leaves
+    the player's file and row as they were."""
     result = {"written": 0, "checked": 0, "removed": 0, "stopped": None}
     if not settings.enabled:
         return result
     now = int(now)
-    for (uuid,) in conn.execute("SELECT uuid FROM blocked_players").fetchall():
+    gone = [u for (u,) in conn.execute("SELECT uuid FROM blocked_players").fetchall()]
+    for uuid in gone + sorted(skip):
         result["removed"] += _remove(head_path(out_dir, uuid))
     start = clock()
     calls = 0
-    for uuid, old_url in _due(conn, out_dir, now, settings.refresh_hours * 3600):
+    for uuid, old_url in _due(conn, out_dir, now, settings.refresh_hours * 3600, skip):
         if calls >= settings.max_calls:
             result["stopped"] = "budget"
             break
@@ -129,7 +140,17 @@ def update_heads(conn, out_dir, now, fetch, settings, clock=time.monotonic) -> d
         if status == 0:
             result["stopped"] = "network error"
             break
-        url = skin_url(body) if status == 200 else None
+        if status in (204, 404):
+            url = None
+        elif status == 200:
+            try:
+                url = skin_url(body)
+            except ValueError:
+                result["stopped"] = "bad profile answer"
+                break
+        else:
+            result["stopped"] = f"session server answered {status}"
+            break
         result["checked"] += 1
         if not url:
             result["removed"] += _remove(head_path(out_dir, uuid))
@@ -138,9 +159,15 @@ def update_heads(conn, out_dir, now, fetch, settings, clock=time.monotonic) -> d
         if url == old_url and os.path.exists(head_path(out_dir, uuid)):
             _mark(conn, uuid, now, url)
             continue
+        if clock() - start >= settings.max_seconds:
+            result["stopped"] = "time"
+            break
         s_status, s_body = fetch("GET", url.replace("http://", "https://", 1), None)
         if s_status == 0:
             result["stopped"] = "network error"
+            break
+        if s_status not in (200, 404, 410):
+            result["stopped"] = f"skin server answered {s_status}"
             break
         try:
             if s_status != 200:

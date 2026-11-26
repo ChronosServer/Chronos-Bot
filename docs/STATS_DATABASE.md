@@ -170,7 +170,7 @@ entries above show the per-server defaults, not a server list you get for free.)
 | `rivalries` | Leader value ≥ `min_value`, gap ≤ `max_gap_ratio` × leader, both active within `active_days`, at most `per_player` per player and `per_key` per stat. The gap comparison window stays 7 days (it is what `gap_7d_ago` means). |
 | `spotlight` | Outlier (≥ `ratio` × median with ≥ `min_holders` holders), rare (≤ `max_holders` holders), how recent a milestone/first must be, and movers (top `top` gains over `window_days`, gain ≥ `min_delta` and ≥ `min_growth` × the start value). |
 | `mojang` | Name lookups per run: at most `max_calls` calls, `timeout_s` per call, `max_seconds` in total; every result (also failures) is cached for `retry_after_days`. |
-| `heads` | Player heads (`<server.website_path>/cache/heads/<uuid>.png`), the last step of every snapshot run: at most `max_calls` Mojang profile lookups and `max_seconds` per run, `timeout_s` per call; players never checked go first, then everyone again every `refresh_hours`. A rate limit or network error ends that run's step. `enabled: false` turns it off. Skipped when `server.website_path` is missing. |
+| `heads` | Player heads (`<server.website_path>/cache/heads/<uuid>.png`), the last step of every snapshot run: at most `max_calls` Mojang profile lookups and `max_seconds` per run, `timeout_s` per call; players never checked go first, then everyone again every `refresh_hours`. A rate limit, a network error or any Mojang error answer ends that run's step and changes nothing (existing heads stay); only "no such profile" or "no skin" removes a head. `enabled: false` turns it off. Skipped when `server.website_path` is missing. |
 | `snapshot` | How long the scoreboard dictionary from GitHub is cached, and its fetch timeout. `mirror_prefix`: a regular expression; objectives whose name matches it are every-scoreboard copies of vanilla stats (`m-stone`, `z-play_one_m+748`, `u-moss`) even when no bundled dictionary lists them, so their scores aren't stored and their firsts/milestones are hidden. `""` turns it off (dictionary only). `ignored_stat_keys`: stat keys that aren't real items (default: the three air blocks), in every category: never stored, and rows stored before are deleted once on the next run (again whenever the list changes). |
 | `api` | Range presets, activity bucket size, the hard caps on `limit`, compare and series sizes, the `/player` milestone count, series points, the response cache (size, entries, `Cache-Control` max-age / stale-while-revalidate), gzip threshold and SQLite read pragmas. |
 
@@ -292,7 +292,8 @@ next snapshot run (table `blocked_players`), no restart. Check what a list catch
 - **Heads** (`bot/heads.py`): the snapshot writes `<server.website_path>/cache/heads/<uuid>.png`
   (64x64, face + hat) for real accounts, a bounded number per run (`heads` above; table
   `player_heads` = when each uuid was checked and its skin url). No file for fake players,
-  slur-blocked players (an existing file is removed) or players without a skin. The run
+  slur-blocked players or accounts merged into another (`player_merges.json`; an existing
+  file is removed) or players without a skin. The run
   log line: `[all] heads: written=.. checked=.. removed=..`. At the defaults (60 per run, every 15 min)
   a first fill of ~2,000 players takes about 8 hours. Needs Pillow (`requirements.txt`); without it the step
   prints an error and the rest of the run is unaffected.
