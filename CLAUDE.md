@@ -302,7 +302,7 @@ tables) → SQLite → `api/` (FastAPI, read-only) → nginx `/api/stats/*` → 
 | `deploy/` | systemd units (snapshot, timer, api) + nginx snippet; `update.sh` (git-pull updater, see Deploy) + `check_config.py` |
 | `bot/merge_players.py`, `api/merges.py`, `player_merges.json` | account merges (alt → main): the one-time fold, the parser, the owner's list |
 | `bot/history_fill.py` | the 0 rows a server's first live run implies (keys only in backups) |
-| `tests/` | pytest, 508 tests, synthetic worlds built through the real snapshot write path, no network; tests never read the repo's config.json or player_merges.json (autouse fixtures; `api_config` writes a config) |
+| `tests/` | pytest, 517 tests, synthetic worlds built through the real snapshot write path, no network; tests never read the repo's config.json or player_merges.json (autouse fixtures; `api_config` writes a config) |
 | `docs/STATS_PLAN.md` | agreed scope, hard rules, build order/status |
 | `docs/STATS_API.md` | the HTTP contract for the website (copy into the website repo) |
 | `docs/STATS_DATABASE.md` | operator guide: config, first setup, upgrade, health checks, backup, reset |
